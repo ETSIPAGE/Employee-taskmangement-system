@@ -7,7 +7,7 @@ import ProjectCard from '../projects/ProjectCard';
 const DepartmentProjects: React.FC = () => {
     const { departmentId } = useParams<{ departmentId: string }>();
     const [department, setDepartment] = useState<Department | null>(null);
-    const [company, setCompany] = useState<Company | null>(null);
+    const [companies, setCompanies] = useState<Company[]>([]);
     const [projects, setProjects] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -23,8 +23,7 @@ const DepartmentProjects: React.FC = () => {
             setDepartment(currentDepartment);
 
             const allCompanies = DataService.getCompanies();
-            const currentCompany = allCompanies.find(c => c.id === currentDepartment.companyId);
-            setCompany(currentCompany || null);
+            setCompanies(allCompanies.filter(c => (currentDepartment.companyIds || []).includes(c.id)));
 
             const departmentProjects = DataService.getProjectsByDepartment(departmentId);
             const allDepts = DataService.getDepartments();
@@ -72,7 +71,9 @@ const DepartmentProjects: React.FC = () => {
             </Link>
             <h1 className="text-3xl font-bold text-slate-800 mb-6">
                 Projects for {department.name}
-                {company && <span className="block text-lg text-slate-500 font-normal mt-1">at {company.name}</span>}
+                {companies.length > 0 && (
+                    <span className="block text-lg text-slate-500 font-normal mt-1">at {companies.map(c => c.name).join(', ')}</span>
+                )}
             </h1>
             
             {projects.length > 0 ? (
