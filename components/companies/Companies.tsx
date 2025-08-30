@@ -1,8 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import * as DataService from '../../services/dataService';
-import { apiService } from '../../services/apiService';
-import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
@@ -30,7 +27,6 @@ const CompanyCard: React.FC<{ company: CompanyWithStats }> = ({ company }) => {
         >
             <div>
                 <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-3">{company.name}</h3>
-                
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Organization</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 text-slate-700">
@@ -48,24 +44,6 @@ const CompanyCard: React.FC<{ company: CompanyWithStats }> = ({ company }) => {
                         </div>
                     </div>
                 </div>
-
-                 <div>
-                    <h4 className="text-sm font-semibold text-slate-500 mb-2">Projects ({company.projectCount} Total)</h4>
-                    <div className="space-y-2">
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-slate-600">Completed</span>
-                            <span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full">{company.projectsCompleted}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-slate-600">In Progress</span>
-                            <span className="font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">{company.projectsInProgress}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-sm">
-                            <span className="text-slate-600">Pending</span>
-                            <span className="font-bold text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded-full">{company.projectsPending}</span>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
     );
@@ -74,59 +52,20 @@ const CompanyCard: React.FC<{ company: CompanyWithStats }> = ({ company }) => {
 const Companies: React.FC = () => {
     const { user } = useAuth();
     const [companiesWithStats, setCompaniesWithStats] = useState<CompanyWithStats[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newCompanyName, setNewCompanyName] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
+    const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         if (!user) return;
         try {
-            const companies = DataService.getCompanies();
-            const users = AuthService.getUsers();
-            const projects = DataService.getAllProjects();
-            const departments = DataService.getDepartments();
-
-            const stats = companies.map(comp => {
-                const companyUsers = users.filter(u => u.companyId === comp.id);
-                const companyProjects = projects.filter(p => p.companyId === comp.id);
-                const companyDepartments = departments.filter(d => (d.companyIds || []).includes(comp.id));
-
-                let projectsCompleted = 0;
-                let projectsInProgress = 0;
-                let projectsPending = 0;
-
-                companyProjects.forEach(project => {
-                    const tasks = DataService.getTasksByProject(project.id);
-                    if (tasks.length === 0) {
-                        projectsPending++;
-                        return;
-                    }
-                    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                    if (completedTasks === tasks.length) {
-                        projectsCompleted++;
-                    } else {
-                        projectsInProgress++;
-                    }
-                });
-
-                return {
-                    ...comp,
-                    employeeCount: companyUsers.filter(u => u.role === UserRole.EMPLOYEE).length,
-                    managerCount: companyUsers.filter(u => u.role === UserRole.MANAGER).length,
-                    departmentCount: companyDepartments.length,
-                    projectCount: companyProjects.length,
-                    projectsCompleted,
-                    projectsInProgress,
-                    projectsPending,
-                };
-            });
-
-            setCompaniesWithStats(stats);
+            // Replace with your actual GET API if needed
+            // For now, just set loading to false
+            setIsLoading(false);
         } catch (error) {
             console.error("Failed to load company data:", error);
-        } finally {
             setIsLoading(false);
         }
     }, [user]);
@@ -156,17 +95,45 @@ const Companies: React.FC = () => {
         }
 
         try {
-            const apiResult = await apiService.createCompany({ name: newCompanyName, createdBy: user.id });
-            if (!apiResult.success) {
-                console.warn('Failed to create company via API:', apiResult.error || 'Unknown error');
-            }
-        } catch (err) {
-            console.warn('Error calling create company API:', err instanceof Error ? err.message : 'Unknown error');
-        }
+            const res = await fetch(
+                "https://5yxz2jewyj.execute-api.ap-south-1.amazonaws.com/dev/Ets-Company-Pz",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        name: newCompanyName,
+                        address: "",
+                    }),
+                }
+            );
 
-        DataService.createCompany(newCompanyName, user.id);
-        loadData();
-        handleCloseModal();
+            const data = await res.json();
+
+            if (!res.ok) {
+                throw new Error(data.error || "Failed to create company");
+            }
+
+            setCompaniesWithStats(prev => [
+                ...prev,
+                {
+                    ...data.company,
+                    employeeCount: 0,
+                    managerCount: 0,
+                    departmentCount: 0,
+                    projectCount: 0,
+                    projectsCompleted: 0,
+                    projectsInProgress: 0,
+                    projectsPending: 0,
+                },
+            ]);
+
+            handleCloseModal();
+        } catch (error: any) {
+            console.error("Error creating company:", error);
+            alert(error.message);
+        }
     };
 
     if (user?.role !== UserRole.ADMIN) {
