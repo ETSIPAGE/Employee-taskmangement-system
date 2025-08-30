@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -13,19 +14,10 @@ const Settings: React.FC = () => {
     const [name, setName] = useState(user?.name || '');
     const [profileMessage, setProfileMessage] = useState({ type: '', text: '' });
 
-    // Password form state
-    const [currentPassword, setCurrentPassword] = useState('');
-    const [newPassword, setNewPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [passwordMessage, setPasswordMessage] = useState({ type: '', text: '' });
-
     if (!user) {
         return <Navigate to="/login" />;
     }
     
-    // All logged-in users should have access to their own settings.
-    // Redirecting non-admin/managers is removed.
-
     const handleProfileUpdate = async (e: React.FormEvent) => {
         e.preventDefault();
         setProfileMessage({ type: '', text: '' });
@@ -34,26 +26,6 @@ const Settings: React.FC = () => {
             setProfileMessage({ type: 'success', text: 'Profile updated successfully!' });
         } catch (error) {
             setProfileMessage({ type: 'error', text: error instanceof Error ? error.message : 'An error occurred.' });
-        }
-    };
-    
-    const handlePasswordChange = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setPasswordMessage({ type: '', text: '' });
-
-        if (newPassword !== confirmPassword) {
-            setPasswordMessage({ type: 'error', text: 'New passwords do not match.' });
-            return;
-        }
-
-        try {
-            AuthService.updatePassword(user.email, currentPassword, newPassword);
-            setPasswordMessage({ type: 'success', text: 'Password changed successfully!' });
-            setCurrentPassword('');
-            setNewPassword('');
-            setConfirmPassword('');
-        } catch (error) {
-            setPasswordMessage({ type: 'error', text: error instanceof Error ? error.message : 'An error occurred.' });
         }
     };
     
@@ -85,41 +57,6 @@ const Settings: React.FC = () => {
                         />
                         <div className="flex justify-end pt-2">
                              <Button type="submit">Save Changes</Button>
-                        </div>
-                    </form>
-                </div>
-
-                {/* Password Settings Card */}
-                <div className="bg-white rounded-lg shadow-lg p-6">
-                    <h2 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">Change Password</h2>
-                     <form onSubmit={handlePasswordChange} className="space-y-4">
-                        <Message message={passwordMessage} />
-                        <Input 
-                            id="current-password" 
-                            type="password" 
-                            label="Current Password" 
-                            value={currentPassword} 
-                            onChange={(e) => setCurrentPassword(e.target.value)} 
-                            required 
-                        />
-                         <Input 
-                            id="new-password" 
-                            type="password" 
-                            label="New Password" 
-                            value={newPassword} 
-                            onChange={(e) => setNewPassword(e.target.value)} 
-                            required 
-                        />
-                         <Input 
-                            id="confirm-password" 
-                            type="password" 
-                            label="Confirm New Password" 
-                            value={confirmPassword} 
-                            onChange={(e) => setConfirmPassword(e.target.value)} 
-                            required 
-                        />
-                        <div className="flex justify-end pt-2">
-                             <Button type="submit">Update Password</Button>
                         </div>
                     </form>
                 </div>

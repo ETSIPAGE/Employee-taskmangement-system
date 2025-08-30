@@ -4,14 +4,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import Input from '../shared/Input';
 import Button from '../shared/Button';
-import { UserRole } from '../../types';
 
 const Register: React.FC = () => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
     const [error, setError] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
     const { register } = useAuth();
     const navigate = useNavigate();
 
@@ -22,11 +21,14 @@ const Register: React.FC = () => {
             setError('Password must be at least 6 characters long.');
             return;
         }
+        setIsLoading(true);
         try {
-            await register({ name, email, password, role });
+            await register({ name, email, password });
             navigate('/');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -63,24 +65,8 @@ const Register: React.FC = () => {
                         onChange={(e) => setPassword(e.target.value)}
                         required
                     />
-                     <div>
-                        <label htmlFor="role" className="block text-sm font-medium text-slate-700">
-                            Role
-                        </label>
-                        <select
-                            id="role"
-                            name="role"
-                            value={role}
-                            onChange={(e) => setRole(e.target.value as UserRole)}
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm"
-                        >
-                            <option>{UserRole.EMPLOYEE}</option>
-                            <option>{UserRole.MANAGER}</option>
-                            <option>{UserRole.ADMIN}</option>
-                        </select>
-                    </div>
-                    <Button type="submit" fullWidth>
-                        Sign Up
+                    <Button type="submit" fullWidth disabled={isLoading}>
+                        {isLoading ? 'Signing Up...' : 'Sign Up'}
                     </Button>
                 </form>
                 <p className="text-center text-sm text-slate-500 mt-6">

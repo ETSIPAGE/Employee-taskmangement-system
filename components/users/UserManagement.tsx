@@ -252,7 +252,7 @@ const UserManagement: React.FC = () => {
         });
     };
     
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             if (editingUser) {
@@ -270,15 +270,18 @@ const UserManagement: React.FC = () => {
                     alert("Password is required for new users.");
                     return;
                 }
-                AuthService.register({ 
-                    name, 
-                    email, 
-                    password, 
-                    role, 
-                    departmentIds,
-                    companyId,
-                    managerId: role === UserRole.EMPLOYEE ? managerId : undefined 
-                });
+                // Register first, which creates a default user
+                await AuthService.register({ name, email, password });
+                // Then, find that user and update them with the details from the form
+                const newUser = AuthService.getUsers().find(u => u.email === email);
+                if (newUser) {
+                    AuthService.updateUser(newUser.id, {
+                        role,
+                        departmentIds,
+                        companyId,
+                        managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                    });
+                }
             }
             loadData();
             handleCloseModal();

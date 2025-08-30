@@ -1,3 +1,4 @@
+
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types';
 import * as AuthService from '../services/authService';
@@ -38,12 +39,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (email: LoginCredentials['email'], password: LoginCredentials['password']) => {
-    const loggedInUser = AuthService.login(email, password);
+    const loggedInUser = await AuthService.login(email, password);
     setUser(loggedInUser);
   };
 
   const register = async (credentials: RegisterCredentials) => {
-    const newUser = AuthService.register(credentials);
+    const newUser = await AuthService.register(credentials);
     setUser(newUser);
   };
 

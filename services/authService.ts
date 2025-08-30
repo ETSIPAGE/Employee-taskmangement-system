@@ -4,10 +4,6 @@ export interface RegisterCredentials {
   name: string;
   email: string;
   password: string;
-  role: UserRole;
-  managerId?: string;
-  departmentIds?: string[];
-  companyId?: string;
 }
 
 export interface LoginCredentials {
@@ -17,7 +13,7 @@ export interface LoginCredentials {
 
 const USERS_KEY = 'ets_users';
 const CURRENT_USER_KEY = 'ets_current_user';
-const PASSWORDS_KEY = 'ets_passwords';
+const TOKEN_KEY = 'ets_token';
 
 const getInitialUsers = (): User[] => {
     return [
@@ -144,20 +140,6 @@ const getInitialUsers = (): User[] => {
     ];
 };
 
-const getInitialPasswords = (): Record<string, string> => {
-    return {
-        'admin@test.com': 'password123',
-        'manager@test.com': 'password123',
-        'drone@example.com': 'password123',
-        'sarah.chen@example.com': 'password123',
-        'mike.rodriguez@example.com': 'password123',
-        'jessica.b@test.com': 'password123',
-        'david.m@test.com': 'password123',
-        'employee@test.com': 'password123',
-        'hr@test.com': 'password123',
-    };
-};
-
 export const getUsers = (): User[] => {
   const usersJson = localStorage.getItem(USERS_KEY);
   if (usersJson) {
@@ -168,72 +150,59 @@ export const getUsers = (): User[] => {
   return initialUsers;
 };
 
-const getPasswords = (): Record<string, string> => {
-    const passwordsJson = localStorage.getItem(PASSWORDS_KEY);
-    if(passwordsJson) {
-        return JSON.parse(passwordsJson);
-    }
-    const initialPasswords = getInitialPasswords();
-    localStorage.setItem(PASSWORDS_KEY, JSON.stringify(initialPasswords));
-    return initialPasswords;
-}
-
 const saveUsers = (users: User[]) => {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 };
 
-const savePasswords = (passwords: Record<string, string>) => {
-    localStorage.setItem(PASSWORDS_KEY, JSON.stringify(passwords));
-}
+export const register = async (credentials: RegisterCredentials): Promise<User> => {
+    // Step 1: Call the backend API to register the user.
+    const response = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: credentials.name,
+            email: credentials.email,
+            password: credentials.password,
+        }),
+    });
 
-export const register = (credentials: RegisterCredentials): User => {
-  const users = getUsers();
-  const passwords = getPasswords();
-  if (users.find(u => u.email === credentials.email)) {
-    throw new Error('An account with this email already exists.');
-  }
+    const responseData = await response.json();
 
-  const newUser: User = {
-    id: String(Date.now()),
-    name: credentials.name,
-    email: credentials.email,
-    role: credentials.role,
-    companyId: credentials.companyId,
-    managerId: credentials.managerId,
-    departmentIds: credentials.departmentIds,
-    jobTitle: 'New Employee',
-    status: 'Active',
-    joinedDate: new Date().toISOString(),
-    skills: [],
-    stats: {
-        completedTasks: 0,
-        inProgressTasks: 0,
-        efficiency: 0,
-        totalHours: 0,
-        workload: 'Light'
+    if (!response.ok) {
+        throw new Error(responseData.message || 'Registration failed.');
     }
-  };
-  
-  users.push(newUser);
-  passwords[credentials.email] = credentials.password;
-  
-  saveUsers(users);
-  savePasswords(passwords);
 
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
-  return newUser;
-};
+    // Step 2: Store the received token.
+    localStorage.setItem(TOKEN_KEY, responseData.token);
 
-export const updatePassword = (email: string, oldPass: string, newPass: string): void => {
-    const passwords = getPasswords();
-    if (passwords[email] !== oldPass) {
-        throw new Error("Incorrect current password.");
+    // Step 3: Create a parallel user record in the frontend's local storage.
+    const users = getUsers();
+    const existingUser = users.find(u => u.email === credentials.email);
+
+    if (existingUser) {
+        console.warn('User already exists locally. Logging them in instead.');
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(existingUser));
+        return existingUser;
     }
-    if (newPass.length < 6) {
-        throw new Error("New password must be at least 6 characters long.");
-    }
-    passwords[email] = newPass;
-    savePasswords(passwords);
+
+    const newUser: User = {
+        id: `user-${Date.now()}`,
+        name: credentials.name,
+        email: credentials.email,
+        role: UserRole.EMPLOYEE, // Default role for new signups
+        status: 'Active',
+        joinedDate: new Date().toISOString(),
+        jobTitle: 'New Employee',
+        skills: [],
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' },
+    };
+    
+    users.push(newUser);
+    saveUsers(users);
+
+    // Step 4: Set the new user as the current user for the session.
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+    return newUser;
 };
 
 export const updateUser = (userId: string, updates: Partial<User>): User | undefined => {
@@ -258,40 +227,63 @@ export const updateUser = (userId: string, updates: Partial<User>): User | undef
 
 export const deleteUser = (userId: string): void => {
     let users = getUsers();
-    const userToDelete = users.find(u => u.id === userId);
-    if (userToDelete) {
-        let passwords = getPasswords();
-        delete passwords[userToDelete.email];
-        savePasswords(passwords);
-    }
     users = users.filter(u => u.id !== userId);
     saveUsers(users);
 };
 
+export const login = async (email: LoginCredentials['email'], password: LoginCredentials['password']): Promise<User> => {
+    // Step 1: Authenticate against the backend.
+    const response = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+    });
 
-export const login = (email: LoginCredentials['email'], password: LoginCredentials['password']): User => {
-  const users = getUsers();
-  const passwords = getPasswords();
-  const user = users.find(u => u.email === email);
-  
-  const storedPassword = passwords[email];
+    const responseData = await response.json();
 
-  if (!user || storedPassword !== password) {
-    throw new Error('Invalid email or password.');
-  }
+    if (!response.ok) {
+        throw new Error(responseData.message || 'Invalid email or password.');
+    }
+    
+    // Step 2: Store the received token.
+    localStorage.setItem(TOKEN_KEY, responseData.token);
 
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-  return user;
+    // Step 3: Find or create the user profile in the frontend's local storage.
+    const users = getUsers();
+    let user = users.find(u => u.email === email);
+
+    if (!user) {
+        // If the user authenticated successfully but doesn't have a local profile, create one.
+        console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
+        
+        const nameFromEmail = email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        const newUser: User = {
+            id: `user-${Date.now()}`,
+            name: nameFromEmail,
+            email: email,
+            role: UserRole.EMPLOYEE,
+            status: 'Active',
+            joinedDate: new Date().toISOString(),
+        };
+        users.push(newUser);
+        saveUsers(users);
+        user = newUser;
+    }
+
+    // Step 4: Set as current user for the session.
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    return user;
 };
 
 export const logout = (): void => {
   localStorage.removeItem(CURRENT_USER_KEY);
+  localStorage.removeItem(TOKEN_KEY);
 };
 
 export const getCurrentUser = (): User | null => {
-  // Prime the user and password stores if they don't exist
+  // Prime the user store if it doesn't exist
   getUsers();
-  getPasswords();
   
   const userJson = localStorage.getItem(CURRENT_USER_KEY);
   return userJson ? JSON.parse(userJson) : null;
