@@ -1,18 +1,21 @@
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, OnboardingStepStatus, Company } from '../types';
 
 let COMPANIES: Company[] = [
-    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
+    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' },
+    { id: 'comp-2', name: 'TechCore Systems', ownerId: '1', createdAt: '2023-02-15T00:00:00.000Z' },
+    { id: 'comp-3', name: 'Alpha Solutions', ownerId: '1', createdAt: '2023-03-20T00:00:00.000Z' },
+    { id: 'comp-4', name: 'Beta Labs', ownerId: '1', createdAt: '2023-04-05T00:00:00.000Z' }
 ];
 
 let DEPARTMENTS: Department[] = [
-    { id: 'dept-1', name: 'Administration', companyId: 'comp-1' },
-    { id: 'dept-2', name: 'Finance & Accounting', companyId: 'comp-1' },
-    { id: 'dept-3', name: 'Human Resources (HR)', companyId: 'comp-1' },
-    { id: 'dept-4', name: 'Operations', companyId: 'comp-1' },
-    { id: 'dept-5', name: 'Marketing', companyId: 'comp-1' },
-    { id: 'dept-6', name: 'Sales', companyId: 'comp-1' },
-    { id: 'dept-7', name: 'Information Technology (IT)', companyId: 'comp-1' },
-    { id: 'dept-8', name: 'Customer Service', companyId: 'comp-1' },
+    { id: 'dept-1', name: 'Administration', companyIds: ['comp-1'] },
+    { id: 'dept-2', name: 'Finance & Accounting', companyIds: ['comp-1'] },
+    { id: 'dept-3', name: 'Human Resources (HR)', companyIds: ['comp-1'] },
+    { id: 'dept-4', name: 'Operations', companyIds: ['comp-1'] },
+    { id: 'dept-5', name: 'Marketing', companyIds: ['comp-1'] },
+    { id: 'dept-6', name: 'Sales', companyIds: ['comp-1'] },
+    { id: 'dept-7', name: 'Information Technology (IT)', companyIds: ['comp-1'] },
+    { id: 'dept-8', name: 'Customer Service', companyIds: ['comp-1'] },
 ];
 
 let PROJECTS: Project[] = [
@@ -229,14 +232,29 @@ export const getDepartmentById = (id: string): Department | undefined => {
     return DEPARTMENTS.find(d => d.id === id);
 };
 
-export const createDepartment = (name: string, companyId: string): Department => {
+export const createDepartment = (name: string, companyIds: string[]): Department => {
     const newDepartment: Department = {
         id: `dept-${Date.now()}`,
         name,
-        companyId,
+        companyIds,
     };
     DEPARTMENTS.unshift(newDepartment);
     return newDepartment;
+};
+
+export const updateDepartment = (departmentId: string, updates: Partial<Department>): Department | undefined => {
+    const index = DEPARTMENTS.findIndex(d => d.id === departmentId);
+    if (index > -1) {
+        DEPARTMENTS[index] = { ...DEPARTMENTS[index], ...updates } as Department;
+        return DEPARTMENTS[index];
+    }
+    return undefined;
+};
+
+export const deleteDepartment = (departmentId: string): void => {
+    DEPARTMENTS = DEPARTMENTS.filter(d => d.id !== departmentId);
+    // Also remove department from any projects' departmentIds
+    PROJECTS = PROJECTS.map(p => ({ ...p, departmentIds: p.departmentIds.filter(id => id !== departmentId) }));
 };
 
 // --- PROJECT & TASK FUNCTIONS ---

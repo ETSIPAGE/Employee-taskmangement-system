@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
+import { apiService } from '../../services/apiService';
 import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -70,7 +71,6 @@ const CompanyCard: React.FC<{ company: CompanyWithStats }> = ({ company }) => {
     );
 };
 
-
 const Companies: React.FC = () => {
     const { user } = useAuth();
     const [companiesWithStats, setCompaniesWithStats] = useState<CompanyWithStats[]>([]);
@@ -91,7 +91,7 @@ const Companies: React.FC = () => {
             const stats = companies.map(comp => {
                 const companyUsers = users.filter(u => u.companyId === comp.id);
                 const companyProjects = projects.filter(p => p.companyId === comp.id);
-                const companyDepartments = departments.filter(d => d.companyId === comp.id);
+                const companyDepartments = departments.filter(d => (d.companyIds || []).includes(comp.id));
 
                 let projectsCompleted = 0;
                 let projectsInProgress = 0;
@@ -110,7 +110,6 @@ const Companies: React.FC = () => {
                         projectsInProgress++;
                     }
                 });
-
 
                 return {
                     ...comp,
@@ -149,12 +148,22 @@ const Companies: React.FC = () => {
         setNewCompanyName('');
     };
 
-    const handleCreateCompany = (e: React.FormEvent) => {
+    const handleCreateCompany = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newCompanyName.trim() || !user) {
             alert('Company name is required.');
             return;
         }
+
+        try {
+            const apiResult = await apiService.createCompany({ name: newCompanyName, createdBy: user.id });
+            if (!apiResult.success) {
+                console.warn('Failed to create company via API:', apiResult.error || 'Unknown error');
+            }
+        } catch (err) {
+            console.warn('Error calling create company API:', err instanceof Error ? err.message : 'Unknown error');
+        }
+
         DataService.createCompany(newCompanyName, user.id);
         loadData();
         handleCloseModal();
