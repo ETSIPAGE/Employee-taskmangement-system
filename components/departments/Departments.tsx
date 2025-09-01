@@ -481,14 +481,13 @@ const Departments: React.FC = () => {
 
       {/* ✅ ToastContainer added here to ensure toasts show */}
       <ToastContainer
-        position="top-right"
-        autoClose={3000}
-        hideProgressBar={false}
-        closeOnClick
-        pauseOnHover
-        draggable
-        theme="colored"
-      />
+              position="top-right"
+              autoClose={3000}
+              hideProgressBar={false}
+              closeOnClick
+              pauseOnHover
+              draggable
+              theme="colored" aria-label={undefined}      />
     </div>
   );
 };
