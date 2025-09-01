@@ -136,14 +136,19 @@ class APIService {
           endpoint
         };
       }
-
+  
       const json = await response.json();
       const items = Array.isArray(json?.items) ? json.items : [];
+  
       const mapped: Department[] = items.map((it: any) => ({
         id: String(it.id ?? it.ID ?? Date.now()),
         name: String(it.name ?? 'Unnamed Department'),
         companyIds: Array.isArray(it.companyIds) ? it.companyIds.map((c: any) => String(c)) : [],
+        timestamp: String(it.timestamp ?? it.createdAt ?? new Date().toISOString()), // ✅ added
       }));
+
+      //weewweewew
+  
       return { success: true, data: mapped, endpoint };
     } catch (e) {
       return {
@@ -153,54 +158,107 @@ class APIService {
       };
     }
   }
+  
 
   /**
    * ✅ Updated REST-based department updater using /departments/{id}
    */
   async updateDepartment(payload: {
     id: string;
-    name: string;
-    companyIds: string[];
-    timestamp?: string;
-    latest?: boolean;
+    name?: string;
+    companyIds?: string[];
+    timestamp?: string;   // exact ISO string if you want a specific version
+    latest?: boolean;     // set true to target the most recent version
   }): Promise<APIResponse<any>> {
-    const { id, name, companyIds, timestamp, latest } = payload;
-
+    const { id, name, companyIds, timestamp } = payload;
+    const latest = payload.latest ?? (!timestamp); // default to latest when timestamp is missing
+  
+    // --- guard rails ---
+    if (!id || !id.trim()) {
+      return { success: false, error: "Department id is required", endpoint: "" };
+    }
+    if (typeof name === "undefined" && typeof companyIds === "undefined") {
+      return { success: false, error: "Provide at least one field to update (name or companyIds)", endpoint: "" };
+    }
+  
+    // --- build endpoint with query params ---
     const qs = new URLSearchParams();
     if (timestamp) qs.set("timestamp", timestamp);
     else if (latest) qs.set("latest", "1");
-
-    const endpoint = `${this.departmentBase}/${encodeURIComponent(id)}${qs.toString() ? `?${qs}` : ''}`;
-
+  
+    const endpoint =
+      `${this.departmentBase}/${encodeURIComponent(id)}` +
+      (qs.toString() ? `?${qs.toString()}` : "");
+  
+    // --- request body (include fields + compatibility flags) ---
+    const body: Record<string, any> = {};
+    if (typeof name !== "undefined") body.name = name;
+    if (Array.isArray(companyIds)) body.companyIds = companyIds;
+  
+    // include these in body as well for older/newer Lambdas
+    if (timestamp) body.timestamp = timestamp;
+    else if (latest) body.latest = true;
+  
     try {
       const response = await fetch(endpoint, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, companyIds })
+        method: "PATCH", // your REST method
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
-
+  
       const text = await response.text();
-
+      let parsed: any;
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+  
       if (!response.ok) {
-        return { success: false, error: text, status: response.status, endpoint };
+        // surface server-provided error message
+        const serverMsg = typeof parsed === "object" ? JSON.stringify(parsed) : text;
+        return { success: false, error: serverMsg, status: response.status, endpoint };
       }
-
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = text;
-      }
-
-      return { success: true, data, status: response.status, endpoint };
+  
+      return { success: true, data: parsed, status: response.status, endpoint };
     } catch (e) {
       return {
         success: false,
-        error: e instanceof Error ? e.message : 'Unknown error',
+        error: e instanceof Error ? e.message : "Unknown error",
         endpoint
       };
     }
   }
+  
+
+  async deleteDepartment(id: string, timestamp: string) {
+    const endpoint = `https://8eir95tylc.execute-api.ap-south-1.amazonaws.com/prod/delete-department/${encodeURIComponent(
+      id
+    )}?timestamp=${encodeURIComponent(timestamp)}`;
+  
+    try {
+      const response = await fetch(endpoint, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          // Add Authorization header if your API requires it
+        },
+      });
+  
+      if (!response.ok) {
+        throw new Error(`DELETE failed: ${response.status}`);
+      }
+  
+      // Some APIs return 204 No Content on delete
+      if (response.status === 204) {
+        return { message: "Department deleted successfully", id };
+      }
+  
+      const json = await response.json();
+      return json;
+    } catch (error) {
+      console.error("Error deleting department:", error);
+      throw error;
+    }
+  }
+  
+  
 }
 
 export const apiService = new APIService();
