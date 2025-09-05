@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { UserRole } from '../../types';
-import { CogIcon, ChatBubbleLeftRightIcon } from '../../constants';
+import { CogIcon, ChatBubbleLeftRightIcon, UsersIcon } from '../../constants';
 
 interface HeaderProps {
   onToggleChat: () => void;
+  onToggleRoles: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
+const Header: React.FC<HeaderProps> = ({ onToggleChat, onToggleRoles }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [isOnBreak, setIsOnBreak] = useState(false);
@@ -29,6 +30,13 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
 
   const commonButtons = (
      <div className="flex items-center space-x-2">
+       <button 
+          onClick={onToggleRoles}
+          className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
+          aria-label="Toggle Roles"
+        >
+          <UsersIcon className="h-6 w-6" />
+        </button>
        <button 
           onClick={onToggleChat}
           className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"

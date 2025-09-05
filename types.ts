@@ -3,6 +3,7 @@ export enum UserRole {
   MANAGER = 'Manager',
   EMPLOYEE = 'Employee',
   HR = 'HR',
+  PARENT = 'Parent',
 }
 
 export interface Company {
@@ -16,6 +17,7 @@ export interface Department {
   id: string;
   name: string;
   companyIds: string[];
+  timestamp?: string; // Make timestamp optional for better compatibility
 }
 
 export interface UserStats {
