@@ -186,7 +186,13 @@ const ManagerDashboard: React.FC = () => {
             <div className="flex justify-between items-start mb-6">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-800 mb-2">Manager Dashboard</h1>
-                    <p className="text-slate-600">Welcome, {user?.name}! Here's your team's overview.</p>
+                    <div className="flex items-center space-x-3">
+                        <p className="text-slate-600">Welcome, {user?.name}!</p>
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-800">
+                            {user?.role}
+                        </span>
+                    </div>
+                    <p className="text-slate-500 text-sm mt-1">Here's your team's overview.</p>
                 </div>
                 <button 
                     onClick={loadData} 

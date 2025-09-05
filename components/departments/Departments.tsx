@@ -12,6 +12,29 @@ import { UsersIcon, BuildingOfficeIcon } from '../../constants';
 import { toast, ToastContainer } from 'react-toastify'; // ✅ Import ToastContainer here
 import 'react-toastify/dist/ReactToastify.css'; // ✅ CSS for toasts
 
+// Custom styles for enhanced toast appearance
+const toastStyles = `
+  .custom-toast {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    border-radius: 12px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  }
+  .custom-toast-body {
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .custom-progress {
+    background: linear-gradient(90deg, #3b82f6, #6366f1);
+  }
+`;
+
+// Inject styles
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement('style');
+  styleSheet.innerText = toastStyles;
+  document.head.appendChild(styleSheet);
+}
+
 interface DepartmentStats {
   employeeCount: number;
   managerCount: number;
@@ -101,29 +124,101 @@ const Departments: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [companyFilter, setCompanyFilter] = useState('all');
 
+  // Alternative approach: dismiss loading and show new success toast
+  const showSuccessToast = (message: string, loadingId: any) => {
+    toast.dismiss(loadingId);
+    setTimeout(() => {
+      toast.success(message, {
+        position: "top-right",
+        autoClose: 4000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+    }, 100);
+  };
+
+  const showErrorToast = (message: string, loadingId: any) => {
+    toast.dismiss(loadingId);
+    setTimeout(() => {
+      toast.error(message, {
+        position: "top-right",
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+    }, 100);
+  };
+
   const loadData = useCallback(async () => {
+    console.log('Loading departments data...');
     setIsLoading(true);
+    
     try {
+      // Start with local data as baseline
       let departments = DataService.getDepartments();
-      const depApi = await apiService.getDepartments();
-      if (depApi.success && depApi.data && depApi.data.length > 0) {
-        departments = depApi.data;
+      console.log('Local departments before API call:', departments);
+      
+      // Attempt API call with enhanced error handling
+      try {
+        const depApi = await apiService.getDepartments();
+        console.log('API departments response:', depApi);
+        
+        if (depApi.success && depApi.data && depApi.data.length > 0) {
+          departments = depApi.data;
+          console.log('Using API departments data:', departments);
+          
+          // Sync API data with local storage to prevent ID mismatch issues
+          DataService.setDepartments(departments);
+          console.log('Synced API departments with local storage');
+          
+          toast.success('Departments loaded from API successfully');
+        } else {
+          console.log('Using local departments data (API failed or empty):', depApi.error);
+          toast.warn('API unavailable, using local data. Error: ' + (depApi.error || 'Unknown'));
+        }
+      } catch (apiError) {
+        console.error('API call completely failed:', apiError);
+        toast.error('API connection failed completely, using local data only');
       }
+      
       const users = AuthService.getUsers();
       const projects = DataService.getAllProjects();
 
+      // Enhanced company loading with fallback
       let companiesList: Company[] = [];
-      const apiRes = await apiService.getCompanies();
-      if (apiRes.success && apiRes.data && apiRes.data.length > 0) {
-        companiesList = apiRes.data;
-      } else {
+      console.log('Loading companies data...');
+      
+      try {
+        const apiRes = await apiService.getCompanies();
+        console.log('Company API response:', apiRes);
+        
+        if (apiRes.success && apiRes.data && apiRes.data.length > 0) {
+          companiesList = apiRes.data;
+          console.log('Using API companies data:', companiesList);
+        } else {
+          console.log('API failed, using local companies data:', apiRes.error);
+          companiesList = DataService.getCompanies();
+          toast.warn('⚠️ Companies API failed: ' + (apiRes.error || 'Unknown error'));
+        }
+      } catch (companyError) {
+        console.error('💥 Error fetching companies:', companyError);
         companiesList = DataService.getCompanies();
+        toast.error('❌ Company API connection failed, using local data');
       }
+      
+      console.log('🏢 Final companies list:', companiesList);
       setCompanies(companiesList);
+      
+      // Set default company selection if available
       if (companiesList.length > 0) {
         setNewDepartmentCompanyIds([companiesList[0].id]);
       }
 
+      // Process department statistics
       const stats = departments.map((dept: any) => {
         const deptUsers = users.filter((u) => u.departmentIds?.includes(dept.id));
         const deptProjects = projects.filter((p) => p.departmentIds.includes(dept.id));
@@ -164,9 +259,24 @@ const Departments: React.FC = () => {
         } as DepartmentWithStats;
       });
 
+      console.log('📈 Final departments with stats:', stats);
       setDepartmentsWithStats(stats);
+      
+      // Success notification
+      if (stats.length > 0) {
+        console.log('Data loading completed successfully');
+      } else {
+        console.warn('⚠️ No departments found after loading');
+        toast.warn('⚠️ No departments found. You may need to create some.');
+      }
+      
     } catch (error) {
-      console.error('Failed to load department data:', error);
+      console.error('💥 Critical error in loadData:', error);
+      toast.error('❌ Failed to load department data: ' + (error instanceof Error ? error.message : 'Unknown error'));
+      
+      // Fallback to empty state but don't crash
+      setDepartmentsWithStats([]);
+      setCompanies([]);
     } finally {
       setIsLoading(false);
     }
@@ -212,33 +322,237 @@ const Departments: React.FC = () => {
 
   const handleCreateDepartment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newDepartmentName.trim() || newDepartmentCompanyIds.length === 0) {
-      toast.warn('Department name and company are required.');
+    
+    // Enhanced validation with specific toast messages
+    if (!newDepartmentName.trim()) {
+      toast.error('Department name is required!', {
+        position: "top-right",
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
       return;
     }
-    if (editingDepartmentId) {
-      try {
-        await apiService.updateDepartment({
+    
+    if (newDepartmentCompanyIds.length === 0) {
+      toast.error('Please select at least one company!', {
+        position: "top-right",
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+      });
+      return;
+    }
+
+    // Show loading toast for better UX
+    const loadingToastId = toast.loading(
+      editingDepartmentId 
+        ? `Updating department "${newDepartmentName}"...` 
+        : `Creating department "${newDepartmentName}"...`,
+      {
+        position: "top-right",
+      }
+    );
+    
+    console.log('Loading toast created with ID:', loadingToastId);
+
+    try {
+      if (editingDepartmentId) {
+        // 🔧 Enhanced update with your specific API endpoint
+        console.log('Updating department:', {
+          id: editingDepartmentId,
+          name: newDepartmentName,
+          companyIds: newDepartmentCompanyIds,
+          latest: true
+        });
+
+        const apiResult = await apiService.updateDepartment({
           id: editingDepartmentId,
           name: newDepartmentName,
           companyIds: newDepartmentCompanyIds,
           latest: true,
         });
-      } catch (err) {
-        console.error('API update failed:', err);
+
+        console.log('API update result:', apiResult);
+
+        if (apiResult.success) {
+          console.log('API update successful, showing success toast...');
+          
+          // Try alternative approach: dismiss + new toast
+          showSuccessToast(`Department "${newDepartmentName}" updated successfully!`, loadingToastId);
+          
+          console.log('Success toast shown');
+          
+          // Also update locally to keep data in sync
+          const localResult = DataService.updateDepartment(editingDepartmentId, {
+            name: newDepartmentName,
+            companyIds: newDepartmentCompanyIds,
+          });
+          
+          if (localResult) {
+            console.log('Local update successful - updated department:', localResult);
+          }
+          
+          // Wait a bit before reloading to ensure toast is visible
+          setTimeout(async () => {
+            console.log('Reloading data and closing modal...');
+            await loadData();
+            handleCloseModal();
+          }, 800);
+          
+          return; // Early return to prevent double execution
+        } else {
+          console.warn('API update failed, using local update:', apiResult.error);
+          
+          // Always update local state when API fails
+          const localResult = DataService.updateDepartment(editingDepartmentId, {
+            name: newDepartmentName,
+            companyIds: newDepartmentCompanyIds,
+          });
+
+          console.log('Local update result:', localResult);
+
+          if (localResult) {
+            console.log('Local update successful - updated department:', localResult);
+            console.log('Showing local success toast...');
+            
+            // Use alternative approach for local success too
+            showSuccessToast(`Department "${newDepartmentName}" updated locally (API unavailable)`, loadingToastId);
+            
+            // Wait a bit before reloading to ensure toast is visible
+            setTimeout(async () => {
+              console.log('Reloading data and closing modal...');
+              await loadData();
+              handleCloseModal();
+            }, 800);
+            
+            return; // Early return to prevent double execution
+          } else {
+            console.error('Local update failed!');
+            
+            // Use alternative approach for error too
+            showErrorToast(`Failed to update department "${newDepartmentName}"`, loadingToastId);
+            return; // Exit early if local update fails
+          }
+        }
+      } else {
+        // Creating new department
+        console.log('🆕 Creating new department:', {
+          name: newDepartmentName,
+          companyIds: newDepartmentCompanyIds
+        });
+
+        let apiResult: any = null;
+        try {
+          apiResult = await apiService.createDepartment({ 
+            name: newDepartmentName, 
+            companyIds: newDepartmentCompanyIds 
+          });
+          
+          console.log('API create result:', apiResult);
+          
+          if (apiResult.success) {
+            // Update loading toast to success
+            toast.update(loadingToastId, {
+              render: `Department "${newDepartmentName}" created successfully!`,
+              type: "success",
+              isLoading: false,
+              autoClose: 4000,
+              hideProgressBar: false,
+              closeOnClick: true,
+              pauseOnHover: true,
+              draggable: true,
+            });
+            
+            // Wait a bit before reloading to ensure toast is visible
+            setTimeout(async () => {
+              await loadData();
+              handleCloseModal();
+            }, 500);
+            
+            return; // Early return to prevent double execution
+          } else {
+            console.warn('API create failed, using local create:', apiResult.error);
+            // Update loading toast to warning
+            toast.update(loadingToastId, {
+              render: `Department "${newDepartmentName}" created locally (API unavailable)`,
+              type: "warning",
+              isLoading: false,
+              autoClose: 5000,
+              hideProgressBar: false,
+              closeOnClick: true,
+              pauseOnHover: true,
+              draggable: true,
+            });
+          }
+        } catch (createError) {
+          console.error('API create error:', createError);
+          // Update loading toast to error
+          toast.update(loadingToastId, {
+            render: 'API create error, department created locally only.',
+            type: "warning",
+            isLoading: false,
+            autoClose: 5000,
+            hideProgressBar: false,
+            closeOnClick: true,
+            pauseOnHover: true,
+            draggable: true,
+          });
+        }
+
+        // Always create locally as fallback (only if API didn't succeed)
+        if (!apiResult || !apiResult.success) {
+          DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
+          
+          // If we haven't already shown a success message, show local creation success
+          if (!apiResult || !apiResult.success) {
+            toast.update(loadingToastId, {
+              render: `Department "${newDepartmentName}" created locally!`,
+              type: "success",
+              isLoading: false,
+              autoClose: 4000,
+              hideProgressBar: false,
+              closeOnClick: true,
+              pauseOnHover: true,
+              draggable: true,
+            });
+          }
+        }
       }
-      DataService.updateDepartment(editingDepartmentId, {
-        name: newDepartmentName,
-        companyIds: newDepartmentCompanyIds,
+
+      // Only reload data if we haven't already done it above
+      // (This prevents the loading/modal close from interfering with toast display)
+      if (editingDepartmentId) {
+        // For edits, we handle reload in the success/error blocks above
+        return;
+      } else {
+        // For creates, reload data here if not already handled
+        setTimeout(async () => {
+          await loadData();
+          handleCloseModal();
+        }, 500);
+      }
+    } catch (error) {
+      console.error('Error in handleCreateDepartment:', error);
+      
+      // Update loading toast to error
+      toast.update(loadingToastId, {
+        render: `An error occurred while ${editingDepartmentId ? 'updating' : 'creating'} the department: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: "error",
+        isLoading: false,
+        autoClose: 6000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
       });
-    } else {
-      try {
-        await apiService.createDepartment({ name: newDepartmentName, companyIds: newDepartmentCompanyIds });
-      } catch {}
-      DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
+      
+      // Don't close modal on error so user can retry
     }
-    loadData();
-    handleCloseModal();
   };
 
   const handleDeleteDepartment = useCallback(
@@ -247,26 +561,49 @@ const Departments: React.FC = () => {
 
       setConfirmAction(() => async () => {
         if (!dept.timestamp) {
-          toast.error('Missing timestamp. Cannot delete department.');
+          toast.error(`Cannot delete department "${dept.name}": Missing timestamp data!`, {
+            position: "top-right",
+            autoClose: 5000,
+            hideProgressBar: false,
+            closeOnClick: true,
+            pauseOnHover: true,
+            draggable: true,
+          });
           return;
         }
 
+        // Show loading toast for delete operation
+        const loadingToastId = toast.loading(
+          `Deleting department "${dept.name}"...`,
+          {
+            position: "top-right",
+          }
+        );
+        
+        console.log('Delete loading toast created with ID:', loadingToastId);
+        
         try {
           const res = await apiService.deleteDepartment(dept.id, dept.timestamp);
           const isSuccess = typeof res === 'object' ? (res as any).success !== false : true;
 
           if (isSuccess) {
-            // ✅ This toast will now show!
-            toast.success(`✅ "${dept.name}" has been deleted.`);
+            console.log('Delete API successful, showing success toast...');
+            // Use alternative approach: dismiss + new success toast
+            showSuccessToast(`Department "${dept.name}" has been deleted successfully!`, loadingToastId);
+            
             setDepartmentsWithStats((prev) =>
               prev.filter((d) => !(d.id === dept.id && d.timestamp === dept.timestamp))
             );
           } else {
+            console.warn('Delete API failed:', res);
             const msg = (res as any)?.error || (res as any)?.message || 'Unknown error';
-            toast.error('Failed to delete: ' + msg);
+            // Use alternative approach: dismiss + new error toast
+            showErrorToast(`Failed to delete department "${dept.name}": ${msg}`, loadingToastId);
           }
         } catch (err: any) {
-          toast.error('Error: ' + (err?.message || 'Failed to delete department'));
+          console.error('Delete API error:', err);
+          // Use alternative approach for error handling
+          showErrorToast(`Error deleting department "${dept.name}": ${err?.message || 'Unknown error occurred'}`, loadingToastId);
         }
       });
 
@@ -288,7 +625,9 @@ const Departments: React.FC = () => {
       {/* Page Content */}
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-slate-800">Departments</h1>
-        <Button onClick={handleOpenModal}>Create New Department</Button>
+        <div className="flex space-x-3">
+          <Button onClick={handleOpenModal}>Create New Department</Button>
+        </div>
       </div>
 
       <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
@@ -479,15 +818,22 @@ const Departments: React.FC = () => {
         </Modal>
       )}
 
-      {/* ✅ ToastContainer added here to ensure toasts show */}
+      {/* ✅ Enhanced ToastContainer configuration */}
       <ToastContainer
-              position="top-right"
-              autoClose={3000}
-              hideProgressBar={false}
-              closeOnClick
-              pauseOnHover
-              draggable
-              theme="colored" aria-label={undefined}      />
+        position="top-right"
+        autoClose={4000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored"
+        toastClassName="custom-toast"
+        className="custom-toast-body"
+        aria-label="Notification messages"
+      />
     </div>
   );
 };

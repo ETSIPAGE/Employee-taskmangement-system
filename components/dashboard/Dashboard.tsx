@@ -5,6 +5,7 @@ import AdminDashboard from './AdminDashboard';
 import ManagerDashboard from './ManagerDashboard';
 import EmployeeDashboard from './EmployeeDashboard';
 import HRDashboard from './HRDashboard';
+import RolesDashboard from './RolesDashboard';
 
 const Dashboard: React.FC = () => {
     const { user } = useAuth();
@@ -22,6 +23,8 @@ const Dashboard: React.FC = () => {
             return <EmployeeDashboard />;
         case UserRole.HR:
             return <HRDashboard />;
+        case UserRole.PARENT:
+            return <RolesDashboard />;
         default:
             return <div>Invalid user role.</div>;
     }
