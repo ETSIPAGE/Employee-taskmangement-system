@@ -1,21 +1,18 @@
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, OnboardingStepStatus, Company } from '../types';
 
 let COMPANIES: Company[] = [
-    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' },
-    { id: 'comp-2', name: 'TechCore Systems', ownerId: '1', createdAt: '2023-02-15T00:00:00.000Z' },
-    { id: 'comp-3', name: 'Alpha Solutions', ownerId: '1', createdAt: '2023-03-20T00:00:00.000Z' },
-    { id: 'comp-4', name: 'Beta Labs', ownerId: '1', createdAt: '2023-04-05T00:00:00.000Z' }
+    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
 ];
 
 let DEPARTMENTS: Department[] = [
-    { id: 'dept-1', name: 'Administration', companyIds: ['comp-1'] },
-    { id: 'dept-2', name: 'Finance & Accounting', companyIds: ['comp-1'] },
-    { id: 'dept-3', name: 'Human Resources (HR)', companyIds: ['comp-1'] },
-    { id: 'dept-4', name: 'Operations', companyIds: ['comp-1'] },
-    { id: 'dept-5', name: 'Marketing', companyIds: ['comp-1'] },
-    { id: 'dept-6', name: 'Sales', companyIds: ['comp-1'] },
-    { id: 'dept-7', name: 'Information Technology (IT)', companyIds: ['comp-1'] },
-    { id: 'dept-8', name: 'Customer Service', companyIds: ['comp-1'] },
+    { id: 'dept-1', name: 'Administration', companyId: 'comp-1' },
+    { id: 'dept-2', name: 'Finance & Accounting', companyId: 'comp-1' },
+    { id: 'dept-3', name: 'Human Resources (HR)', companyId: 'comp-1' },
+    { id: 'dept-4', name: 'Operations', companyId: 'comp-1' },
+    { id: 'dept-5', name: 'Marketing', companyId: 'comp-1' },
+    { id: 'dept-6', name: 'Sales', companyId: 'comp-1' },
+    { id: 'dept-7', name: 'Information Technology (IT)', companyId: 'comp-1' },
+    { id: 'dept-8', name: 'Customer Service', companyId: 'comp-1' },
 ];
 
 let PROJECTS: Project[] = [
@@ -225,67 +222,21 @@ export const createCompany = (name: string, ownerId: string): Company => {
 
 // --- DEPARTMENTS ---
 export const getDepartments = (): Department[] => {
-    console.log('💾 Getting departments from local storage:', DEPARTMENTS.length, 'departments');
-    return [...DEPARTMENTS]; // Return a copy to prevent mutations
-};
-
-export const setDepartments = (departments: Department[]): void => {
-    console.log('💾 Setting departments in local storage:', departments.length, 'departments');
-    DEPARTMENTS.length = 0; // Clear existing
-    DEPARTMENTS.push(...departments); // Add new ones
-    console.log('✅ Departments updated in local storage');
+    return [...DEPARTMENTS];
 };
 
 export const getDepartmentById = (id: string): Department | undefined => {
     return DEPARTMENTS.find(d => d.id === id);
 };
 
-export const createDepartment = (name: string, companyIds: string[]): Department => {
+export const createDepartment = (name: string, companyId: string): Department => {
     const newDepartment: Department = {
         id: `dept-${Date.now()}`,
         name,
-        companyIds,
+        companyId,
     };
     DEPARTMENTS.unshift(newDepartment);
     return newDepartment;
-};
-
-export const updateDepartment = (departmentId: string, updates: Partial<Department>): Department | undefined => {
-    console.log('🔄 Attempting to update department:', { id: departmentId, updates });
-    
-    // First try to find by exact ID match
-    let index = DEPARTMENTS.findIndex(d => d.id === departmentId);
-    
-    // If not found by ID, try to find by name (for API-generated departments)
-    if (index === -1 && updates.name) {
-        index = DEPARTMENTS.findIndex(d => d.name === updates.name);
-        console.log('🔍 Department not found by ID, searching by name:', updates.name, 'Found index:', index);
-    }
-    
-    if (index > -1) {
-        const originalDept = DEPARTMENTS[index];
-        DEPARTMENTS[index] = { ...originalDept, ...updates } as Department;
-        console.log('✅ Successfully updated department:', DEPARTMENTS[index]);
-        return DEPARTMENTS[index];
-    } else {
-        // If department doesn't exist locally, add it
-        console.log('⚠️ Department not found in local storage, creating new entry');
-        const newDepartment: Department = {
-            id: departmentId,
-            name: updates.name || 'Unknown Department',
-            companyIds: updates.companyIds || [],
-            timestamp: updates.timestamp || new Date().toISOString()
-        };
-        DEPARTMENTS.push(newDepartment);
-        console.log('✅ Created new department in local storage:', newDepartment);
-        return newDepartment;
-    }
-};
-
-export const deleteDepartment = (departmentId: string): void => {
-    DEPARTMENTS = DEPARTMENTS.filter(d => d.id !== departmentId);
-    // Also remove department from any projects' departmentIds
-    PROJECTS = PROJECTS.map(p => ({ ...p, departmentIds: p.departmentIds.filter(id => id !== departmentId) }));
 };
 
 // --- PROJECT & TASK FUNCTIONS ---

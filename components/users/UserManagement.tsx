@@ -379,31 +379,23 @@ const UserManagement: React.FC = () => {
             )}
 
             <Modal title={editingUser ? "Edit User" : "Add New Employee"} isOpen={isModalOpen} onClose={handleCloseModal}>
-                <form onSubmit={handleSubmit} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-4">
-                        <Input id="name" type="text" label="Full Name" value={name} onChange={e => setName(e.target.value)} required />
-                        <Input id="email" type="email" label="Email Address" value={email} onChange={e => setEmail(e.target.value)} required disabled={!!editingUser} />
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <Input id="name" type="text" label="Full Name" value={name} onChange={e => setName(e.target.value)} required />
+                    <Input id="email" type="email" label="Email Address" value={email} onChange={e => setEmail(e.target.value)} required disabled={!!editingUser} />
+                    {!editingUser && <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required />}
+                     <div>
+                        <label htmlFor="role" className="block text-sm font-medium text-slate-700">Role</label>
+                        <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                             {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
+                        </select>
                     </div>
-                    
-                    {!editingUser && (
-                        <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-                    )}
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="role" className="block text-sm font-medium text-slate-700">Role</label>
-                            <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                 {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
-                            </select>
-                        </div>
 
-                        <div>
-                            <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
-                            <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                <option value="">No Company</option>
-                                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                        </div>
+                    <div>
+                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
+                        <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                            <option value="">No Company</option>
+                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
                     </div>
 
                     <div>
@@ -426,34 +418,30 @@ const UserManagement: React.FC = () => {
                         </div>
                     </div>
 
-                    {(role === UserRole.EMPLOYEE || editingUser) && (
-                        <div className="grid grid-cols-2 gap-4">
-                            {role === UserRole.EMPLOYEE && (
-                                <div>
-                                    <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                                    <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                        <option value="">No Manager</option>
-                                        {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                    </select>
-                                </div>
-                            )}
-                            
-                            {editingUser && (
-                                <Input
-                                    id="rating"
-                                    label="Performance Rating (0-10)"
-                                    type="number"
-                                    value={rating}
-                                    onChange={(e) => setRating(parseFloat(e.target.value))}
-                                    min="0"
-                                    max="10"
-                                    step="0.1"
-                                />
-                            )}
+                    {role === UserRole.EMPLOYEE && (
+                        <div>
+                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
+                            <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                                <option value="">No Manager</option>
+                                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
                         </div>
                     )}
+                    
+                    {editingUser && (
+                        <Input
+                            id="rating"
+                            label="Performance Rating (0-10)"
+                            type="number"
+                            value={rating}
+                            onChange={(e) => setRating(parseFloat(e.target.value))}
+                            min="0"
+                            max="10"
+                            step="0.1"
+                        />
+                    )}
 
-                    <div className="pt-3 flex justify-end space-x-3">
+                    <div className="pt-4 flex justify-end space-x-3">
                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
                         <Button type="submit">{editingUser ? "Save Changes" : "Create Employee"}</Button>
                     </div>
