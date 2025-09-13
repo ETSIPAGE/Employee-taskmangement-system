@@ -87,19 +87,22 @@ const Departments: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [companyFilter, setCompanyFilter] = useState('all');
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const departments = DataService.getDepartments();
-            const users = AuthService.getUsers();
-            const projects = DataService.getAllProjects();
-            const allCompanies = DataService.getCompanies();
+            const [departments, users, projects, allCompanies] = await Promise.all([
+                DataService.getDepartments(),
+                AuthService.getUsers(),
+                DataService.getAllProjects(),
+                DataService.getCompanies()
+            ]);
+
             setCompanies(allCompanies);
             if (allCompanies.length > 0) {
                 setNewDepartmentCompanyId(allCompanies[0].id);
             }
 
-            const stats = departments.map(dept => {
+            const statsPromises = departments.map(async dept => {
                 const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
                 const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
                 const company = allCompanies.find(c => c.id === dept.companyId);
@@ -107,22 +110,20 @@ const Departments: React.FC = () => {
                 let projectsCompleted = 0;
                 let projectsInProgress = 0;
                 let projectsPending = 0;
-
-                deptProjects.forEach(project => {
-                    const tasks = DataService.getTasksByProject(project.id);
+                
+                await Promise.all(deptProjects.map(async project => {
+                    const tasks = await DataService.getTasksByProject(project.id);
                     if (tasks.length === 0) {
                         projectsPending++;
                         return;
                     }
                     const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                    const progress = Math.round((completedTasks / tasks.length) * 100);
-
-                    if (progress === 100) {
+                    if (completedTasks === tasks.length) {
                         projectsCompleted++;
                     } else {
                         projectsInProgress++;
                     }
-                });
+                }));
 
                 return {
                     ...dept,
@@ -135,6 +136,7 @@ const Departments: React.FC = () => {
                 };
             });
 
+            const stats = await Promise.all(statsPromises);
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);

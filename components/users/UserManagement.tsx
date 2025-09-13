@@ -177,7 +177,6 @@ const UserManagement: React.FC = () => {
         try {
             setUsers(AuthService.getUsers());
             setManagers(AuthService.getManagers());
-            setDepartments(DataService.getDepartments());
             setCompanies(DataService.getCompanies());
         } catch (error) {
             console.error("Failed to load user data", error);
@@ -189,6 +188,18 @@ const UserManagement: React.FC = () => {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    useEffect(() => {
+        const fetchDepartments = async () => {
+            try {
+                const apiDepartments = await DataService.getDepartments();
+                setDepartments(apiDepartments);
+            } catch (error) {
+                console.error("Failed to fetch departments for user management:", error);
+            }
+        };
+        fetchDepartments();
+    }, []);
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -400,8 +411,8 @@ const UserManagement: React.FC = () => {
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
-                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
-                            {departments.map(dept => (
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
+                            {departments.length > 0 ? departments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -414,7 +425,7 @@ const UserManagement: React.FC = () => {
                                         {dept.name}
                                     </label>
                                 </div>
-                            ))}
+                            )) : <p className="text-sm text-slate-500">Loading departments...</p>}
                         </div>
                     </div>
 

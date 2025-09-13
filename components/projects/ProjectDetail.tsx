@@ -34,22 +34,32 @@ const ProjectDetail: React.FC = () => {
     const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
     const [newTaskEstTime, setNewTaskEstTime] = useState('');
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!projectId || !user) return;
         setIsLoading(true);
         try {
-            const currentProject = DataService.getProjectById(projectId);
+            const currentProject = await DataService.getProjectById(projectId);
             if (!currentProject) {
                 setProject(null);
                 return;
             }
             setProject(currentProject);
-            setCompany(DataService.getCompanyById(currentProject.companyId) || null);
 
-            const projectTasks = DataService.getTasksByProject(projectId);
+            const [
+                projectTasks,
+                allCompanyUsers,
+                allDepts,
+                currentCompany
+            ] = await Promise.all([
+                DataService.getTasksByProject(projectId),
+                AuthService.getUsers(),
+                DataService.getDepartments(),
+                DataService.getCompanyById(currentProject.companyId)
+            ]);
+            
+            setCompany(currentCompany || null);
             setTasks(projectTasks);
             
-            const allCompanyUsers = AuthService.getUsers();
             const allEmployees = allCompanyUsers.filter(u => u.role === UserRole.EMPLOYEE);
             setAssignableEmployees(allEmployees);
             
@@ -57,7 +67,6 @@ const ProjectDetail: React.FC = () => {
                  setNewAssigneeId(allEmployees[0].id);
             }
 
-            const allDepts = DataService.getDepartments();
             setDepartments(allDepts);
 
         } catch (error) {
@@ -96,38 +105,39 @@ const ProjectDetail: React.FC = () => {
         setNewTaskEstTime('');
     };
 
-    const handleCreateTask = (e: React.FormEvent) => {
+    const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newTaskName.trim() || !projectId) return;
 
-        DataService.createTask({
-            name: newTaskName,
+        await DataService.createTask({
+            title: newTaskName,
             description: newTaskDesc,
-            dueDate: newTaskDueDate,
-            projectId,
-            assigneeId: newAssigneeId,
+            due_date: newTaskDueDate,
+            project: project?.name || projectId,
+            assign_to: newAssigneeId,
             status: TaskStatus.TODO,
             priority: newTaskPriority,
-            estimatedTime: newTaskEstTime ? parseInt(newTaskEstTime, 10) : undefined,
+            est_time: newTaskEstTime,
+            department: project?.departmentIds[0] ? (await DataService.getDepartmentById(project.departmentIds[0]))?.name : ''
         });
         
         loadData(); // Refresh list
         handleCloseModal();
     };
 
-    const handleSaveRoadmap = (newRoadmap: ProjectMilestone[]) => {
+    const handleSaveRoadmap = async (newRoadmap: ProjectMilestone[]) => {
         if (!project) return;
-        DataService.updateProject(project.id, { roadmap: newRoadmap });
+        await DataService.updateProject(project.id, { roadmap: newRoadmap });
         loadData(); // Refresh project data
         setIsRoadmapModalOpen(false);
     };
 
-    const handleUpdateMilestoneStatus = (milestoneId: string, newStatus: MilestoneStatus) => {
+    const handleUpdateMilestoneStatus = async (milestoneId: string, newStatus: MilestoneStatus) => {
         if (!project || !project.roadmap) return;
         const newRoadmap = project.roadmap.map(ms =>
             ms.id === milestoneId ? { ...ms, status: newStatus } : ms
         );
-        DataService.updateProject(project.id, { roadmap: newRoadmap });
+        await DataService.updateProject(project.id, { roadmap: newRoadmap });
         loadData(); // Re-fetch to update state
     };
     
@@ -263,12 +273,14 @@ const ProjectDetail: React.FC = () => {
                 </form>
             </Modal>
             
-            <RoadmapBuilderModal
-                isOpen={isRoadmapModalOpen}
-                onClose={() => setIsRoadmapModalOpen(false)}
-                project={project}
-                onSave={handleSaveRoadmap}
-            />
+            {project && (
+                <RoadmapBuilderModal
+                    isOpen={isRoadmapModalOpen}
+                    onClose={() => setIsRoadmapModalOpen(false)}
+                    project={project}
+                    onSave={handleSaveRoadmap}
+                />
+            )}
         </div>
     );
 };

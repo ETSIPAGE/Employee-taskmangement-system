@@ -45,11 +45,11 @@ const TaskDetail: React.FC = () => {
     const [dependencyReason, setDependencyReason] = useState('');
     const [dependencyUserId, setDependencyUserId] = useState('');
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!taskId) return;
         setIsLoading(true);
         try {
-            const currentTask = DataService.getTaskById(taskId);
+            const currentTask = await DataService.getTaskById(taskId);
             if (!currentTask) {
                 setTask(null);
                 setIsLoading(false);
@@ -57,10 +57,12 @@ const TaskDetail: React.FC = () => {
             }
             setTask(currentTask);
 
-            const taskProject = DataService.getProjectById(currentTask.projectId);
-            setProject(taskProject);
-            
-            const users = AuthService.getUsers();
+            const [taskProject, users] = await Promise.all([
+                DataService.getProjectById(currentTask.projectId),
+                AuthService.getUsers()
+            ]);
+
+            setProject(taskProject || null);
             setAllUsers(users);
             if (users.length > 0) {
                 setDependencyUserId(users[0].id);

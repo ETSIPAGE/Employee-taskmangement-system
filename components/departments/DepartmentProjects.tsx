@@ -11,26 +11,28 @@ const DepartmentProjects: React.FC = () => {
     const [projects, setProjects] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!departmentId) return;
         setIsLoading(true);
         try {
-            const currentDepartment = DataService.getDepartmentById(departmentId);
+            const currentDepartment = await DataService.getDepartmentById(departmentId);
             if (!currentDepartment) {
                 setDepartment(null);
                 return;
             }
             setDepartment(currentDepartment);
 
-            const allCompanies = DataService.getCompanies();
+            const allCompanies = DataService.getCompanies(); // Mocked
             const currentCompany = allCompanies.find(c => c.id === currentDepartment.companyId);
             setCompany(currentCompany || null);
 
-            const departmentProjects = DataService.getProjectsByDepartment(departmentId);
-            const allDepts = DataService.getDepartments();
+            const [departmentProjects, allDepts] = await Promise.all([
+                DataService.getProjectsByDepartment(departmentId),
+                DataService.getDepartments()
+            ]);
 
-            const projectsWithDetails = departmentProjects.map(p => {
-                const projectTasks = DataService.getTasksByProject(p.id);
+            const projectsWithDetailsPromises = departmentProjects.map(async p => {
+                const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
                 const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
                 const departmentNames = p.departmentIds.map(id => allDepts.find(d => d.id === id)?.name).filter(Boolean).join(', ');
@@ -43,6 +45,7 @@ const DepartmentProjects: React.FC = () => {
                     companyName: projCompany?.name || 'N/A',
                 };
             });
+            const projectsWithDetails = await Promise.all(projectsWithDetailsPromises);
             setProjects(projectsWithDetails);
 
         } catch (error) {

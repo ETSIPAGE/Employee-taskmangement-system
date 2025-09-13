@@ -10,22 +10,24 @@ const CompanyProjects: React.FC = () => {
     const [projects, setProjects] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!companyId) return;
         setIsLoading(true);
         try {
-            const currentCompany = DataService.getCompanyById(companyId);
+            const currentCompany = DataService.getCompanyById(companyId); // This is still mock data
             if (!currentCompany) {
                 setCompany(null);
                 return;
             }
             setCompany(currentCompany);
 
-            const companyProjects = DataService.getProjectsByCompany(companyId);
-            const depts = DataService.getDepartments();
+            const [companyProjects, depts] = await Promise.all([
+                DataService.getProjectsByCompany(companyId),
+                DataService.getDepartments()
+            ]);
 
-            const projectsWithDetails = companyProjects.map(p => {
-                const projectTasks = DataService.getTasksByProject(p.id);
+            const projectsWithDetailsPromises = companyProjects.map(async p => {
+                const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
                 const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
                 const departmentNames = p.departmentIds.map(id => depts.find(d => d.id === id)?.name).filter(Boolean).join(', ');
@@ -37,6 +39,7 @@ const CompanyProjects: React.FC = () => {
                     companyName: currentCompany.name,
                 };
             });
+            const projectsWithDetails = await Promise.all(projectsWithDetailsPromises);
             setProjects(projectsWithDetails);
 
         } catch (error) {

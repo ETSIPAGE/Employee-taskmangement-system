@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import { Project, Task, TaskStatus, User, UserRole } from '../../types';
+import { Project, Task, TaskStatus, UserRole } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 
@@ -11,7 +11,7 @@ const EmployeeTasks: React.FC = () => {
     const navigate = useNavigate();
 
     const [allTasks, setAllTasks] = useState<Task[]>([]);
-    const [projects, setProjects] = useState<Record<string, Project>>({});
+    const [projects, setProjects] = useState<Record<string, { id: string, name: string }>>({});
     const [isLoading, setIsLoading] = useState(true);
     const [view, setView] = useState<'card' | 'table'>('card');
 
@@ -20,20 +20,21 @@ const EmployeeTasks: React.FC = () => {
     const [projectFilter, setProjectFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!user) return;
         setIsLoading(true);
         try {
-            const userTasks = DataService.getTasksByAssignee(user.id);
+            const userTasks = await DataService.getTasksByAssignee(user.id);
             setAllTasks(userTasks);
 
-            // Fetch all projects to get their names
-            const allProjects = DataService.getAllProjects();
-            const projectsMap = allProjects.reduce((acc, p) => {
-                acc[p.id] = p;
+            const projectsFromTasks = userTasks.reduce((acc, task) => {
+                if (task.projectId && !acc[task.projectId]) {
+                    acc[task.projectId] = { id: task.projectId, name: task.projectId };
+                }
                 return acc;
-            }, {} as Record<string, Project>);
-            setProjects(projectsMap);
+            }, {} as Record<string, { id: string, name: string }>);
+            setProjects(projectsFromTasks);
+
         } catch (error) {
             console.error("Failed to load task data:", error);
         } finally {
@@ -47,13 +48,12 @@ const EmployeeTasks: React.FC = () => {
 
     const handleStatusChange = (taskId: string, newStatus: TaskStatus) => {
         const task = allTasks.find(t => t.id === taskId);
-        // Prevent employee from moving a task out of 'On Hold' if a dependency is set
         if(task?.status === TaskStatus.ON_HOLD && task.dependency && newStatus !== TaskStatus.ON_HOLD) {
             alert("This task cannot be taken off hold until its dependency is cleared by a manager.");
             return;
         }
         DataService.updateTask(taskId, { status: newStatus });
-        loadData();
+        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     };
 
     const filteredTasks = useMemo(() => {
@@ -104,7 +104,12 @@ const EmployeeTasks: React.FC = () => {
                 </div>
             </div>
 
-            {view === 'card' ? (
+            {filteredTasks.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 col-span-full">
+                    <h3 className="text-xl font-semibold text-slate-700">No Tasks Found</h3>
+                    <p className="text-slate-500 mt-2">You have no tasks matching the current filters, or there was an issue fetching them.</p>
+                </div>
+            ) : view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredTasks.map(task => (
                     <TaskCard
@@ -149,8 +154,6 @@ const EmployeeTasks: React.FC = () => {
                     </table>
                 </div>
             )}
-            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
-
         </div>
     );
 };

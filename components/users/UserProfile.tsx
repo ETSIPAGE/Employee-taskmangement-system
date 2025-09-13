@@ -49,17 +49,19 @@ const UserProfile: React.FC = () => {
                 const fetchedUser = AuthService.getUserById(userId);
                 if (fetchedUser) {
                     setUser(fetchedUser);
-                    const userTasks = DataService.getTasksByAssignee(userId);
-                    setTasks(userTasks);
 
                     if (fetchedUser.managerId) {
                         setManager(AuthService.getUserById(fetchedUser.managerId) || null);
                     }
+                    // FIX: Awaited all data fetching promises before attempting to use their results.
+                    const [userTasks, allProjects, allDepts] = await Promise.all([
+                        DataService.getTasksByAssignee(userId),
+                        DataService.getAllProjects(),
+                        DataService.getDepartments()
+                    ]);
 
-                    const allProjects = DataService.getAllProjects();
+                    setTasks(userTasks);
                     setProjects(allProjects.reduce((acc, p) => ({...acc, [p.id]: p }), {}));
-                    
-                    const allDepts = DataService.getDepartments();
                     setDepartments(allDepts.reduce((acc, d) => ({...acc, [d.id]: d }), {}));
 
                 } else {

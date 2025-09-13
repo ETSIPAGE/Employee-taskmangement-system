@@ -79,16 +79,19 @@ const Companies: React.FC = () => {
     const [newCompanyName, setNewCompanyName] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         if (!user) return;
         try {
             const companies = DataService.getCompanies();
             const users = AuthService.getUsers();
-            const projects = DataService.getAllProjects();
-            const departments = DataService.getDepartments();
+            
+            const [projects, departments] = await Promise.all([
+                DataService.getAllProjects(),
+                DataService.getDepartments()
+            ]);
 
-            const stats = companies.map(comp => {
+            const statsPromises = companies.map(async comp => {
                 const companyUsers = users.filter(u => u.companyId === comp.id);
                 const companyProjects = projects.filter(p => p.companyId === comp.id);
                 const companyDepartments = departments.filter(d => d.companyId === comp.id);
@@ -97,8 +100,8 @@ const Companies: React.FC = () => {
                 let projectsInProgress = 0;
                 let projectsPending = 0;
 
-                companyProjects.forEach(project => {
-                    const tasks = DataService.getTasksByProject(project.id);
+                await Promise.all(companyProjects.map(async project => {
+                    const tasks = await DataService.getTasksByProject(project.id);
                     if (tasks.length === 0) {
                         projectsPending++;
                         return;
@@ -109,8 +112,7 @@ const Companies: React.FC = () => {
                     } else {
                         projectsInProgress++;
                     }
-                });
-
+                }));
 
                 return {
                     ...comp,
@@ -123,7 +125,7 @@ const Companies: React.FC = () => {
                     projectsPending,
                 };
             });
-
+            const stats = await Promise.all(statsPromises);
             setCompaniesWithStats(stats);
         } catch (error) {
             console.error("Failed to load company data:", error);

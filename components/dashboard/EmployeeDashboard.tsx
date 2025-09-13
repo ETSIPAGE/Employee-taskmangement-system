@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import { Task, TaskStatus } from '../../types';
+import { Task, TaskStatus, Project } from '../../types';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon } from '../../constants';
 
@@ -47,13 +47,22 @@ const EmployeeDashboard: React.FC = () => {
     const [isOnBreak, setIsOnBreak] = useState(false);
     const [isPunchedIn, setIsPunchedIn] = useState(false);
     const [tasks, setTasks] = useState<Task[]>([]);
+    const [projectsMap, setProjectsMap] = useState<Map<string, Project>>(new Map());
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         if (user) {
-            const userTasks = DataService.getTasksByAssignee(user.id);
-            setTasks(userTasks);
+            try {
+                const [userTasks, allProjects] = await Promise.all([
+                    DataService.getTasksByAssignee(user.id),
+                    DataService.getAllProjects()
+                ]);
+                setTasks(userTasks);
+                setProjectsMap(new Map(allProjects.map(p => [p.id, p])));
+            } catch (error) {
+                console.error("Failed to load dashboard data:", error);
+            }
         }
         setIsLoading(false);
     }, [user]);
@@ -70,7 +79,7 @@ const EmployeeDashboard: React.FC = () => {
     };
 
     const getProjectName = (projectId: string) => {
-        return DataService.getProjectById(projectId)?.name || 'Unknown Project';
+        return projectsMap.get(projectId)?.name || projectId || 'Unknown Project';
     };
 
     return (
