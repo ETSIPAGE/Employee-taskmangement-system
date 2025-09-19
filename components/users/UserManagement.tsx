@@ -8,7 +8,7 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import ViewSwitcher from '../shared/ViewSwitcher';
-import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon } from '../../constants';
+import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
 
 const getInitials = (name: string) => {
@@ -27,7 +27,7 @@ const StatItem: React.FC<{ icon: React.ReactNode; value: React.ReactNode; label:
     </div>
 );
 
-const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void }> = ({ user, companyName, onEdit, onDelete }) => {
+const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void; onImpersonate: (userId: string) => void; currentUser: User; }> = ({ user, companyName, onEdit, onDelete, onImpersonate, currentUser }) => {
     const statusStyles = {
         Active: { dot: 'bg-green-500' },
         Busy: { dot: 'bg-orange-500' },
@@ -83,6 +83,11 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     {isMenuOpen && (
                         <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg z-10 border">
                             <a href="#" onClick={(e) => { e.preventDefault(); onEdit(user); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Edit User</a>
+                            {currentUser.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                <a href="#" onClick={(e) => { e.preventDefault(); onImpersonate(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                                    Impersonate
+                                </a>
+                            )}
                             <a href="#" onClick={(e) => { e.preventDefault(); onDelete(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Delete User</a>
                         </div>
                     )}
@@ -147,7 +152,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
 
 
 const UserManagement: React.FC = () => {
-    const { user: currentUser } = useAuth();
+    const { user: currentUser, impersonateUser } = useAuth();
     const navigate = useNavigate();
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
@@ -251,6 +256,16 @@ const UserManagement: React.FC = () => {
         }
     };
 
+    const handleImpersonate = async (userId: string) => {
+        try {
+            await impersonateUser(userId);
+            navigate('/');
+        } catch (error) {
+            console.error("Impersonation failed", error);
+            alert("Could not log in as this user.");
+        }
+    };
+
     const handleDepartmentToggle = (deptId: string) => {
         setDepartmentIds(prev => {
             const newIds = new Set(prev);
@@ -333,7 +348,15 @@ const UserManagement: React.FC = () => {
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {filteredUsers.map(user => {
                         const company = companies.find(c => c.id === user.companyId);
-                        return (<UserCard key={user.id} user={user} companyName={company?.name} onEdit={handleOpenEditModal} onDelete={handleDeleteUser} />);
+                        return (<UserCard 
+                            key={user.id} 
+                            user={user} 
+                            companyName={company?.name} 
+                            onEdit={handleOpenEditModal} 
+                            onDelete={handleDeleteUser}
+                            onImpersonate={handleImpersonate}
+                            currentUser={currentUser}
+                        />);
                     })}
                 </div>
             ) : (
@@ -373,6 +396,15 @@ const UserManagement: React.FC = () => {
                                         <div className="flex items-center space-x-3">
                                             <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
+                                            {currentUser?.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleImpersonate(user.id); }}
+                                                    className="text-slate-500 hover:text-green-600"
+                                                    title={`Log in as ${user.name}`}
+                                                >
+                                                    <LoginIcon />
+                                                </button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
