@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
+import { UsersIcon, BuildingOfficeIcon } from '../../constants';
 
 interface CompanyWithStats extends Company {
     employeeCount: number;
@@ -26,14 +28,17 @@ const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; on
 
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Organization</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4 text-slate-700">
-                        <div className="flex items-center space-x-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-4">
+                        <div className="flex items-center space-x-2 text-slate-700">
+                            <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{company.employeeCount} Employees</span>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 text-slate-700">
+                            <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{company.managerCount} Managers</span>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 text-slate-700">
+                            <BuildingOfficeIcon className="w-4 h-4" />
                             <span className="font-medium">{company.departmentCount} Departments</span>
                         </div>
                     </div>
@@ -78,26 +83,79 @@ const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; on
     );
 };
 
+// Define the ToastMessage type locally
+type ToastMessage = {
+    message: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+};
+
 const Companies: React.FC = () => {
     const { user } = useAuth();
     const [companiesWithStats, setCompaniesWithStats] = useState<CompanyWithStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isCreateEditModalOpen, setIsCreateEditModalOpen] = useState(false); // Renamed for clarity
     const [newCompanyName, setNewCompanyName] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [editingCompany, setEditingCompany] = useState<CompanyWithStats | null>(null);
 
-    const API_URL = "https://j5dfp9hh9k.execute-api.ap-south-1.amazonaws.com/del/Ets-Create-Com-pz";
+    // State for the local toast notification
+    const [currentToast, setCurrentToast] = useState<ToastMessage | null>(null);
+    const toastTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+    // State for deletion confirmation modal
+    const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] = useState(false);
+    const [companyToDelete, setCompanyToDelete] = useState<CompanyWithStats | null>(null);
+
+    // Function to show a toast message
+    const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+        if (toastTimeoutRef.current) {
+            clearTimeout(toastTimeoutRef.current);
+        }
+        setCurrentToast({ message, type });
+        toastTimeoutRef.current = setTimeout(() => {
+            setCurrentToast(null);
+            toastTimeoutRef.current = null;
+        }, 5000);
+    }, []);
+
+    // API endpoints for company operations
+    const GET_COMPANIES_API_URL = "https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com";
+    const CREATE_COMPANY_API_URL = "https://j5dfp9hh9k.execute-api.ap-south-1.amazonaws.com/del/Ets-Create-Com-pz";
+    const EDIT_COMPANY_BASE_URL = "https://f25828ro5f.execute-api.ap-south-1.amazonaws.com/edt/Ets-edit-com";
+    const DELETE_COMPANY_BASE_URL = "https://o46q7fnoel.execute-api.ap-south-1.amazonaws.com/prod/Ets-del-pz";
+
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
-        if (!user) return;
+        if (!user) {
+            setIsLoading(false);
+            return;
+        }
         try {
-            const res = await fetch(API_URL, { method: "GET" });
-            const companies = await res.json();
+            const res = await fetch(GET_COMPANIES_API_URL, { method: "GET" });
 
-            const stats = companies.map((comp: any) => ({
-                ...comp,
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(`Failed to fetch companies: ${res.status} ${res.statusText}. Response: ${errorText}`);
+            }
+
+            const apiResponse: unknown = await res.json();
+            let companiesToProcess: any[] = [];
+
+            if (typeof apiResponse === 'object' && apiResponse !== null && 'items' in apiResponse && Array.isArray((apiResponse as any).items)) {
+                companiesToProcess = (apiResponse as any).items;
+            } else if (Array.isArray(apiResponse)) {
+                companiesToProcess = apiResponse;
+            } else {
+                throw new Error('API response for companies was not a direct array or an object with an "items" array.');
+            }
+
+            const stats = companiesToProcess.map((comp: any) => ({
+                id: comp.id || comp._id || `comp-${Math.random().toString(36).substring(2, 9)}`,
+                name: comp.name || 'Unnamed Company',
+                ownerId: comp.ownerId || '1',
+                createdAt: comp.createdAt || new Date().toISOString(),
+
                 employeeCount: comp.employeeCount ?? 0,
                 managerCount: comp.managerCount ?? 0,
                 departmentCount: comp.departmentCount ?? 0,
@@ -108,15 +166,35 @@ const Companies: React.FC = () => {
             }));
 
             setCompaniesWithStats(stats);
-        } catch (error) {
-            console.error("Failed to load company data:", error);
+            // Only show success toast if there are companies or it's a fresh load with no error
+            if (companiesToProcess.length > 0) {
+                 addToast('Companies loaded successfully!', 'success');
+            }
+        } catch (error: any) {
+            console.error("Failed to load company data:", error.message || error);
+            setCompaniesWithStats([]);
+            addToast(`Failed to load companies: ${error.message || 'Unknown error'}`, 'error');
         } finally {
             setIsLoading(false);
         }
-    }, [user]);
+    }, [user, addToast]);
 
     useEffect(() => {
-        loadData();
+        let isMounted = true;
+        const fetchData = async () => {
+            if (isMounted) {
+                await loadData();
+            }
+        };
+
+        fetchData();
+
+        return () => {
+            isMounted = false;
+            if (toastTimeoutRef.current) {
+                clearTimeout(toastTimeoutRef.current);
+            }
+        };
     }, [loadData]);
 
     const filteredCompanies = useMemo(() => {
@@ -126,9 +204,10 @@ const Companies: React.FC = () => {
         );
     }, [searchTerm, companiesWithStats]);
 
-    const handleOpenModal = () => setIsModalOpen(true);
-    const handleCloseModal = () => {
-        setIsModalOpen(false);
+    // Handlers for Create/Edit Modal
+    const handleOpenCreateEditModal = () => setIsCreateEditModalOpen(true);
+    const handleCloseCreateEditModal = () => {
+        setIsCreateEditModalOpen(false);
         setNewCompanyName('');
         setEditingCompany(null);
     };
@@ -136,14 +215,17 @@ const Companies: React.FC = () => {
     const handleCreateCompany = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newCompanyName.trim() || !user) {
-            alert('Company name is required.');
+            addToast('Company name is required.', 'warning');
             return;
         }
 
         try {
             if (editingCompany) {
-                // EDIT COMPANY
-                const res = await fetch(`https://f25828ro5f.execute-api.ap-south-1.amazonaws.com/edt/Ets-edit-com/${editingCompany.id}`, {
+                if (!editingCompany.id) {
+                    addToast("Cannot edit company: Company ID is missing.", 'error');
+                    return;
+                }
+                const res = await fetch(`${EDIT_COMPANY_BASE_URL}/${editingCompany.id}`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ name: newCompanyName.trim() })
@@ -152,11 +234,10 @@ const Companies: React.FC = () => {
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message || "Failed to edit company");
 
-                alert(`Company updated successfully to ${newCompanyName.trim()}`);
+                addToast(`Company "${newCompanyName.trim()}" updated successfully!`, 'success');
                 setEditingCompany(null);
             } else {
-                // CREATE COMPANY
-                const res = await fetch(API_URL, {
+                const res = await fetch(CREATE_COMPANY_API_URL, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ name: newCompanyName, createdBy: user.id })
@@ -164,29 +245,83 @@ const Companies: React.FC = () => {
 
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message || "Failed to create company");
+                addToast(`Company "${newCompanyName}" created successfully!`, 'success');
             }
 
             await loadData();
-            handleCloseModal();
+            handleCloseCreateEditModal();
         } catch (err: any) {
-            console.error("Error:", err);
-            alert(err.message || "Operation failed");
+            console.error("Error during company operation:", err);
+            addToast(`Operation failed: ${err.message || 'Unknown error'}`, 'error');
         }
     };
 
+    // Handlers for Delete Confirmation Modal
+    const handleOpenDeleteConfirmModal = (company: CompanyWithStats) => {
+        setCompanyToDelete(company);
+        setIsDeleteConfirmModalOpen(true);
+    };
+
+    const handleCloseDeleteConfirmModal = () => {
+        setIsDeleteConfirmModalOpen(false);
+        setCompanyToDelete(null);
+    };
+
+    const handleDeleteCompany = async () => {
+        if (!companyToDelete || !companyToDelete.id) {
+            addToast("Cannot delete company: Company ID is missing.", 'error');
+            handleCloseDeleteConfirmModal();
+            return;
+        }
+
+        try {
+            const res = await fetch(`${DELETE_COMPANY_BASE_URL}/${companyToDelete.id}`, {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" }
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.message || "Failed to delete company");
+            }
+
+            addToast(`Company "${companyToDelete.name}" deleted successfully!`, 'success');
+            await loadData();
+            handleCloseDeleteConfirmModal();
+        } catch (err: any) {
+            console.error("Delete error:", err);
+            addToast(`Failed to delete company: ${err.message || 'Unknown error'}`, 'error');
+            handleCloseDeleteConfirmModal();
+        }
+    };
+
+
     if (user?.role !== UserRole.ADMIN) {
+        addToast("You do not have permission to view this page.", "error");
         return <Navigate to="/" />;
     }
 
     if (isLoading) {
-        return <div>Loading companies...</div>;
+        return <div className="text-center py-8 text-lg text-slate-600">Loading companies...</div>;
     }
 
+    // Determine toast classes based on type
+    const getToastClasses = (type: ToastMessage['type']) => {
+        const base = "p-4 rounded-md shadow-lg flex items-center justify-between space-x-4";
+        switch (type) {
+            case 'success': return `${base} bg-green-50 text-green-800 border border-green-200`;
+            case 'error': return `${base} bg-red-50 text-red-800 border border-red-200`;
+            case 'info': return `${base} bg-blue-50 text-blue-800 border border-blue-200`;
+            case 'warning': return `${base} bg-yellow-50 text-yellow-800 border border-yellow-200`;
+            default: return base;
+        }
+    };
+
     return (
-        <div>
+        <div className="relative">
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-slate-800">Companies</h1>
-                <Button onClick={handleOpenModal}>Create New Company</Button>
+                <Button onClick={handleOpenCreateEditModal}>Create New Company</Button>
             </div>
 
             <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
@@ -207,27 +342,9 @@ const Companies: React.FC = () => {
                         onEdit={() => {
                             setEditingCompany(comp);
                             setNewCompanyName(comp.name);
-                            setIsModalOpen(true);
+                            setIsCreateEditModalOpen(true);
                         }}
-                        onDelete={async () => {
-                            if (!window.confirm(`Are you sure you want to delete ${comp.name}?`)) return;
-
-                            try {
-                                const res = await fetch(`https://o46q7fnoel.execute-api.ap-south-1.amazonaws.com/prod/Ets-del-pz/${comp.id}`, {
-                                    method: "DELETE",
-                                    headers: { "Content-Type": "application/json" }
-                                });
-
-                                const data = await res.json();
-                                if (!res.ok) throw new Error(data.message || "Failed to delete company");
-
-                                alert(`${comp.name} deleted successfully`);
-                                await loadData();
-                            } catch (err: any) {
-                                console.error("Delete error:", err);
-                                alert(err.message || "Failed to delete company");
-                            }
-                        }}
+                        onDelete={() => handleOpenDeleteConfirmModal(comp)} // Changed to open confirmation modal
                     />
                 ))}
             </div>
@@ -239,7 +356,8 @@ const Companies: React.FC = () => {
                 </div>
             )}
 
-            <Modal title={editingCompany ? "Edit Company" : "Create New Company"} isOpen={isModalOpen} onClose={handleCloseModal}>
+            {/* Create/Edit Company Modal */}
+            <Modal title={editingCompany ? "Edit Company" : "Create New Company"} isOpen={isCreateEditModalOpen} onClose={handleCloseCreateEditModal}>
                 <form onSubmit={handleCreateCompany} className="space-y-6">
                     <Input
                         id="newCompanyName"
@@ -250,13 +368,65 @@ const Companies: React.FC = () => {
                         required
                     />
                     <div className="pt-4 flex justify-end space-x-3">
-                        <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        <button type="button" onClick={handleCloseCreateEditModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
                         <Button type="submit">{editingCompany ? "Save Changes" : "Create Company"}</Button>
                     </div>
                 </form>
             </Modal>
+
+            {/* Delete Confirmation Modal */}
+            <Modal title="Confirm Deletion" isOpen={isDeleteConfirmModalOpen} onClose={handleCloseDeleteConfirmModal}>
+                <div className="p-4">
+                    <p className="text-slate-700 mb-6">
+                        Are you sure you want to delete company <span className="font-bold">"{companyToDelete?.name}"</span>?
+                        This action cannot be undone.
+                    </p>
+                    <div className="flex justify-end space-x-3">
+                        <button type="button" onClick={handleCloseDeleteConfirmModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                            Cancel
+                        </button>
+                        <Button
+                            type="button"
+                            onClick={handleDeleteCompany}
+                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium shadow-sm transition-colors"
+                        >
+                            Delete
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
+
+
+            {/* In-component Toast Notification */}
+            {currentToast && (
+                <div className="fixed bottom-4 right-4 z-50 transition-all duration-300 ease-in-out transform translate-y-0 opacity-100">
+                    <div className={getToastClasses(currentToast.type)}>
+                        <span>{currentToast.message}</span>
+                        <button
+                            onClick={() => {
+                                setCurrentToast(null);
+                                if (toastTimeoutRef.current) {
+                                    clearTimeout(toastTimeoutRef.current);
+                                    toastTimeoutRef.current = null;
+                                }
+                            }}
+                            className={`ml-4 p-1 rounded-full text-sm font-medium focus:outline-none 
+                                ${currentToast.type === 'success' ? 'hover:bg-green-100 text-green-700' : ''}
+                                ${currentToast.type === 'error' ? 'hover:bg-red-100 text-red-700' : ''}
+                                ${currentToast.type === 'info' ? 'hover:bg-blue-100 text-blue-700' : ''}
+                                ${currentToast.type === 'warning' ? 'hover:bg-yellow-100 text-yellow-700' : ''}
+                            `}
+                            aria-label="Close"
+                        >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

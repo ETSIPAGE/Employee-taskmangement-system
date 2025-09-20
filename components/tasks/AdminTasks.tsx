@@ -12,7 +12,7 @@ import ViewSwitcher from '../shared/ViewSwitcher';
 import { EditIcon, TrashIcon } from '../../constants';
 
 const AdminTasks: React.FC = () => {
-    const { user } = useAuth();
+    const { user } = useAuth(); // Get the current logged-in user
     const navigate = useNavigate();
 
     const [allTasks, setAllTasks] = useState<Task[]>([]);
@@ -42,20 +42,32 @@ const AdminTasks: React.FC = () => {
     const [taskPriority, setTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
     const [taskEstTime, setTaskEstTime] = useState('');
 
-    const loadData = useCallback(() => {
-        if (!user || user.role !== UserRole.ADMIN) return;
+    const loadData = useCallback(async () => {
+        // Ensure user is defined before proceeding, or handle unauthorized state
+        if (!user) {
+            setIsLoading(false);
+            return;
+        }
+        if (user.role !== UserRole.ADMIN) { // Ensure only admin can load data for this component
+            setIsLoading(false);
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const employees = AuthService.getUsers().filter(u => u.role === UserRole.EMPLOYEE);
+            const allUsers = await AuthService.getUsers();
+            const employees = allUsers.filter(u => u.role === UserRole.EMPLOYEE);
             setAllEmployees(employees);
 
-            const tasks = DataService.getTasksByTeam(AuthService.getUsers().map(u=>u.id));
-            setAllTasks(tasks);
-
-            const projects = DataService.getAllProjects();
+            // FIX: Await DataService.getAllProjects() - This was already fixed in your code.
+            const projects = await DataService.getAllProjects(); 
             setAllProjects(projects);
 
-            const depts = DataService.getDepartments();
+            // FIX: Await DataService.getTasksByTeam - Ensure this is correctly fetching based on allUsers
+            const tasks = await DataService.getTasksByTeam(allUsers.map(u => u.id));
+            setAllTasks(tasks);
+
+            const depts = await DataService.getDepartments();
             setDepartments(depts);
             
         } catch (error) {
@@ -63,7 +75,7 @@ const AdminTasks: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [user]);
+    }, [user]); // `user` is correctly a dependency here.
 
     useEffect(() => {
         loadData();
@@ -84,6 +96,9 @@ const AdminTasks: React.FC = () => {
 
     const handleOpenCreateModal = () => {
         resetForm();
+        // Set default project/department if available
+        if (departments.length > 0) setDepartmentId(departments[0].id);
+        if (allProjects.length > 0) setProjectId(allProjects[0].id);
         setIsModalOpen(true);
     };
     
@@ -113,14 +128,20 @@ const AdminTasks: React.FC = () => {
         resetForm();
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!taskName.trim() || !projectId) {
             alert('Task Title and Project are required.');
             return;
         }
+        // Ensure user is logged in and available
+        if (!user?.id) {
+            alert('Creator ID not available. Please log in.');
+            return;
+        }
 
-        const taskData = {
+        const taskData: Omit<Task, 'id'> = { // Explicitly type to catch missing properties
+            creatorId: user.id, // <--- FIX: Add creatorId here
             name: taskName,
             description: taskDesc,
             dueDate: taskDueDate,
@@ -129,28 +150,47 @@ const AdminTasks: React.FC = () => {
             status: taskStatus,
             priority: taskPriority,
             estimatedTime: taskEstTime ? parseInt(taskEstTime, 10) : undefined,
+            // Add other properties that are part of Omit<Task, 'id'> if they are required and not optional
+            // e.g., category: '', tags: [], notes: [], dependencyLogs: [],
         };
 
-        if (editingTask) {
-            DataService.updateTask(editingTask.id, taskData);
-        } else {
-            DataService.createTask(taskData);
-        }
-        
-        loadData();
-        handleCloseModal();
-    };
-    
-    const handleDeleteTask = (taskId: string) => {
-        if(window.confirm("Are you sure you want to delete this task?")) {
-            DataService.deleteTask(taskId);
+        try {
+            if (editingTask) {
+                // When editing, creatorId is already part of the existing task.
+                // You only pass the partial updates.
+                await DataService.updateTask(editingTask.id, taskData); // taskData is Partial<Task> for update
+            } else {
+                await DataService.createTask(taskData);
+            }
+            
             loadData();
+            handleCloseModal();
+        } catch (error) {
+            console.error("Failed to save task:", error);
+            alert('Failed to save task. Please try again.');
         }
     };
     
-    const handleAssigneeChange = (taskId: string, newAssigneeId?: string) => {
-        DataService.updateTask(taskId, { assigneeId: newAssigneeId });
-        loadData();
+    const handleDeleteTask = async (taskId: string) => {
+        if(window.confirm("Are you sure you want to delete this task?")) {
+            try {
+                await DataService.deleteTask(taskId);
+                loadData();
+            } catch (error) {
+                console.error("Failed to delete task:", error);
+                alert('Failed to delete task. Please try again.');
+            }
+        }
+    };
+    
+    const handleAssigneeChange = async (taskId: string, newAssigneeId?: string) => {
+        try {
+            await DataService.updateTask(taskId, { assigneeId: newAssigneeId });
+            loadData();
+        } catch (error) {
+            console.error("Failed to update assignee:", error);
+            alert('Failed to update assignee. Please try again.');
+        }
     };
 
     const filteredTasks = useMemo(() => {
@@ -164,7 +204,7 @@ const AdminTasks: React.FC = () => {
     }, [allTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
     const availableProjects = useMemo(() => {
-        if (!departmentId) return [];
+        if (!departmentId) return allProjects; 
         return allProjects.filter(p => p.departmentIds.includes(departmentId));
     }, [allProjects, departmentId]);
 
@@ -214,6 +254,8 @@ const AdminTasks: React.FC = () => {
                     </select>
                 </div>
             </div>
+
+            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
 
             {view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -271,8 +313,7 @@ const AdminTasks: React.FC = () => {
                     </table>
                 </div>
             )}
-            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
-
+            
             <Modal title={editingTask ? "Edit Task" : "Create New Task"} isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>

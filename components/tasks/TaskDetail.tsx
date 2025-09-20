@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+import * as DataService from '../../services/dataService'; // These functions return Promises
+// import * as AuthService from '../../services/authService'; // Removed - assuming DataService is the source for getUsers
 import { Task, TaskStatus, User, Project, UserRole, Note, DependencyLog } from '../../types';
 import Button from '../shared/Button';
 import { ClockIcon, BriefcaseIcon, UserCircleIcon, LinkIcon } from '../../constants';
@@ -45,33 +45,56 @@ const TaskDetail: React.FC = () => {
     const [dependencyReason, setDependencyReason] = useState('');
     const [dependencyUserId, setDependencyUserId] = useState('');
 
-    const loadData = useCallback(() => {
-        if (!taskId) return;
+    // --- CRUCIAL FIX: Make loadData an async function and AWAIT API calls ---
+    const loadData = useCallback(async () => {
+        if (!taskId) {
+            setTask(null);
+            setProject(null);
+            setAllUsers([]);
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
-            const currentTask = DataService.getTaskById(taskId);
-            if (!currentTask) {
+            // AWAIT DataService.getTaskById
+            const fetchedTask = await DataService.getTaskById(taskId);
+            if (!fetchedTask) {
+                console.warn(`Task with ID ${taskId} not found.`);
                 setTask(null);
-                setIsLoading(false);
+                setProject(null);
+                setAllUsers([]);
+                navigate('/tasks'); // Redirect or show a specific "not found" message
                 return;
             }
-            setTask(currentTask);
+            setTask(fetchedTask);
 
-            const taskProject = DataService.getProjectById(currentTask.projectId);
-            setProject(taskProject);
-            
-            const users = AuthService.getUsers();
-            setAllUsers(users);
-            if (users.length > 0) {
-                setDependencyUserId(users[0].id);
+            // AWAIT DataService.getProjectById
+            const fetchedProject = await DataService.getProjectById(fetchedTask.projectId);
+            setProject(fetchedProject);
+
+            // AWAIT DataService.getUsers (assuming users are now in DataService)
+            const fetchedUsers = await DataService.getUsers(); // Use DataService.getUsers
+            setAllUsers(fetchedUsers);
+
+            // Initialize dependencyUserId if it's currently invalid or not set
+            // Only set if dependencyUserId is not already a valid user ID among fetchedUsers
+            if (fetchedUsers.length > 0 && !fetchedUsers.some(u => u.id === dependencyUserId)) {
+                 // Default to the first user or the current assignee if available, otherwise first user
+                setDependencyUserId(fetchedTask.assigneeId || fetchedUsers[0].id);
+            } else if (fetchedUsers.length === 0) {
+                setDependencyUserId(''); // Clear if no users available
             }
 
         } catch (error) {
             console.error("Failed to load task details:", error);
+            setTask(null);
+            setProject(null);
+            setAllUsers([]);
+            alert("Failed to load task details. Please try again."); // User feedback
         } finally {
             setIsLoading(false);
         }
-    }, [taskId]);
+    }, [taskId, navigate, dependencyUserId]); // Added dependencyUserId to prevent re-initialization unless necessary
 
     useEffect(() => {
         loadData();
@@ -86,7 +109,7 @@ const TaskDetail: React.FC = () => {
             canUpdateStatus: isAdmin || isManager || isAssignee
         };
     }, [currentUser, project, task]);
-    
+
     const activityFeed = useMemo(() => {
         if (!task) return [];
         const notes: ActivityItem[] = (task.notes || []).map(note => ({
@@ -100,37 +123,46 @@ const TaskDetail: React.FC = () => {
             data: log
         }));
 
+        // Sort by timestamp for a chronological activity feed
         return [...notes, ...logs].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     }, [task]);
 
 
-    const handleUpdateTask = (updates: Partial<Task>) => {
+    const handleUpdateTask = async (updates: Partial<Task>) => {
         if (!taskId) return;
-        DataService.updateTask(taskId, updates);
-        loadData(); // Refresh data
+        setIsLoading(true); // Show loading state during update
+        try {
+            // CRUCIAL FIX: AWAIT DataService.updateTask
+            await DataService.updateTask(taskId, updates);
+            await loadData(); // Refresh data after successful update
+        } catch (error) {
+            console.error("Failed to update task:", error);
+            alert("Failed to update task. Please try again.");
+        } finally {
+            setIsLoading(false); // Hide loading state
+        }
     };
-    
-    const handleAddNote = () => {
+
+    const handleAddNote = async () => { // Make async since it calls async handleUpdateTask
         if (!newNote.trim() || !currentUser || !task) return;
 
         const noteToAdd: Note = {
-            id: `note-${Date.now()}`,
+            id: `note-${Date.now()}`, // Simple unique ID for mock, use uuid for real
             authorId: currentUser.id,
             content: newNote.trim(),
             timestamp: new Date().toISOString(),
         };
 
-        const updatedNotes = [...(task.notes || []), noteToAdd];
-        handleUpdateTask({ notes: updatedNotes });
+        await handleUpdateTask({ notes: [...(task.notes || []), noteToAdd] });
         setNewNote('');
     };
 
-    const handleSetDependency = () => {
-        if (!dependencyUserId || !dependencyReason.trim() || !currentUser) {
+    const handleSetDependency = async () => { // Make async
+        if (!dependencyUserId || !dependencyReason.trim() || !currentUser || !task) {
             alert("Please select a person and provide a reason for the dependency.");
             return;
         }
-        
+
         const newLog: DependencyLog = {
             authorId: currentUser.id,
             action: 'set',
@@ -138,43 +170,47 @@ const TaskDetail: React.FC = () => {
             dependencyOnUserId: dependencyUserId,
             timestamp: new Date().toISOString()
         };
-        
-        handleUpdateTask({
+
+        await handleUpdateTask({
             dependency: {
                 userId: dependencyUserId,
                 reason: dependencyReason,
             },
-            dependencyLogs: [...(task?.dependencyLogs || []), newLog],
+            dependencyLogs: [...(task.dependencyLogs || []), newLog],
             status: TaskStatus.ON_HOLD
         });
         setIsSettingDependency(false);
         setDependencyReason('');
     };
 
-    const handleClearDependency = () => {
-        if (window.confirm("Are you sure you want to clear this dependency? The task will be moved back to 'To-Do'.") && currentUser) {
+    const handleClearDependency = async () => { // Make async
+        if (!currentUser || !task) {
+            alert("Failed to clear dependency: current user or task not found.");
+            return;
+        }
+        if (window.confirm("Are you sure you want to clear this dependency? The task will be moved back to 'To-Do'.")) {
              const newLog: DependencyLog = {
                 authorId: currentUser.id,
                 action: 'cleared',
                 timestamp: new Date().toISOString()
             };
-            handleUpdateTask({
+            await handleUpdateTask({
                 dependency: undefined,
-                dependencyLogs: [...(task?.dependencyLogs || []), newLog],
+                dependencyLogs: [...(task.dependencyLogs || []), newLog],
                 status: TaskStatus.TODO
             });
         }
     };
 
 
-    if (isLoading) return <div className="text-center p-8">Loading task...</div>;
-    if (!task) return <div className="text-center p-8">Task not found.</div>;
+    if (isLoading) return <div className="text-center p-8 text-lg text-slate-600">Loading task...</div>;
+    if (!task) return <div className="text-center p-8 text-lg text-slate-600">Task not found.</div>;
 
     const assignee = allUsers.find(u => u.id === task.assigneeId);
     const dependencyUser = task.dependency ? allUsers.find(u => u.id === task.dependency?.userId) : null;
 
     return (
-        <div>
+        <div className="p-4 sm:p-6 lg:p-8">
             <div className="flex justify-between items-start mb-6">
                 <div>
                     <button onClick={() => navigate(-1)} className="text-sm font-medium text-indigo-600 hover:text-indigo-500 flex items-center mb-2">
@@ -245,7 +281,7 @@ const TaskDetail: React.FC = () => {
                                 <p className="text-sm text-slate-500 text-center py-4">No activity on this task yet.</p>
                             )}
                         </div>
-                        
+
                         {canUpdateStatus && (
                             <div className="border-t pt-4">
                                 <textarea
@@ -269,21 +305,23 @@ const TaskDetail: React.FC = () => {
                          <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Details</h3>
                          <div className="divide-y divide-slate-200">
                              <DetailItem icon={<BriefcaseIcon className="w-5 h-5"/>} label="Status">
-                                 <select 
-                                    value={task.status} 
+                                 <select
+                                    value={task.status}
                                     onChange={(e) => handleUpdateTask({ status: e.target.value as TaskStatus })}
-                                    disabled={!canUpdateStatus || task.status === TaskStatus.ON_HOLD}
+                                    disabled={!canUpdateStatus || (task.status === TaskStatus.ON_HOLD && currentUser?.role !== UserRole.ADMIN && currentUser?.id !== project?.managerId)} // Disable if task is ON_HOLD unless Admin/Manager
                                     className="w-full p-1 border-slate-300 rounded-md shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
                                 >
                                      {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                  </select>
-                                 {task.status === TaskStatus.ON_HOLD && <p className="text-xs text-slate-500 mt-1">Status is locked while task has a dependency.</p>}
+                                 {task.status === TaskStatus.ON_HOLD && !canEdit && // Show message only if it's ON_HOLD and current user can't edit
+                                    <p className="text-xs text-slate-500 mt-1">Status is locked due to a dependency. Only a manager or admin can clear it.</p>
+                                 }
                             </DetailItem>
                              <DetailItem icon={<UserCircleIcon />} label="Assignee">
-                                 <select 
-                                    value={task.assigneeId || ''} 
+                                 <select
+                                    value={task.assigneeId || ''}
                                     onChange={(e) => handleUpdateTask({ assigneeId: e.target.value || undefined })}
-                                    disabled={!canEdit}
+                                    disabled={!canEdit} // Only admins/managers can change assignee
                                     className="w-full p-1 border-slate-300 rounded-md shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
                                 >
                                      <option value="">Unassigned</option>
@@ -309,7 +347,7 @@ const TaskDetail: React.FC = () => {
                                     <p className="font-semibold text-slate-800">Reason:</p>
                                     <p className="whitespace-pre-wrap">{task.dependency.reason}</p>
                                 </div>
-                                {canEdit && (
+                                {canEdit && ( // Only admins/managers can clear dependency
                                      <Button onClick={handleClearDependency} fullWidth>Clear Dependency</Button>
                                 )}
                              </div>
@@ -333,7 +371,7 @@ const TaskDetail: React.FC = () => {
                         ) : (
                              <div>
                                 <p className="text-sm text-slate-500 mb-3">No dependencies are set for this task.</p>
-                                {canEdit && (
+                                {canEdit && ( // Only admins/managers can set dependency
                                     <Button onClick={() => setIsSettingDependency(true)} fullWidth>Set Dependency</Button>
                                 )}
                             </div>

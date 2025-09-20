@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import { apiService } from '../../services/apiService';
 import * as AuthService from '../../services/authService';
 import { Department, User, UserRole, Project, TaskStatus, Company } from '../../types';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from "react-router-dom";
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
@@ -16,7 +15,7 @@ interface DepartmentStats {
     projectsCompleted: number;
     projectsInProgress: number;
     projectsPending: number;
-    companyNames: string;
+    companyName: string;
 }
 
 interface DepartmentWithStats extends Department, DepartmentStats {}
@@ -34,18 +33,18 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                     <h3 className="text-xl font-bold text-slate-800">{department.name}</h3>
                     <div className="flex items-center space-x-2 text-sm text-slate-500 mt-1">
                         <BuildingOfficeIcon className="w-4 h-4" />
-                        <span>{department.companyNames}</span>
+                        <span>{department.companyName}</span>
                     </div>
                 </div>
                 
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Team</h4>
-                    <div className="flex items-center space-x-4 text-slate-700">
-                        <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2 text-slate-700">
                              <UsersIcon className="h-5 w-5" />
                              <span className="font-medium">{department.employeeCount} Employees</span>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 text-slate-700">
                             <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{department.managerCount} Managers</span>
                         </div>
@@ -82,147 +81,133 @@ const Departments: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newDepartmentName, setNewDepartmentName] = useState('');
-    const [newDepartmentCompanyIds, setNewDepartmentCompanyIds] = useState<string[]>([]);
-    const [companySearch, setCompanySearch] = useState('');
-    const [editingDepartmentId, setEditingDepartmentId] = useState<string | null>(null);
+    const [newDepartmentCompanyId, setNewDepartmentCompanyId] = useState('');
 
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
     const [companyFilter, setCompanyFilter] = useState('all');
 
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(async () => { 
         setIsLoading(true);
         try {
-            // Prefer external departments if available
-            let departments = DataService.getDepartments();
-            const depApi = await apiService.getDepartments();
-            if (depApi.success && depApi.data && depApi.data.length > 0) {
-                departments = depApi.data;
-            }
-            const users = AuthService.getUsers();
-            const projects = DataService.getAllProjects();
-            // Get companies from external API, fallback to local
-            let companiesList: Company[] = [];
-            const apiRes = await apiService.getCompanies();
-            if (apiRes.success && apiRes.data && apiRes.data.length > 0) {
-                companiesList = apiRes.data;
+            const departments = await DataService.getDepartments();
+            const users = AuthService.getUsers(); 
+            const projects = await DataService.getAllProjects(); // This was the previous fix, still correct.
+            const allCompanies = await DataService.getCompanies(); 
+            setCompanies(allCompanies);
+
+            if (allCompanies.length > 0) {
+                setNewDepartmentCompanyId(allCompanies[0].id);
             } else {
-                companiesList = DataService.getCompanies();
-            }
-            setCompanies(companiesList);
-            if (companiesList.length > 0) {
-                setNewDepartmentCompanyIds([companiesList[0].id]);
+                setNewDepartmentCompanyId(''); 
             }
 
-            const stats = departments.map(dept => {
-                const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
-                const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
-                const companyNames = (dept.companyIds || [])
-                    .map(id => companiesList.find(c => c.id === id)?.name)
-                    .filter(Boolean)
-                    .join(', ');
+            // Since the .map callback will now contain await, we need to await the array of promises it returns
+            const stats = await Promise.all(
+                departments.map(async dept => { // Make the callback for map async
+                    const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
+                    const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
+                    const company = allCompanies.find(c => c.id === dept.companyId); 
+                    
+                    let projectsCompleted = 0;
+                    let projectsInProgress = 0;
+                    let projectsPending = 0;
 
-                let projectsCompleted = 0;
-                let projectsInProgress = 0;
-                let projectsPending = 0;
+                    // To properly await tasks for each project, we can collect promises
+                    // from deptProjects and then await them with Promise.all
+                    const projectTaskStatusPromises = deptProjects.map(async project => {
+                        const tasks = await DataService.getTasksByProject(project.id); // FIX: Await getTasksByProject()
 
-                deptProjects.forEach(project => {
-                    const tasks = DataService.getTasksByProject(project.id);
-                    if (tasks.length === 0) {
-                        projectsPending++;
-                        return;
-                    }
-                    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                    const progress = Math.round((completedTasks / tasks.length) * 100);
+                        if (tasks.length === 0) { // Now tasks is an array, .length works
+                            return 'pending'; // Project with no tasks is considered pending
+                        }
+                        
+                        const totalTasks = tasks.length;
+                        const completedTasksCount = tasks.filter(t => t.status === TaskStatus.COMPLETED).length; // .filter works
+                        const inProgressTasksCount = tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length; // .filter works
 
-                    if (progress === 100) {
-                        projectsCompleted++;
-                    } else {
-                        projectsInProgress++;
-                    }
-                });
+                        if (completedTasksCount === totalTasks) {
+                            return 'completed';
+                        } else if (inProgressTasksCount > 0 || completedTasksCount > 0) {
+                            return 'inProgress';
+                        } else {
+                            return 'pending';
+                        }
+                    });
 
-                return {
-                    ...dept,
-                    employeeCount: deptUsers.filter(u => u.role === UserRole.EMPLOYEE).length,
-                    managerCount: deptUsers.filter(u => u.role === UserRole.MANAGER).length,
-                    projectsCompleted,
-                    projectsInProgress,
-                    projectsPending,
-                    companyNames: companyNames || 'N/A',
-                };
-            });
+                    // Await all project task status calculations for the current department
+                    const projectStatuses = await Promise.all(projectTaskStatusPromises);
+
+                    projectStatuses.forEach(status => {
+                        if (status === 'completed') projectsCompleted++;
+                        else if (status === 'inProgress') projectsInProgress++;
+                        else if (status === 'pending') projectsPending++;
+                    });
+
+                    return {
+                        ...dept,
+                        employeeCount: deptUsers.filter(u => u.role === UserRole.EMPLOYEE).length,
+                        managerCount: deptUsers.filter(u => u.role === UserRole.MANAGER).length,
+                        projectsCompleted,
+                        projectsInProgress,
+                        projectsPending,
+                        companyName: company?.name || 'N/A',
+                    };
+                })
+            );
 
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);
+            setDepartmentsWithStats([]); 
+            setCompanies([]); 
         } finally {
             setIsLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        loadData();
+        let isMounted = true; 
+        const fetchData = async () => {
+            if (isMounted) {
+                await loadData();
+            }
+        };
+
+        fetchData();
+
+        return () => {
+            isMounted = false; 
+        };
     }, [loadData]);
 
     const filteredDepartments = useMemo(() => {
         return departmentsWithStats.filter(dept => {
-            const companyMatch = companyFilter === 'all' || (dept.companyIds && dept.companyIds.includes(companyFilter));
+            const companyMatch = companyFilter === 'all' || dept.companyId === companyFilter;
             const searchMatch = dept.name.toLowerCase().includes(searchTerm.toLowerCase());
             return companyMatch && searchMatch;
         });
     }, [searchTerm, companyFilter, departmentsWithStats]);
 
-    const visibleCompanies = useMemo(() => {
-        if (!companySearch.trim()) return companies;
-        return companies.filter(c => c.name.toLowerCase().includes(companySearch.toLowerCase()));
-    }, [companies, companySearch]);
-
     const handleOpenModal = () => setIsModalOpen(true);
-    const handleOpenEditModal = (dept: DepartmentWithStats) => {
-        setEditingDepartmentId(dept.id);
-        setNewDepartmentName(dept.name);
-        setNewDepartmentCompanyIds(dept.companyIds || []);
-        setIsModalOpen(true);
-    };
     const handleCloseModal = () => {
         setIsModalOpen(false);
         setNewDepartmentName('');
         if (companies.length > 0) {
-            setNewDepartmentCompanyIds([companies[0].id]);
+            setNewDepartmentCompanyId(companies[0].id);
+        } else {
+            setNewDepartmentCompanyId('');
         }
-        setEditingDepartmentId(null);
     };
 
-    const handleCreateDepartment = async (e: React.FormEvent) => {
+    const handleCreateDepartment = async (e: React.FormEvent) => { 
         e.preventDefault();
-        if (!newDepartmentName.trim() || newDepartmentCompanyIds.length === 0) {
+        if (!newDepartmentName.trim() || !newDepartmentCompanyId) {
             alert('Department name and company are required.');
             return;
         }
-        if (editingDepartmentId) {
-            try {
-              await apiService.updateDepartment({
-                id: editingDepartmentId,
-                name: newDepartmentName,
-                companyIds: newDepartmentCompanyIds,
-                latest: true // ✅ IMPORTANT: tells backend to update the latest version
-              });
-            } catch (err) {
-              console.error("API update failed:", err);
-            }
-          
-            // Optional fallback/local update
-            DataService.updateDepartment(editingDepartmentId, {
-              name: newDepartmentName,
-              companyIds: newDepartmentCompanyIds
-            });
-          }
-           else {
-            try { await apiService.createDepartment({ name: newDepartmentName, companyIds: newDepartmentCompanyIds }); } catch {}
-            DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
-        }
-        loadData();
+        await DataService.createDepartment(newDepartmentName, newDepartmentCompanyId); 
+        await loadData(); 
         handleCloseModal();
     };
 
@@ -231,7 +216,7 @@ const Departments: React.FC = () => {
     }
 
     if (isLoading) {
-        return <div>Loading departments...</div>;
+        return <div className="text-center py-8 text-lg text-slate-600">Loading departments...</div>;
     }
 
     return (
@@ -265,24 +250,7 @@ const Departments: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredDepartments.map(dept => (
-                    <div key={dept.id} className="relative group">
-                        <DepartmentCard department={dept} />
-                        <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                                onClick={() => handleOpenEditModal(dept)}
-                                className="text-xs px-2 py-1 rounded bg-indigo-600 text-white shadow"
-                            >Edit</button>
-                            <button
-                                onClick={() => {
-                                    if (confirm('Delete this department? This will also unlink it from projects.')) {
-                                        DataService.deleteDepartment(dept.id);
-                                        loadData();
-                                    }
-                                }}
-                                className="text-xs px-2 py-1 rounded bg-rose-600 text-white shadow"
-                            >Delete</button>
-                        </div>
-                    </div>
+                    <DepartmentCard key={dept.id} department={dept} />
                 ))}
             </div>
             
@@ -293,7 +261,7 @@ const Departments: React.FC = () => {
                 </div>
             )}
 
-            <Modal title={editingDepartmentId ? 'Edit Department' : 'Create New Department'} isOpen={isModalOpen} onClose={handleCloseModal}>
+            <Modal title="Create New Department" isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateDepartment} className="space-y-6">
                     <Input
                         id="newDepartmentName"
@@ -304,67 +272,24 @@ const Departments: React.FC = () => {
                         required
                     />
                     <div>
-                        <label className="block text-sm font-medium text-slate-700">Companies</label>
-                        <div className="mt-2 flex items-center gap-2">
-                            <input
-                                type="text"
-                                placeholder="Search companies..."
-                                value={companySearch}
-                                onChange={(e) => setCompanySearch(e.target.value)}
-                                className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setNewDepartmentCompanyIds(companies.map(c => c.id))}
-                                className="px-2 py-1 text-xs rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300"
-                            >Select all</button>
-                            <button
-                                type="button"
-                                onClick={() => setNewDepartmentCompanyIds([])}
-                                className="px-2 py-1 text-xs rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300"
-                            >Clear</button>
-                        </div>
-                        {newDepartmentCompanyIds.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                                {newDepartmentCompanyIds.map(id => {
-                                    const comp = companies.find(c => c.id === id);
-                                    if (!comp) return null;
-                                    return (
-                                        <span key={id} className="inline-flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2 py-1">
-                                            {comp.name}
-                                            <button type="button" className="hover:text-indigo-900" onClick={() => setNewDepartmentCompanyIds(prev => prev.filter(cid => cid !== id))}>×</button>
-                                        </span>
-                                    );
-                                })}
-                            </div>
-                        )}
-                        <div className="mt-2 max-h-56 overflow-y-auto border border-slate-200 rounded-md bg-white divide-y divide-slate-100">
-                            {visibleCompanies.map(c => {
-                                const checked = newDepartmentCompanyIds.includes(c.id);
-                                return (
-                                    <label key={c.id} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50">
-                                        <input
-                                            type="checkbox"
-                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                            checked={checked}
-                                            onChange={(e) => {
-                                                setNewDepartmentCompanyIds(prev => e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id));
-                                            }}
-                                        />
-                                        <span className="text-sm text-slate-700">{c.name}</span>
-                                    </label>
-                                );
-                            })}
-                        </div>
-                        {newDepartmentCompanyIds.length === 0 && (
-                            <p className="mt-2 text-xs text-rose-600">Select at least one company.</p>
-                        )}
+                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
+                        <select
+                            id="company"
+                            value={newDepartmentCompanyId}
+                            onChange={(e) => setNewDepartmentCompanyId(e.target.value)}
+                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm"
+                            required
+                        >
+                            {companies.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
                     </div>
                     <div className="pt-4 flex justify-end space-x-3">
                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
-                        <Button type="submit">{editingDepartmentId ? 'Save Changes' : 'Create Department'}</Button>
+                        <Button type="submit">Create Department</Button>
                     </div>
                 </form>
             </Modal>

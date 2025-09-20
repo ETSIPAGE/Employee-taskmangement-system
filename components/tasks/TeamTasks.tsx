@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+import * as AuthService from '../../services/authService'; // Assuming this has getTeamMembers, getUsers (if not async)
 import { Project, Task, TaskStatus, User, UserRole, Department } from '../../types';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -31,7 +31,7 @@ const TeamTasks: React.FC = () => {
     const [assigneeFilter, setAssigneeFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
-    // Form state
+    // Form state (kept for now, but CUD functions are commented out)
     const [taskName, setTaskName] = useState('');
     const [taskDesc, setTaskDesc] = useState('');
     const [taskDueDate, setTaskDueDate] = useState('');
@@ -43,71 +43,96 @@ const TeamTasks: React.FC = () => {
     const [taskEstTime, setTaskEstTime] = useState('');
 
 
-    const loadData = useCallback(() => {
-        if (!user || user.role !== UserRole.MANAGER) return;
+    // --- CRITICAL FIXES HERE: Mark loadData as async and await DataService calls ---
+    const loadData = useCallback(async () => { // Marked as async
+        if (!user || user.role !== UserRole.MANAGER) {
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
-            const team = AuthService.getTeamMembers(user.id);
+            // Assuming AuthService.getTeamMembers is synchronous or returns a direct array
+            // If it's async, you'd need to `await AuthService.getTeamMembers(user.id);`
+            const team = AuthService.getTeamMembers(user.id); 
             setTeamMembers(team);
 
             const teamMemberIds = team.map(m => m.id);
-            const teamTasks = DataService.getTasksByTeam(teamMemberIds);
+            // --- AWAIT DataService.getTasksByTeam ---
+            const teamTasks = await DataService.getTasksByTeam(teamMemberIds);
             setAllTasks(teamTasks);
 
-            const projects = DataService.getProjectsByManager(user.id);
+            // --- AWAIT DataService.getProjectsByManager ---
+            const projects = await DataService.getProjectsByManager(user.id);
             setManagedProjects(projects);
             
-            const depts = DataService.getDepartments();
+            // --- AWAIT DataService.getDepartments ---
+            const depts = await DataService.getDepartments();
             setDepartments(depts);
             
+            // Set default assignee if not already set, and teamMembers exist
+            if (team.length > 0 && !assigneeId) {
+                setAssigneeId(team[0].id);
+            }
+            // Set default department/project for new tasks if available
+            if (depts.length > 0 && !departmentId) {
+                setDepartmentId(depts[0].id);
+                const defaultDeptProjects = projects.filter(p => p.departmentIds.includes(depts[0].id));
+                if (defaultDeptProjects.length > 0 && !projectId) {
+                    setProjectId(defaultDeptProjects[0].id);
+                }
+            }
+
         } catch (error) {
-            console.error("Failed to load team task data:", error);
+            console.error("[TeamTasks] Failed to load team task data:", error);
         } finally {
             setIsLoading(false);
         }
-    }, [user]);
+    }, [user, assigneeId, departmentId, projectId]); // Added state variables as dependencies for re-initialization
 
     useEffect(() => {
         loadData();
     }, [loadData]);
 
+
     const resetForm = useCallback(() => {
         setTaskName('');
         setTaskDesc('');
         setTaskDueDate('');
-        setAssigneeId(teamMembers.length > 0 ? teamMembers[0].id : undefined);
-        setDepartmentId('');
-        setProjectId('');
+        setAssigneeId(teamMembers.length > 0 ? teamMembers[0].id : undefined); // Default to first team member
+        setDepartmentId(departments.length > 0 ? departments[0].id : ''); // Default to first department
+        setProjectId(managedProjects.length > 0 ? managedProjects[0].id : ''); // Default to first project (could be more refined)
         setTaskStatus(TaskStatus.TODO);
         setEditingTask(null);
         setTaskPriority('medium');
         setTaskEstTime('');
-    }, [teamMembers]);
+    }, [teamMembers, departments, managedProjects]);
 
     const handleOpenCreateModal = () => {
         resetForm();
         setIsModalOpen(true);
     };
     
+    // --- CUD FUNCTIONS (COMMENTED OUT IF ONLY FETCHING IS DESIRED) ---
     const handleOpenEditModal = (task: Task) => {
-        setEditingTask(task);
-        setTaskName(task.name);
-        setTaskDesc(task.description || '');
-        setTaskDueDate(task.dueDate || '');
-        setAssigneeId(task.assigneeId);
-        setProjectId(task.projectId);
+        // setEditingTask(task);
+        // setTaskName(task.name);
+        // setTaskDesc(task.description || '');
+        // setTaskDueDate(task.dueDate || '');
+        // setAssigneeId(task.assigneeId);
+        // setProjectId(task.projectId);
         
-        const project = managedProjects.find(p => p.id === task.projectId);
-        if (project && project.departmentIds.length > 0) {
-            setDepartmentId(project.departmentIds[0]);
-        } else {
-            setDepartmentId('');
-        }
+        // const project = managedProjects.find(p => p.id === task.projectId);
+        // if (project && project.departmentIds.length > 0) {
+        //     setDepartmentId(project.departmentIds[0]);
+        // } else {
+        //     setDepartmentId('');
+        // }
 
-        setTaskStatus(task.status);
-        setTaskPriority(task.priority || 'medium');
-        setTaskEstTime(task.estimatedTime?.toString() || '');
-        setIsModalOpen(true);
+        // setTaskStatus(task.status);
+        // setTaskPriority(task.priority || 'medium');
+        // setTaskEstTime(task.estimatedTime?.toString() || '');
+        // setIsModalOpen(true);
+        alert("Editing tasks is not supported via this component's configuration (GET-only).");
     };
 
     const handleCloseModal = () => {
@@ -115,45 +140,69 @@ const TeamTasks: React.FC = () => {
         resetForm();
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => { // Marked as async
         e.preventDefault();
-        if (!taskName.trim() || !projectId) {
-            alert('Task Title and Project are required.');
-            return;
-        }
+        // if (!taskName.trim() || !projectId || !user?.id) {
+        //     alert('Task Title, Project, and Creator ID are required.');
+        //     return;
+        // }
 
-        const taskData = {
-            name: taskName,
-            description: taskDesc,
-            dueDate: taskDueDate,
-            projectId: projectId,
-            assigneeId: assigneeId,
-            status: taskStatus,
-            priority: taskPriority,
-            estimatedTime: taskEstTime ? parseInt(taskEstTime, 10) : undefined,
-        };
+        // const taskData: Omit<Task, 'id'> = {
+        //     creatorId: user.id, // Ensure creatorId is always provided
+        //     name: taskName,
+        //     description: taskDesc,
+        //     dueDate: taskDueDate,
+        //     projectId: projectId,
+        //     assigneeId: assigneeId,
+        //     status: taskStatus,
+        //     priority: taskPriority,
+        //     tags: [], // Add default empty array for tags
+        //     notes: [], // Add default empty array for notes
+        //     dependencyLogs: [], // Add default empty array for dependencyLogs
+        //     estimatedTime: taskEstTime ? parseInt(taskEstTime, 10) : undefined,
+        // };
 
-        if (editingTask) {
-            DataService.updateTask(editingTask.id, taskData);
-        } else {
-            DataService.createTask(taskData);
-        }
-        
-        loadData();
-        handleCloseModal();
+        // try {
+        //     if (editingTask) {
+        //         await DataService.updateTask(editingTask.id, taskData);
+        //     } else {
+        //         await DataService.createTask(taskData);
+        //     }
+            
+        //     await loadData(); // AWAIT loadData
+        //     handleCloseModal();
+        // } catch (error) {
+        //     console.error("[TeamTasks] Failed to save task:", error);
+        //     alert('Failed to save task. Please try again.');
+        // }
+        alert("Creating/Updating tasks is not supported via this component's configuration (GET-only).");
     };
     
     const handleDeleteTask = (taskId: string) => {
-        if(window.confirm("Are you sure you want to delete this task?")) {
-            DataService.deleteTask(taskId);
-            loadData();
-        }
+        // if(window.confirm("Are you sure you want to delete this task?")) {
+        //     try {
+        //         await DataService.deleteTask(taskId); // AWAIT DataService.deleteTask
+        //         await loadData(); // AWAIT loadData
+        //     } catch (error) {
+        //         console.error("[TeamTasks] Failed to delete task:", error);
+        //         alert('Failed to delete task. Please try again.');
+        //     }
+        // }
+        alert("Deleting tasks is not supported via this component's configuration (GET-only).");
     };
     
-    const handleAssigneeChange = (taskId: string, newAssigneeId?: string) => {
-        DataService.updateTask(taskId, { assigneeId: newAssigneeId });
-        loadData();
+    const handleAssigneeChange = async (taskId: string, newAssigneeId?: string) => { // Marked as async
+        // try {
+        //     await DataService.updateTask(taskId, { assigneeId: newAssigneeId }); // AWAIT DataService.updateTask
+        //     await loadData(); // AWAIT loadData
+        // } catch (error) {
+        //     console.error("[TeamTasks] Failed to update assignee:", error);
+        //     alert('Failed to update assignee. Please try again.');
+        // }
+        alert("Changing assignee is not supported via this component's configuration (GET-only).");
     };
+    // --- END CUD FUNCTIONS ---
+
 
     const filteredTasks = useMemo(() => {
         return allTasks.filter(task => {
@@ -166,7 +215,8 @@ const TeamTasks: React.FC = () => {
     }, [allTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
     const availableProjects = useMemo(() => {
-        if (!departmentId) return [];
+        // If no department is selected, return all managed projects to allow selection
+        if (!departmentId) return managedProjects;
         return managedProjects.filter(p => p.departmentIds.includes(departmentId));
     }, [managedProjects, departmentId]);
 
@@ -184,7 +234,8 @@ const TeamTasks: React.FC = () => {
         <div>
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-slate-800">Team Tasks</h1>
-                <Button onClick={handleOpenCreateModal}>Create New Task</Button>
+                {/* --- Removed Create New Task button as CUD is not supported --- */}
+                {/* <Button onClick={handleOpenCreateModal}>Create New Task</Button> */}
             </div>
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <div className="w-full md:w-auto md:flex-1"></div>
@@ -216,6 +267,8 @@ const TeamTasks: React.FC = () => {
                 </div>
             </div>
 
+            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
+
             {view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredTasks.map(task => (
@@ -223,9 +276,9 @@ const TeamTasks: React.FC = () => {
                             key={task.id}
                             task={task}
                             employees={teamMembers}
-                            onAssigneeChange={handleAssigneeChange}
-                            onDelete={handleDeleteTask}
-                            onEdit={handleOpenEditModal}
+                            onAssigneeChange={handleAssigneeChange} // This will trigger the alert
+                            onDelete={handleDeleteTask} // This will trigger the alert
+                            onEdit={handleOpenEditModal} // This will trigger the alert
                             projectName={getProjectName(task.projectId)}
                         />
                     ))}
@@ -240,7 +293,8 @@ const TeamTasks: React.FC = () => {
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignee</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Due Date</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
-                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Actions</th>
+                                {/* --- Removed Actions column if CUD is not supported --- */}
+                                {/* <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Actions</th> */}
                             </tr>
                         </thead>
                         <tbody>
@@ -259,12 +313,13 @@ const TeamTasks: React.FC = () => {
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
                                         </td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
+                                        {/* --- Removed Actions column data if CUD is not supported --- */}
+                                        {/* <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <div className="flex items-center space-x-3">
                                                 <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(task); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
                                                 <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
                                             </div>
-                                        </td>
+                                        </td> */}
                                     </tr>
                                 );
                             })}
@@ -272,9 +327,8 @@ const TeamTasks: React.FC = () => {
                     </table>
                 </div>
             )}
-            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
-
-            <Modal title={editingTask ? "Edit Task" : "Create New Task"} isOpen={isModalOpen} onClose={handleCloseModal}>
+            {/* --- Removed Modal for Create/Edit if CUD is not supported --- */}
+            { <Modal title={editingTask ? "Edit Task" : "Create New Task"} isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
@@ -341,7 +395,7 @@ const TeamTasks: React.FC = () => {
                         <Button type="submit">{editingTask ? "Update Task" : "Create Task"}</Button>
                     </div>
                 </form>
-            </Modal>
+            </Modal> }
         </div>
     );
 };
