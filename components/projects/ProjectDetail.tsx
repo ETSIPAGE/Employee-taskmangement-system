@@ -27,12 +27,14 @@ const ProjectDetail: React.FC = () => {
     const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
 
     // Form state
-    const [newTaskName, setNewTaskName] = useState('');
-    const [newTaskDesc, setNewTaskDesc] = useState('');
-    const [newTaskDueDate, setNewTaskDueDate] = useState('');
-    const [newAssigneeId, setNewAssigneeId] = useState<string | undefined>(undefined);
-    const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
-    const [newTaskEstTime, setNewTaskEstTime] = useState('');
+    const [newTaskData, setNewTaskData] = useState({
+        title: '',
+        description: '',
+        due_date: '',
+        priority: 'medium' as 'low' | 'medium' | 'high',
+        est_time: '',
+        assign_to: ''
+    });
 
     const loadData = useCallback(async () => {
         if (!projectId || !user) return;
@@ -47,12 +49,12 @@ const ProjectDetail: React.FC = () => {
 
             const [
                 projectTasks,
-                allCompanyUsers,
+                allEmployees,
                 allDepts,
                 currentCompany
             ] = await Promise.all([
                 DataService.getTasksByProject(projectId),
-                AuthService.getUsers(),
+                DataService.getEmployeesFromApi(),
                 DataService.getDepartments(),
                 DataService.getCompanyById(currentProject.companyId)
             ]);
@@ -60,11 +62,10 @@ const ProjectDetail: React.FC = () => {
             setCompany(currentCompany || null);
             setTasks(projectTasks);
             
-            const allEmployees = allCompanyUsers.filter(u => u.role === UserRole.EMPLOYEE);
             setAssignableEmployees(allEmployees);
             
             if (allEmployees.length > 0) {
-                 setNewAssigneeId(allEmployees[0].id);
+                 setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
             }
 
             setDepartments(allDepts);
@@ -93,35 +94,37 @@ const ProjectDetail: React.FC = () => {
     const handleOpenModal = () => setIsTaskModalOpen(true);
     const handleCloseModal = () => {
         setIsTaskModalOpen(false);
-        setNewTaskName('');
-        setNewTaskDesc('');
-        setNewTaskDueDate('');
-        if (assignableEmployees.length > 0) {
-            setNewAssigneeId(assignableEmployees[0].id);
-        } else {
-            setNewAssigneeId(undefined);
-        }
-        setNewTaskPriority('medium');
-        setNewTaskEstTime('');
+        setNewTaskData({
+            title: '',
+            description: '',
+            due_date: '',
+            priority: 'medium',
+            est_time: '',
+            assign_to: assignableEmployees.length > 0 ? assignableEmployees[0].id : ''
+        });
+    };
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        const { name, value } = e.target;
+        setNewTaskData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newTaskName.trim() || !projectId) return;
+        if (!newTaskData.title.trim() || !projectId || !user) return;
 
-        await DataService.createTask({
-            title: newTaskName,
-            description: newTaskDesc,
-            due_date: newTaskDueDate,
-            project: project?.name || projectId,
-            assign_to: newAssigneeId,
-            status: TaskStatus.TODO,
-            priority: newTaskPriority,
-            est_time: newTaskEstTime,
-            department: project?.departmentIds[0] ? (await DataService.getDepartmentById(project.departmentIds[0]))?.name : ''
-        });
+        const departmentName = project?.departmentIds[0] ? (await DataService.getDepartmentById(project.departmentIds[0]))?.name : '';
+
+        const payload = {
+            ...newTaskData,
+            project: projectId,
+            department: departmentName,
+            currentUserId: user.id,
+        };
+
+        await DataService.createTask(payload);
         
-        loadData(); // Refresh list
+        loadData();
         handleCloseModal();
     };
 
@@ -235,28 +238,28 @@ const ProjectDetail: React.FC = () => {
 
             <Modal title="Create New Task" isOpen={isTaskModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateTask} className="space-y-4">
-                    <Input id="taskName" type="text" label="Task Title" value={newTaskName} onChange={e => setNewTaskName(e.target.value)} required />
+                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
                     <div>
-                        <label htmlFor="taskDescription" className="block text-sm font-medium text-slate-700">Description</label>
-                        <textarea id="taskDescription" rows={3} value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)}
+                        <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
+                        <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
                             className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                         />
                     </div>
-                    <Input id="dueDate" type="date" label="Due Date" value={newTaskDueDate} onChange={e => setNewTaskDueDate(e.target.value)} />
+                    <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value as 'low' | 'medium' | 'high')} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
                                 <option value="high">High</option>
                             </select>
                         </div>
-                        <Input id="estTime" type="number" label="Est. Time (hours)" value={newTaskEstTime} onChange={e => setNewTaskEstTime(e.target.value)} min="0" />
+                        <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
                     </div>
                     <div>
-                        <label htmlFor="assignee" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assignee" value={newAssigneeId || ''} onChange={e => setNewAssigneeId(e.target.value)}
+                        <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
+                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to || ''} onChange={handleInputChange}
                             className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                             <option value="">Unassigned</option>
                             {assignableEmployees.map(employee => (

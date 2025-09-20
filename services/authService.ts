@@ -246,17 +246,20 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         throw new Error(responseData.message || 'Invalid email or password.');
     }
     
-    // Step 2: Store the received token.
-    localStorage.setItem(TOKEN_KEY, responseData.token);
+    // Step 2: Extract authoritative data from API response.
+    const { token, role: apiRole, id: apiUserId } = responseData;
 
-    // Step 3: Use the authoritative role from the API response.
-    const apiRole = responseData.role as UserRole;
     if (!apiRole || !Object.values(UserRole).includes(apiRole)) {
-        console.error('Invalid or missing role received from server:', responseData.role);
-        throw new Error(`Invalid or missing role received from server. Role was: ${responseData.role}`);
+        throw new Error(`Invalid or missing role received from server. Role was: ${apiRole}`);
+    }
+    if (!apiUserId) {
+        throw new Error('User ID was not returned from the server.');
     }
 
-    // Step 4: Find user in local storage to enrich with detailed data, but prioritize API data for session.
+    // Step 3: Store the received token.
+    localStorage.setItem(TOKEN_KEY, token);
+
+    // Step 4: Find or create a user in local storage and sync with API data.
     const users = getUsers();
     const localUser = users.find(u => u.email === email);
     
@@ -266,22 +269,22 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         // User exists locally. Use their detailed profile but override with authoritative data from API.
         sessionUser = {
             ...localUser,
-            role: apiRole, // Crucial: Set role from API
-            name: responseData.name || localUser.name, // Update name if provided by API
+            id: apiUserId, // Use ID from API as the source of truth
+            role: apiRole, // Use role from API as the source of truth
         };
-        // Update the master list in local storage as well to keep it in sync
-        updateUser(localUser.id, { role: sessionUser.role, name: sessionUser.name });
+        // Update the master list in local storage to keep it in sync, especially the ID.
+        updateUser(localUser.id, { id: apiUserId, role: apiRole });
     } else {
         // User does not exist locally. Create a new profile with data from the API.
         console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
         
-        const nameFromApi = responseData.name || email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const name = email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
         sessionUser = {
-            id: `user-${Date.now()}`,
-            name: nameFromApi,
+            id: apiUserId, // Use ID from API
+            name: name,
             email: email,
-            role: apiRole, // Use the role from the API
+            role: apiRole, // Use role from API
             status: 'Active',
             joinedDate: new Date().toISOString(),
         };

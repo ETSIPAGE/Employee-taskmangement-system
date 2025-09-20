@@ -11,11 +11,16 @@ import Button from '../shared/Button';
 import Modal from '../shared/Modal';
 import Input from '../shared/Input';
 
+interface HydratedTask extends Task {
+    projectName: string;
+    assigneeName: string;
+}
+
 export default function AdminTasks() {
     const { user } = useAuth();
     const navigate = useNavigate();
 
-    const [allTasks, setAllTasks] = useState<Task[]>([]);
+    const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
     const [allEmployees, setAllEmployees] = useState<User[]>([]);
     const [allProjects, setAllProjects] = useState<Project[]>([]);
     
@@ -49,16 +54,25 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const employees = AuthService.getUsers().filter(u => u.role === UserRole.EMPLOYEE);
-            setAllEmployees(employees);
-
-            const [tasks, projects] = await Promise.all([
+            const [tasks, projects, employees, allUsersFromAuth] = await Promise.all([
                 DataService.getAllTasks(),
-                DataService.getAllProjects()
+                DataService.getAllProjects(),
+                DataService.getEmployeesFromApi(),
+                AuthService.getUsers()
             ]);
             
-            setAllTasks(tasks);
             setAllProjects(projects);
+            setAllEmployees(employees);
+            
+            const projectsMap = new Map(projects.map(p => [p.id, p]));
+            const usersMap = new Map(allUsersFromAuth.map(u => [u.id, u]));
+
+            const newHydratedTasks = tasks.map(task => ({
+                ...task,
+                projectName: projectsMap.get(task.projectId)?.name || 'N/A',
+                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+            }));
+            setHydratedTasks(newHydratedTasks);
             
         } catch (error) {
             console.error("Failed to load admin task data:", error);
@@ -86,7 +100,7 @@ export default function AdminTasks() {
                         setNewTaskData(prev => ({ ...prev, department: depts[0].name }));
                     }
                     if (projs.length > 0) {
-                        setNewTaskData(prev => ({ ...prev, project: projs[0].name }));
+                        setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
                     }
                 } catch (error) {
                     console.error("Failed to fetch dropdown data:", error);
@@ -117,10 +131,18 @@ export default function AdminTasks() {
 
     const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!user) {
+            setSubmitError('You must be logged in to create a task.');
+            return;
+        }
         setSubmitError('');
         setIsSubmitting(true);
         try {
-            await DataService.createTask(newTaskData);
+            const payload = {
+                ...newTaskData,
+                currentUserId: user.id
+            };
+            await DataService.createTask(payload);
             handleCloseModal();
             loadData();
         } catch (error) {
@@ -131,16 +153,14 @@ export default function AdminTasks() {
     };
 
     const filteredTasks = useMemo(() => {
-        return allTasks.filter(task => {
+        return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
-    }, [allTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
-
-    const getProjectName = (pId: string) => allProjects.find(p => p.id === pId)?.name || pId;
+    }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
     if (user?.role !== UserRole.ADMIN) {
         return <Navigate to="/" />;
@@ -174,7 +194,7 @@ export default function AdminTasks() {
                     />
                     <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Projects</option>
-                        {allProjects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                        {allProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Assignees</option>
@@ -199,7 +219,7 @@ export default function AdminTasks() {
                             key={task.id}
                             task={task}
                             employees={allEmployees}
-                            projectName={getProjectName(task.projectId)}
+                            projectName={task.projectName}
                         />
                     ))}
                 </div>
@@ -218,7 +238,6 @@ export default function AdminTasks() {
                         </thead>
                         <tbody>
                             {filteredTasks.map(task => {
-                                const assignee = allEmployees.find(e => e.id === task.assigneeId);
                                 const statusStyles = {
                                     [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800', [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
                                     [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
@@ -226,8 +245,8 @@ export default function AdminTasks() {
                                 return (
                                     <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-slate-800">{task.name}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{getProjectName(task.projectId)}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{assignee?.name || 'Unassigned'}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.projectName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.assigneeName}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
@@ -267,7 +286,7 @@ export default function AdminTasks() {
                             <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
                             <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.name}>{p.name}</option>) : <option value="">No projects found</option>}
+                                 apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found</option>}
                             </select>
                         </div>
                     </div>

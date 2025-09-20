@@ -1,4 +1,4 @@
-import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company } from '../types';
+import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
 // Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
@@ -86,6 +86,29 @@ const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
 let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
+let cachedEmployees: User[] | null = null;
+
+// --- EMPLOYEES from API ---
+export const getEmployeesFromApi = async (): Promise<User[]> => {
+    if (cachedEmployees) return cachedEmployees;
+
+    const response = await fetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+    const data = await parseApiResponse(response);
+    const usersFromApi = extractArrayFromApiResponse(data, 'users');
+
+    const employees = usersFromApi
+        .filter((user: any) => user.role && user.role.toLowerCase() === 'employee')
+        .map((user: any): User => ({
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: UserRole.EMPLOYEE,
+        }));
+
+    cachedEmployees = employees;
+    return cachedEmployees;
+};
+
 
 // --- TASKS ---
 export const getAllTasks = async (): Promise<Task[]> => {

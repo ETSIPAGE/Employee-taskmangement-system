@@ -6,12 +6,16 @@ import { Project, Task, TaskStatus, UserRole } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 
+interface HydratedTask extends Task {
+    projectName: string;
+}
+
 const EmployeeTasks: React.FC = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
 
-    const [allTasks, setAllTasks] = useState<Task[]>([]);
-    const [projects, setProjects] = useState<Record<string, { id: string, name: string }>>({});
+    const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
+    const [projects, setProjects] = useState<Project[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [view, setView] = useState<'card' | 'table'>('card');
 
@@ -24,16 +28,19 @@ const EmployeeTasks: React.FC = () => {
         if (!user) return;
         setIsLoading(true);
         try {
-            const userTasks = await DataService.getTasksByAssignee(user.id);
-            setAllTasks(userTasks);
+            const [userTasks, allProjects] = await Promise.all([
+                DataService.getTasksByAssignee(user.id),
+                DataService.getAllProjects()
+            ]);
+            
+            setProjects(allProjects);
 
-            const projectsFromTasks = userTasks.reduce((acc, task) => {
-                if (task.projectId && !acc[task.projectId]) {
-                    acc[task.projectId] = { id: task.projectId, name: task.projectId };
-                }
-                return acc;
-            }, {} as Record<string, { id: string, name: string }>);
-            setProjects(projectsFromTasks);
+            const projectsMap = new Map(allProjects.map(p => [p.id, p]));
+            const newHydratedTasks = userTasks.map(task => ({
+                ...task,
+                projectName: projectsMap.get(task.projectId)?.name || 'N/A'
+            }));
+            setHydratedTasks(newHydratedTasks);
 
         } catch (error) {
             console.error("Failed to load task data:", error);
@@ -47,26 +54,24 @@ const EmployeeTasks: React.FC = () => {
     }, [loadData]);
 
     const handleStatusChange = (taskId: string, newStatus: TaskStatus) => {
-        const task = allTasks.find(t => t.id === taskId);
+        const task = hydratedTasks.find(t => t.id === taskId);
         if(task?.status === TaskStatus.ON_HOLD && task.dependency && newStatus !== TaskStatus.ON_HOLD) {
             alert("This task cannot be taken off hold until its dependency is cleared by a manager.");
             return;
         }
         DataService.updateTask(taskId, { status: newStatus });
-        setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+        setHydratedTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     };
 
     const filteredTasks = useMemo(() => {
-        return allTasks.filter(task => {
+        return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && statusMatch;
         });
-    }, [allTasks, searchTerm, projectFilter, statusFilter]);
+    }, [hydratedTasks, searchTerm, projectFilter, statusFilter]);
     
-    const uniqueProjectIds = useMemo(() => [...new Set(allTasks.map(t => t.projectId))], [allTasks]);
-
     if (!user || user.role !== UserRole.EMPLOYEE) {
         return <Navigate to="/" />;
     }
@@ -95,7 +100,7 @@ const EmployeeTasks: React.FC = () => {
                     />
                     <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm">
                         <option value="all">All Projects</option>
-                        {uniqueProjectIds.map(id => projects[id] && <option key={id} value={id}>{projects[id].name}</option>)}
+                        {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm">
                         <option value="all">All Statuses</option>
@@ -117,7 +122,7 @@ const EmployeeTasks: React.FC = () => {
                             task={task}
                             employees={[]} // Not needed for employee view
                             onStatusChange={handleStatusChange}
-                            projectName={projects[task.projectId]?.name}
+                            projectName={task.projectName}
                         />
                     ))}
                 </div>
@@ -136,7 +141,7 @@ const EmployeeTasks: React.FC = () => {
                             {filteredTasks.map(task => (
                                 <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-slate-800">{task.name}</td>
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{projects[task.projectId]?.name}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.projectName}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <select 
