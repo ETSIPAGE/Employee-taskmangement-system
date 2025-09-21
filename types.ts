@@ -161,6 +161,7 @@ export interface Task {
   dueDate?: string;
   projectId: string;
   assigneeId?: string;
+  assign_by?: string;
   status: TaskStatus;
   category?: string;
   priority?: 'low' | 'medium' | 'high';

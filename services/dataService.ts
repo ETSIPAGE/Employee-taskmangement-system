@@ -1,3 +1,5 @@
+
+
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
@@ -41,6 +43,21 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
 
 // --- API BASED DATA SERVICE ---
 
+// Helper to add auth token to requests
+const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
+    const token = localStorage.getItem('ets_token');
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
+    if (token) {
+        // AWS API Gateway custom authorizers often look for a token in the 'Authorization' header.
+        headers.set('Authorization', token);
+    }
+    return fetch(url, { ...options, headers });
+};
+
+
 // Helper to parse AWS API Gateway responses
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
@@ -65,7 +82,7 @@ const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
         return data;
     }
     if (data && typeof data === 'object') {
-        const possibleKeys = [primaryKey, 'Items', 'items', 'data', 'body'];
+        const possibleKeys = [primaryKey, primaryKey.toLowerCase(), 'Items', 'items', 'data', 'body'];
         for (const key of possibleKeys) {
             if (Array.isArray(data[key])) {
                 return data[key];
@@ -86,64 +103,181 @@ const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
 let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
-let cachedEmployees: User[] | null = null;
+let cachedAllUsers: User[] | null = null;
+
+// Helper to map API user to frontend User
+const mapApiUserToUser = (apiUser: any): User => {
+    const roleString = apiUser.role || 'employee';
+    const role = (roleString.charAt(0).toUpperCase() + roleString.slice(1).toLowerCase()) as UserRole;
+    if (!Object.values(UserRole).includes(role)) {
+        console.warn(`Invalid role "${apiUser.role}" for user ${apiUser.name}. Defaulting to Employee.`);
+    }
+    return {
+        id: apiUser.id,
+        name: apiUser.name,
+        email: apiUser.email,
+        role: Object.values(UserRole).includes(role) ? role : UserRole.EMPLOYEE,
+        companyId: apiUser.companyId,
+        managerId: apiUser.managerId,
+        departmentIds: apiUser.departmentIds || [],
+        jobTitle: apiUser.jobTitle,
+        status: apiUser.status || 'Offline',
+        joinedDate: apiUser.joinedDate || new Date().toISOString(),
+        skills: apiUser.skills || [],
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' }, // Default stats
+        rating: apiUser.rating,
+        personalDetails: apiUser.personalDetails,
+        contactNumber: apiUser.contactNumber,
+        address: apiUser.address,
+        familyMembers: apiUser.familyMembers,
+        education: apiUser.education,
+        compensation: apiUser.compensation,
+        documents: apiUser.documents,
+    };
+};
+
+export const getAllUsersFromApi = async (): Promise<User[]> => {
+    if (cachedAllUsers) return cachedAllUsers;
+
+    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+    const data = await parseApiResponse(response);
+    const usersFromApi = extractArrayFromApiResponse(data, 'users');
+    
+    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+    return cachedAllUsers;
+};
+
+export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
+    const allUsers = await getAllUsersFromApi();
+    return allUsers.find(u => u.id === userId);
+};
 
 // --- EMPLOYEES from API ---
 export const getEmployeesFromApi = async (): Promise<User[]> => {
-    if (cachedEmployees) return cachedEmployees;
-
-    const response = await fetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
-    const data = await parseApiResponse(response);
-    const usersFromApi = extractArrayFromApiResponse(data, 'users');
-
-    const employees = usersFromApi
-        .filter((user: any) => user.role && user.role.toLowerCase() === 'employee')
-        .map((user: any): User => ({
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: UserRole.EMPLOYEE,
-        }));
-
-    cachedEmployees = employees;
-    return cachedEmployees;
+    const allUsers = await getAllUsersFromApi();
+    return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
 };
 
 
 // --- TASKS ---
-export const getAllTasks = async (): Promise<Task[]> => {
-    if (cachedTasks) return cachedTasks;
-    const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
-    const data = await parseApiResponse(response);
-    const tasksFromApi = extractArrayFromApiResponse(data, 'Tasks');
+/**
+ * Maps an API status string to the application's TaskStatus enum.
+ * This is designed to be flexible and handle variations in the API response.
+ * @param apiStatus The status string from the API (e.g., "In Progress", "in-progress", "todo").
+ * @returns The corresponding TaskStatus enum value.
+ */
+const mapApiStatusToTaskStatus = (apiStatus?: string): TaskStatus => {
+    if (!apiStatus) return TaskStatus.TODO;
+    
+    // Normalize by removing spaces and hyphens, and converting to lowercase.
+    const normalized = apiStatus.toLowerCase().replace(/[\s-]+/g, '');
 
-    cachedTasks = tasksFromApi.map((task: any): Task => ({
-        id: task.id,
-        name: task.title,
-        description: task.description,
-        dueDate: task.due_date,
-        projectId: task.project,
-        assigneeId: task.assign_to,
-        status: task.status || TaskStatus.TODO,
-        priority: task.priority,
-        estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
-    }));
-    return cachedTasks;
+    if (normalized.includes('inprogress')) return TaskStatus.IN_PROGRESS;
+    if (normalized.includes('onhold')) return TaskStatus.ON_HOLD;
+    if (normalized.includes('completed')) return TaskStatus.COMPLETED;
+    if (normalized.includes('todo')) return TaskStatus.TODO;
+    
+    console.warn(`Unknown task status from API: "${apiStatus}". Defaulting to To-Do.`);
+    return TaskStatus.TODO;
 };
 
-export const createTask = async (taskData: any): Promise<any> => {
-    const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task', {
+/**
+ * Fetches all tasks from the API.
+ * This implementation is robustly designed to handle various AWS API Gateway response formats.
+ */
+export const getAllTasks = async (): Promise<Task[]> => {
+    // Return cached tasks if available to improve performance and avoid redundant API calls.
+    if (cachedTasks) return cachedTasks;
+
+    try {
+        // Use a standard fetch for this public endpoint to avoid potential header issues.
+        const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Task API Error Response:", errorText);
+            throw new Error(`API request for tasks failed: ${response.status} ${response.statusText}`);
+        }
+
+        const responseData = await response.json();
+        
+        let tasksFromApi: any[];
+
+        // Handle different possible response structures from AWS API Gateway.
+        if (responseData.body && typeof responseData.body === 'string') {
+            // Case 1: Body is a stringified JSON array.
+            tasksFromApi = JSON.parse(responseData.body);
+        } else if (Array.isArray(responseData.body)) {
+            // Case 2: Body is already a JSON array.
+            tasksFromApi = responseData.body;
+        } else if (Array.isArray(responseData)) {
+            // Case 3: The entire response is the JSON array.
+            tasksFromApi = responseData;
+        } else if (responseData.Tasks && Array.isArray(responseData.Tasks)) {
+             // Case 4: The response is an object with a "Tasks" key
+            tasksFromApi = responseData.Tasks;
+        } else {
+            // Fallback: Try to find any array within the response object.
+            tasksFromApi = extractArrayFromApiResponse(responseData, 'Tasks');
+        }
+
+        if (!Array.isArray(tasksFromApi)) {
+            console.error("Final processed task data is not an array:", tasksFromApi);
+            return []; // Return an empty array to prevent crashes.
+        }
+        
+        // Map the raw API task objects to the application's Task type.
+        cachedTasks = tasksFromApi.map((task: any): Task => ({
+            id: task.id,
+            name: task.title,
+            description: task.description,
+            dueDate: task.due_date,
+            projectId: task.project,
+            assigneeId: task.assign_to,
+            assign_by: task.assign_by,
+            status: mapApiStatusToTaskStatus(task.status),
+            priority: task.priority,
+            estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
+        }));
+        
+        return cachedTasks;
+
+    } catch (error) {
+        console.error("A critical error occurred while fetching tasks:", error);
+        return []; // Return an empty array on failure to prevent the app from crashing.
+    }
+};
+
+
+export const createTask = async (taskData: any): Promise<Task> => {
+    const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(taskData)
     });
     if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || 'Failed to create task.');
     }
+    
     // Invalidate cache
     cachedTasks = null;
-    return await response.json();
+    const responseData = await response.json();
+    const createdTaskData = responseData.Task.Item;
+
+    const newTask: Task = {
+        id: createdTaskData.id,
+        name: createdTaskData.title,
+        description: createdTaskData.description,
+        dueDate: createdTaskData.due_date,
+        projectId: createdTaskData.project,
+        assigneeId: createdTaskData.assign_to,
+        assign_by: createdTaskData.assign_by,
+        status: createdTaskData.status,
+        priority: createdTaskData.priority,
+        estimatedTime: createdTaskData.est_time ? parseInt(createdTaskData.est_time, 10) : undefined,
+    };
+    
+    return newTask;
 };
 
 export const getTaskById = async (id: string): Promise<Task | undefined> => {
@@ -167,8 +301,64 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
     return tasks.filter(t => t.assigneeId === assigneeId);
 };
 
-export const updateTask = (taskId: string, updates: Partial<Task>): Task | undefined => {
-    // This is optimistic update on cache as no API endpoint was provided for updates.
+export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeId?: string | undefined }, currentUserId: string): Promise<Task> => {
+    const payload: { currentUserId: string; status?: TaskStatus; assign_to?: string } = {
+        currentUserId: currentUserId,
+    };
+    if (updates.status) {
+        payload.status = updates.status;
+    }
+    if (updates.hasOwnProperty('assigneeId')) {
+        payload.assign_to = updates.assigneeId || '';
+    }
+
+    const endpointUrl = `https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task/${taskId}`;
+
+    const response = await authenticatedFetch(endpointUrl, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        let errorMessage = 'Failed to update task.';
+        try {
+            const errorBody = await response.text();
+            const errorJson = JSON.parse(errorBody);
+            errorMessage = errorJson.message || errorBody;
+        } catch (e) {
+            // The response was not JSON, which is fine. The text itself might be the error.
+        }
+        throw new Error(errorMessage);
+    }
+    
+    cachedTasks = null; // Invalidate cache to force a refresh on next load
+    
+    const responseData = await response.json();
+    const updatedTaskData = responseData.Task;
+
+    const mappedTask: Task = {
+        id: updatedTaskData.id,
+        name: updatedTaskData.title,
+        description: updatedTaskData.description,
+        dueDate: updatedTaskData.due_date,
+        projectId: updatedTaskData.project,
+        assigneeId: updatedTaskData.assign_to,
+        assign_by: updatedTaskData.assign_by,
+        status: updatedTaskData.status,
+        priority: updatedTaskData.priority,
+        estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
+        notes: updatedTaskData.notes,
+        dependency: updatedTaskData.dependency,
+        dependencyLogs: updatedTaskData.dependencyLogs,
+        tags: updatedTaskData.tags,
+        category: updatedTaskData.category
+    };
+
+    return mappedTask;
+};
+
+// Optimistic local update for data not handled by the API, e.g., notes.
+export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task | undefined => {
     if (cachedTasks) {
         const taskIndex = cachedTasks.findIndex(t => t.id === taskId);
         if (taskIndex > -1) {
@@ -179,18 +369,34 @@ export const updateTask = (taskId: string, updates: Partial<Task>): Task | undef
     return undefined;
 };
 
-export const deleteTask = (taskId: string): void => {
-    // Optimistic update
-    if (cachedTasks) {
-        cachedTasks = cachedTasks.filter(t => t.id !== taskId);
+
+export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
+    const response = await authenticatedFetch(`https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task/${taskId}`, {
+        method: 'POST',
+        body: JSON.stringify({ currentUserId: currentUserId })
+    });
+
+    if (!response.ok) {
+        let errorMessage = 'Failed to delete task.';
+        try {
+            const errorBody = await response.json();
+            errorMessage = errorBody.message || JSON.stringify(errorBody);
+        } catch (e) {
+             const errorText = await response.text();
+             errorMessage = errorText || `Request failed with status ${response.status}`;
+        }
+        throw new Error(errorMessage);
     }
+    
+    // Invalidate cache
+    cachedTasks = null;
 };
 
 
 // --- PROJECTS ---
 export const getAllProjects = async (): Promise<Project[]> => {
     if (cachedProjects) return cachedProjects;
-    const response = await fetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
+    const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
     const data = await parseApiResponse(response);
     const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
     cachedProjects = projectsFromApi.map((proj: any): Project => ({
@@ -255,7 +461,7 @@ export const updateProject = (projectId: string, updates: Partial<Project>): Pro
 // --- DEPARTMENTS ---
 export const getDepartments = async (): Promise<Department[]> => {
     if (cachedDepartments) return cachedDepartments;
-    const response = await fetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
+    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
     const data = await parseApiResponse(response);
     const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
     cachedDepartments = departmentsFromApi.map((dept: any): Department => ({

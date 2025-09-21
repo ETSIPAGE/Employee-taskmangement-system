@@ -31,6 +31,7 @@ export default function AdminTasks() {
     const [apiDepartments, setApiDepartments] = useState<Department[]>([]);
     const [apiProjects, setApiProjects] = useState<Project[]>([]);
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
+    const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
     const [newTaskData, setNewTaskData] = useState({
         department: '',
         project: '',
@@ -54,19 +55,19 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const [tasks, projects, employees, allUsersFromAuth] = await Promise.all([
+            const [tasks, projects, allUsersFromApi] = await Promise.all([
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
-                DataService.getEmployeesFromApi(),
-                AuthService.getUsers()
+                DataService.getAllUsersFromApi(),
             ]);
             
             setAllProjects(projects);
+            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
             setAllEmployees(employees);
             
             const projectsMap = new Map(projects.map(p => [p.id, p]));
-            const usersMap = new Map(allUsersFromAuth.map(u => [u.id, u]));
-
+            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
+    
             const newHydratedTasks = tasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
@@ -151,6 +152,27 @@ export default function AdminTasks() {
             setIsSubmitting(false);
         }
     };
+    
+    const handleRequestDelete = (taskId: string) => {
+        const task = hydratedTasks.find(t => t.id === taskId);
+        if (task) {
+            setTaskToDelete({ id: task.id, name: task.name });
+        }
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!taskToDelete || !user) return;
+        try {
+            await DataService.deleteTask(taskToDelete.id, user.id);
+            loadData();
+        } catch (error) {
+            console.error("Failed to delete task:", error);
+            alert(`Failed to delete task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setTaskToDelete(null);
+        }
+    };
+
 
     const filteredTasks = useMemo(() => {
         return hydratedTasks.filter(task => {
@@ -218,8 +240,9 @@ export default function AdminTasks() {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            employees={allEmployees}
+                            assigneeName={task.assigneeName}
                             projectName={task.projectName}
+                            onDelete={handleRequestDelete}
                         />
                     ))}
                 </div>
@@ -243,18 +266,36 @@ export default function AdminTasks() {
                                     [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
                                 };
                                 return (
-                                    <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-slate-800">{task.name}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.projectName}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.assigneeName}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
+                                    <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
                                         </td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <div className="flex items-center space-x-3">
-                                                <button disabled className="text-slate-300 cursor-not-allowed"><EditIcon /></button>
-                                                <button disabled className="text-slate-300 cursor-not-allowed"><TrashIcon /></button>
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        navigate(`/tasks/${task.id}`);
+                                                    }} 
+                                                    className="text-slate-500 hover:text-indigo-600"
+                                                    title="Edit Task"
+                                                >
+                                                    <EditIcon />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleRequestDelete(task.id);
+                                                    }}
+                                                    className="text-slate-500 hover:text-red-600"
+                                                    title="Delete Task"
+                                                >
+                                                    <TrashIcon />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -317,6 +358,21 @@ export default function AdminTasks() {
                         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Creating...' : 'Create Task'}</Button>
                     </div>
                 </form>
+            </Modal>
+            <Modal
+                isOpen={!!taskToDelete}
+                onClose={() => setTaskToDelete(null)}
+                title="Confirm Task Deletion"
+            >
+                <p className="text-slate-600">
+                    Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
+                </p>
+                <div className="pt-4 flex justify-end space-x-3">
+                    <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        Cancel
+                    </button>
+                    <Button onClick={handleConfirmDelete}>Delete Task</Button>
+                </div>
             </Modal>
         </div>
     );

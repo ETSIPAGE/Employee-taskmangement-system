@@ -25,6 +25,7 @@ const ProjectDetail: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
     const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
+    const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
 
     // Form state
     const [newTaskData, setNewTaskData] = useState({
@@ -144,15 +145,26 @@ const ProjectDetail: React.FC = () => {
         loadData(); // Re-fetch to update state
     };
     
-    const handleAssigneeChange = (taskId: string, newAssigneeId?: string) => {
-        DataService.updateTask(taskId, { assigneeId: newAssigneeId });
-        loadData();
+    const handleRequestDelete = (taskId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            setTaskToDelete(task);
+        }
     };
 
-    const handleDeleteTask = (taskId: string) => {
-        DataService.deleteTask(taskId);
-        loadData();
+    const handleConfirmDelete = async () => {
+        if (!taskToDelete || !user) return;
+        try {
+            await DataService.deleteTask(taskToDelete.id, user.id);
+            loadData();
+        } catch (error) {
+            console.error("Failed to delete task:", error);
+            alert(`Failed to delete task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setTaskToDelete(null);
+        }
     };
+
 
     if (isLoading) {
         return <div className="text-center p-8">Loading project details...</div>;
@@ -226,9 +238,8 @@ const ProjectDetail: React.FC = () => {
                                 <TaskCard
                                     key={task.id}
                                     task={task}
-                                    employees={assignableEmployees}
-                                    onAssigneeChange={handleAssigneeChange}
-                                    onDelete={handleDeleteTask}
+                                    assigneeName={assignableEmployees.find(e => e.id === task.assigneeId)?.name}
+                                    onDelete={handleRequestDelete}
                                 />
                             ))}
                         </div>
@@ -284,6 +295,22 @@ const ProjectDetail: React.FC = () => {
                     onSave={handleSaveRoadmap}
                 />
             )}
+
+            <Modal
+                isOpen={!!taskToDelete}
+                onClose={() => setTaskToDelete(null)}
+                title="Confirm Task Deletion"
+            >
+                <p className="text-slate-600">
+                    Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
+                </p>
+                <div className="pt-4 flex justify-end space-x-3">
+                    <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        Cancel
+                    </button>
+                    <Button onClick={handleConfirmDelete}>Delete Task</Button>
+                </div>
+            </Modal>
         </div>
     );
 };

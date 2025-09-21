@@ -260,20 +260,42 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
     localStorage.setItem(TOKEN_KEY, token);
 
     // Step 4: Find or create a user in local storage and sync with API data.
-    const users = getUsers();
+    let users = getUsers();
     const localUser = users.find(u => u.email === email);
     
     let sessionUser: User;
 
     if (localUser) {
-        // User exists locally. Use their detailed profile but override with authoritative data from API.
+        const oldId = localUser.id;
+
+        // Deconstruct the existing local user to safely merge with API data.
+        // This ensures the role and ID from the server always override local values.
+        const { id: _, role: __, ...restOfLocalUser } = localUser;
+        
         sessionUser = {
-            ...localUser,
-            id: apiUserId, // Use ID from API as the source of truth
-            role: apiRole, // Use role from API as the source of truth
+            ...restOfLocalUser, // All other details from the local profile
+            id: apiUserId,      // Authoritative ID from the API
+            role: apiRole,      // Authoritative Role from the API
         };
-        // Update the master list in local storage to keep it in sync, especially the ID.
-        updateUser(localUser.id, { id: apiUserId, role: apiRole });
+        
+        // Find the user in our full list by their OLD ID and update them.
+        const userIndex = users.findIndex(u => u.id === oldId);
+        if (userIndex > -1) {
+            users[userIndex] = sessionUser;
+        }
+
+        // CRITICAL: If the user's ID changed and they are a manager, update employee references.
+        if (oldId !== apiUserId && apiRole === UserRole.MANAGER) {
+            users = users.map(u => {
+                if (u.managerId === oldId) {
+                    return { ...u, managerId: apiUserId };
+                }
+                return u;
+            });
+        }
+        
+        saveUsers(users);
+
     } else {
         // User does not exist locally. Create a new profile with data from the API.
         console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
