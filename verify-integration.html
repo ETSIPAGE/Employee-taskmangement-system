@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Integration Verification</title>
+    <script src="services/apiService.browser.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
+            margin: 20px 0;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: block;
+            margin: 20px auto;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .result {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .loading {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        pre {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-x: auto;
+            max-height: 400px;
+        }
+        .company-card {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .company-name {
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 18px;
+        }
+        .company-id {
+            color: #6c757d;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API Integration Verification</h1>
+        <p>This page tests the integration with the new company API endpoint.</p>
+        
+        <button id="testButton">Test API Integration</button>
+        
+        <div id="loading" class="result loading">
+            <p>Testing API integration... Please wait.</p>
+        </div>
+        
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        document.getElementById('testButton').addEventListener('click', async () => {
+            const loadingDiv = document.getElementById('loading');
+            const resultDiv = document.getElementById('result');
+            
+            // Show loading indicator
+            loadingDiv.style.display = 'block';
+            resultDiv.style.display = 'none';
+            
+            try {
+                console.log('Testing API integration...');
+                const response = await apiService.getCompanies();
+                
+                // Hide loading indicator
+                loadingDiv.style.display = 'none';
+                
+                if (response.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <h3>✅ Success!</h3>
+                        <p>Retrieved ${response.data.length} companies from the API.</p>
+                        <h4>Companies:</h4>
+                        ${response.data.map(company => `
+                            <div class="company-card">
+                                <div class="company-name">${company.name}</div>
+                                <div class="company-id">ID: ${company.id}</div>
+                                <div>Created by: ${company.ownerId}</div>
+                                <div>Created at: ${company.createdAt}</div>
+                            </div>
+                        `).join('')}
+                        <h4>Raw Response:</h4>
+                        <pre>${JSON.stringify(response, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <h3>❌ Error</h3>
+                        <p>Failed to retrieve companies from the API.</p>
+                        <p><strong>Error:</strong> ${response.error}</p>
+                        <pre>${JSON.stringify(response, null, 2)}</pre>
+                    `;
+                }
+            } catch (error) {
+                // Hide loading indicator
+                loadingDiv.style.display = 'none';
+                
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <h3>❌ Exception</h3>
+                    <p>An error occurred while testing the API integration.</p>
+                    <p><strong>Error:</strong> ${error.message}</p>
+                `;
+            }
+            
+            resultDiv.style.display = 'block';
+        });
+    </script>
+</body>
+</html>

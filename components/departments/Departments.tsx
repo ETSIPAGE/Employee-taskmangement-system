@@ -250,6 +250,7 @@ const Departments: React.FC = () => {
         return {
           ...dept,
           timestamp: dept.timestamp,
+          createdAt: dept.createdAt, // Include createdAt property
           employeeCount: deptUsers.filter((u) => u.role === UserRole.EMPLOYEE).length,
           managerCount: deptUsers.filter((u) => u.role === UserRole.MANAGER).length,
           projectsCompleted,
@@ -260,7 +261,28 @@ const Departments: React.FC = () => {
       });
 
       console.log('📈 Final departments with stats:', stats);
-      setDepartmentsWithStats(stats);
+      
+      // Sort departments by creation date (newest first) - same as roles
+      const sortedStats = stats.sort((a, b) => {
+        // If createdAt exists, sort by createdAt (newest first)
+        if (a.createdAt && b.createdAt) {
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
+        // If timestamp exists, sort by timestamp (newest first) as fallback
+        if (a.timestamp && b.timestamp) {
+          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+        }
+        // If only one has createdAt, prioritize it
+        if (a.createdAt && !b.createdAt) return -1;
+        if (!a.createdAt && b.createdAt) return 1;
+        // If only one has timestamp, prioritize it
+        if (a.timestamp && !b.timestamp) return -1;
+        if (!a.timestamp && b.timestamp) return 1;
+        // If neither has timestamp or createdAt, maintain original order
+        return 0;
+      });
+      
+      setDepartmentsWithStats(sortedStats);
       
       // Success notification
       if (stats.length > 0) {
@@ -388,9 +410,13 @@ const Departments: React.FC = () => {
           console.log('Success toast shown');
           
           // Also update locally to keep data in sync
+          // Find the existing department to preserve its createdAt and timestamp
+          const existingDepartment = departmentsWithStats.find(dept => dept.id === editingDepartmentId);
           const localResult = DataService.updateDepartment(editingDepartmentId, {
             name: newDepartmentName,
             companyIds: newDepartmentCompanyIds,
+            timestamp: existingDepartment?.timestamp, // Preserve the timestamp
+            createdAt: existingDepartment?.createdAt // Preserve the createdAt
           });
           
           if (localResult) {
@@ -409,9 +435,13 @@ const Departments: React.FC = () => {
           console.warn('API update failed, using local update:', apiResult.error);
           
           // Always update local state when API fails
+          // Find the existing department to preserve its createdAt and timestamp
+          const existingDepartment = departmentsWithStats.find(dept => dept.id === editingDepartmentId);
           const localResult = DataService.updateDepartment(editingDepartmentId, {
             name: newDepartmentName,
             companyIds: newDepartmentCompanyIds,
+            timestamp: existingDepartment?.timestamp, // Preserve the timestamp
+            createdAt: existingDepartment?.createdAt // Preserve the createdAt
           });
 
           console.log('Local update result:', localResult);
@@ -467,6 +497,22 @@ const Departments: React.FC = () => {
               pauseOnHover: true,
               draggable: true,
             });
+            
+            // Also update locally to keep data in sync
+            // If the API returns department data, use it; otherwise create locally
+            if (apiResult.data && typeof apiResult.data === 'object') {
+              // Transform the API response to match our Department type
+              const apiDepartment = {
+                id: apiResult.data.id || `dept-${Date.now()}`,
+                name: apiResult.data.name || newDepartmentName,
+                companyIds: apiResult.data.companyIds || newDepartmentCompanyIds,
+                timestamp: apiResult.data.timestamp || apiResult.data.createdAt || new Date().toISOString(),
+                createdAt: apiResult.data.createdAt || apiResult.data.timestamp || new Date().toISOString() // Add createdAt property
+              };
+              DataService.updateDepartment(apiDepartment.id, apiDepartment);
+            } else {
+              DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
+            }
             
             // Wait a bit before reloading to ensure toast is visible
             setTimeout(async () => {

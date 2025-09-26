@@ -18,6 +18,7 @@ export interface Department {
   name: string;
   companyIds: string[];
   timestamp?: string; // Make timestamp optional for better compatibility
+  createdAt?: string; // Add createdAt property for sorting
 }
 
 export interface UserStats {

@@ -245,6 +245,8 @@ export const createDepartment = (name: string, companyIds: string[]): Department
         id: `dept-${Date.now()}`,
         name,
         companyIds,
+        timestamp: new Date().toISOString(),
+        createdAt: new Date().toISOString(), // Add createdAt property
     };
     DEPARTMENTS.unshift(newDepartment);
     return newDepartment;
@@ -264,7 +266,10 @@ export const updateDepartment = (departmentId: string, updates: Partial<Departme
     
     if (index > -1) {
         const originalDept = DEPARTMENTS[index];
-        DEPARTMENTS[index] = { ...originalDept, ...updates } as Department;
+        // Preserve timestamp and createdAt if not provided in updates
+        const timestamp = updates.timestamp || originalDept.timestamp || new Date().toISOString();
+        const createdAt = updates.createdAt || originalDept.createdAt || new Date().toISOString();
+        DEPARTMENTS[index] = { ...originalDept, ...updates, timestamp, createdAt } as Department;
         console.log('✅ Successfully updated department:', DEPARTMENTS[index]);
         return DEPARTMENTS[index];
     } else {
@@ -274,7 +279,8 @@ export const updateDepartment = (departmentId: string, updates: Partial<Departme
             id: departmentId,
             name: updates.name || 'Unknown Department',
             companyIds: updates.companyIds || [],
-            timestamp: updates.timestamp || new Date().toISOString()
+            timestamp: updates.timestamp || new Date().toISOString(),
+            createdAt: updates.createdAt || new Date().toISOString() // Add createdAt property
         };
         DEPARTMENTS.push(newDepartment);
         console.log('✅ Created new department in local storage:', newDepartment);
