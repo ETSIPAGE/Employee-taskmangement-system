@@ -50,16 +50,19 @@ const Projects: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const allProjects = DataService.getAllProjects();
-            const allUsers = AuthService.getUsers();
-            const managerList = AuthService.getManagers();
-            const depts = DataService.getDepartments();
-            const allCompanies = DataService.getCompanies();
+            const [allProjects, allUsers, depts, allCompanies] = await Promise.all([
+                DataService.getAllProjects(),
+                AuthService.getUsers(),
+                DataService.getDepartments(),
+                DataService.getCompanies() // This is still mock data
+            ]);
+
+            const managerList = allUsers.filter(u => u.role === UserRole.MANAGER);
             
             setDepartments(depts);
             setCompanies(allCompanies);
-            
             setManagers(managerList);
+
             if (managerList.length > 0) {
                 setAssignedManagerId(user?.id || managerList[0].id);
             }
@@ -67,9 +70,9 @@ const Projects: React.FC = () => {
                 setNewProjectCompanyId(allCompanies[0].id);
             }
 
-            const projectsWithDetails = allProjects.map(p => {
+            const projectsWithDetails = await Promise.all(allProjects.map(async p => {
                 const manager = allUsers.find(u => u.id === p.managerId);
-                const projectTasks = DataService.getTasksByProject(p.id);
+                const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
                 const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
                 const departmentNames = p.departmentIds.map(id => depts.find(d => d.id === id)?.name).filter(Boolean).join(', ');
@@ -82,7 +85,7 @@ const Projects: React.FC = () => {
                     departmentNames,
                     companyName: company?.name || 'N/A',
                 };
-            });
+            }));
 
             setProjects(projectsWithDetails);
         } catch (error) {

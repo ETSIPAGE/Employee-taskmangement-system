@@ -46,20 +46,29 @@ const UserProfile: React.FC = () => {
         const loadData = async () => {
             setIsLoading(true);
             try {
-                const fetchedUser = AuthService.getUserById(userId);
+                const [
+                    fetchedUser, 
+                    userTasks, 
+                    allProjects, 
+                    allDepts, 
+                    allUsersFromApi
+                ] = await Promise.all([
+                    DataService.getUserByIdFromApi(userId),
+                    DataService.getTasksByAssignee(userId),
+                    DataService.getAllProjects(),
+                    DataService.getDepartments(),
+                    DataService.getAllUsersFromApi()
+                ]);
+
                 if (fetchedUser) {
                     setUser(fetchedUser);
-                    const userTasks = DataService.getTasksByAssignee(userId);
-                    setTasks(userTasks);
 
                     if (fetchedUser.managerId) {
-                        setManager(AuthService.getUserById(fetchedUser.managerId) || null);
+                        setManager(allUsersFromApi.find(u => u.id === fetchedUser.managerId) || null);
                     }
-
-                    const allProjects = DataService.getAllProjects();
-                    setProjects(allProjects.reduce((acc, p) => ({...acc, [p.id]: p }), {}));
                     
-                    const allDepts = DataService.getDepartments();
+                    setTasks(userTasks);
+                    setProjects(allProjects.reduce((acc, p) => ({...acc, [p.id]: p }), {}));
                     setDepartments(allDepts.reduce((acc, d) => ({...acc, [d.id]: d }), {}));
 
                 } else {

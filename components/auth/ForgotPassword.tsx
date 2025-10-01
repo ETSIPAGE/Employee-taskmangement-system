@@ -1,25 +1,39 @@
-
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
 import Input from '../shared/Input';
 import Button from '../shared/Button';
 
-const Login: React.FC = () => {
+const ForgotPassword = () => {
     const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const { login } = useAuth();
     const navigate = useNavigate();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setError(null);
+        setError('');
+        setMessage('');
         setIsLoading(true);
+
         try {
-            await login(email, password);
-            navigate('/');
+            const response = await fetch('https://w5tlwzv6xk.execute-api.ap-south-1.amazonaws.com/dev/generate-otp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to send OTP.');
+            }
+
+            setMessage('An OTP has been sent to your email address.');
+            setTimeout(() => {
+                navigate('/reset-password', { state: { email } });
+            }, 2000); // Navigate after 2 seconds to allow user to read the message
+
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {
@@ -31,10 +45,11 @@ const Login: React.FC = () => {
         <div className="min-h-screen bg-slate-100 flex items-center justify-center">
             <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8">
                 <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-slate-800">Welcome Back</h1>
-                    <p className="text-slate-500 mt-2">Sign in to your account</p>
+                    <h1 className="text-3xl font-bold text-slate-800">Forgot Password</h1>
+                    <p className="text-slate-500 mt-2">Enter your email to receive a password reset OTP.</p>
                 </div>
                 {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">{error}</div>}
+                {message && <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">{message}</div>}
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <Input
                         id="email"
@@ -43,30 +58,16 @@ const Login: React.FC = () => {
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         required
+                        autoComplete="email"
                     />
-                    <Input
-                        id="password"
-                        type="password"
-                        label="Password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                    />
-                    <div className="flex items-center justify-end">
-                        <div className="text-sm">
-                            <Link to="/forgot-password" className="font-medium text-indigo-600 hover:text-indigo-500">
-                                Forgot your password?
-                            </Link>
-                        </div>
-                    </div>
                     <Button type="submit" fullWidth disabled={isLoading}>
-                        {isLoading ? 'Signing In...' : 'Sign In'}
+                        {isLoading ? 'Sending OTP...' : 'Send OTP'}
                     </Button>
                 </form>
                 <p className="text-center text-sm text-slate-500 mt-6">
-                    Don't have an account?{' '}
-                    <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
-                        Sign up
+                    Remembered your password?{' '}
+                    <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
+                        Sign in
                     </Link>
                 </p>
             </div>
@@ -74,4 +75,4 @@ const Login: React.FC = () => {
     );
 };
 
-export default Login;
+export default ForgotPassword;

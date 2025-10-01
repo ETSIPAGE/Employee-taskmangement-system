@@ -18,11 +18,11 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-lg shadow-xl w-full max-w-4xl p-4 relative z-50 transform transition-all" 
+        className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 relative z-50 transform transition-all" 
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-          <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+        <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+          <h3 className="text-xl font-semibold text-slate-800">{title}</h3>
           <button 
             onClick={onClose} 
             className="text-slate-400 hover:text-slate-600 transition-colors"
@@ -33,7 +33,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             </svg>
           </button>
         </div>
-        <div className="mt-3">
+        <div className="mt-4">
           {children}
         </div>
       </div>

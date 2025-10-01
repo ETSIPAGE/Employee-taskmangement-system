@@ -99,8 +99,7 @@ const DonutChart: React.FC<DonutChartProps> = ({ data }) => {
     );
 };
 
-const PriorityTaskItem = ({ task }: { task: Task }) => {
-    const assignee = AuthService.getUserById(task.assigneeId || '');
+const PriorityTaskItem = ({ task, assignee }: { task: Task, assignee?: User }) => {
     return (
         <li className="py-3 flex justify-between items-center">
             <div>
@@ -117,44 +116,35 @@ const ManagerDashboard: React.FC = () => {
     const { user } = useAuth();
     const [projects, setProjects] = useState<ProjectWithProgress[]>([]);
     const [teamTaskCounts, setTeamTaskCounts] = useState({ todo: 0, inProgress: 0, completed: 0 });
-    const [teamSize, setTeamSize] = useState(0);
+    const [teamMembers, setTeamMembers] = useState<User[]>([]);
     const [highPriorityTasks, setHighPriorityTasks] = useState<Task[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         if (user) {
-            // Fetch team members
-            const teamMembers = AuthService.getTeamMembers(user.id);
-            setTeamSize(teamMembers.length);
+            const team = AuthService.getTeamMembers(user.id);
+            setTeamMembers(team);
 
-            // Fetch manager's projects and calculate progress
-            const managerProjects = DataService.getProjectsByManager(user.id);
-            const projectsWithProgress = managerProjects.map(p => {
-                const projectTasks = DataService.getTasksByProject(p.id);
+            const managerProjects = await DataService.getProjectsByManager(user.id);
+            const projectsWithProgressPromises = managerProjects.map(async p => {
+                const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
                 const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
                 
                 let status = "On Track";
                 let statusColor = "bg-green-500";
-                if (progress < 50) {
-                    status = "At Risk";
-                    statusColor = "bg-red-500";
-                } else if (progress < 100) {
-                    status = "In Progress";
-                    statusColor = "bg-blue-500";
-                } else {
-                    status = "Completed";
-                    statusColor = "bg-gray-400";
-                }
+                if (progress < 50) { status = "At Risk"; statusColor = "bg-red-500"; }
+                else if (progress < 100) { status = "In Progress"; statusColor = "bg-blue-500"; }
+                else { status = "Completed"; statusColor = "bg-gray-400"; }
 
                 return { ...p, progress, status, statusColor };
             });
+            const projectsWithProgress = await Promise.all(projectsWithProgressPromises);
             setProjects(projectsWithProgress);
 
-            // Fetch team tasks and count statuses
-            const teamMemberIds = teamMembers.map(tm => tm.id);
-            const teamTasks = DataService.getTasksByTeam(teamMemberIds);
+            const teamMemberIds = team.map(tm => tm.id);
+            const teamTasks = await DataService.getTasksByTeam(teamMemberIds);
             const counts = {
                 todo: teamTasks.filter(t => t.status === TaskStatus.TODO).length,
                 inProgress: teamTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
@@ -186,13 +176,7 @@ const ManagerDashboard: React.FC = () => {
             <div className="flex justify-between items-start mb-6">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-800 mb-2">Manager Dashboard</h1>
-                    <div className="flex items-center space-x-3">
-                        <p className="text-slate-600">Welcome, {user?.name}!</p>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-800">
-                            {user?.role}
-                        </span>
-                    </div>
-                    <p className="text-slate-500 text-sm mt-1">Here's your team's overview.</p>
+                    <p className="text-slate-600">Welcome, {user?.name}! Here's your team's overview.</p>
                 </div>
                 <button 
                     onClick={loadData} 
@@ -208,7 +192,7 @@ const ManagerDashboard: React.FC = () => {
                 <StatCard 
                     icon={<ClockIcon />}
                     title="Team Members"
-                    value={`${teamSize}`}
+                    value={`${teamMembers.length}`}
                     color="bg-green-100 text-green-600"
                 />
                 <StatCard 
@@ -256,7 +240,7 @@ const ManagerDashboard: React.FC = () => {
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Team's High-Priority Tasks</h2>
                     {highPriorityTasks.length > 0 ? (
                          <ul className="divide-y divide-slate-200">
-                           {highPriorityTasks.map(task => <PriorityTaskItem key={task.id} task={task} />)}
+                           {highPriorityTasks.map(task => <PriorityTaskItem key={task.id} task={task} assignee={teamMembers.find(m => m.id === task.assigneeId)} />)}
                         </ul>
                     ) : (
                         <p className="text-center py-4 text-slate-500">No high-priority tasks for your team.</p>

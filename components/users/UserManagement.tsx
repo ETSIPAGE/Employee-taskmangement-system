@@ -8,7 +8,7 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import ViewSwitcher from '../shared/ViewSwitcher';
-import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon } from '../../constants';
+import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
 
 const getInitials = (name: string) => {
@@ -27,7 +27,7 @@ const StatItem: React.FC<{ icon: React.ReactNode; value: React.ReactNode; label:
     </div>
 );
 
-const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void }> = ({ user, companyName, onEdit, onDelete }) => {
+const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void; onImpersonate: (userId: string) => void; currentUser: User; }> = ({ user, companyName, onEdit, onDelete, onImpersonate, currentUser }) => {
     const statusStyles = {
         Active: { dot: 'bg-green-500' },
         Busy: { dot: 'bg-orange-500' },
@@ -83,6 +83,11 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     {isMenuOpen && (
                         <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg z-10 border">
                             <a href="#" onClick={(e) => { e.preventDefault(); onEdit(user); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Edit User</a>
+                            {currentUser.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                <a href="#" onClick={(e) => { e.preventDefault(); onImpersonate(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                                    Impersonate
+                                </a>
+                            )}
                             <a href="#" onClick={(e) => { e.preventDefault(); onDelete(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Delete User</a>
                         </div>
                     )}
@@ -147,7 +152,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
 
 
 const UserManagement: React.FC = () => {
-    const { user: currentUser } = useAuth();
+    const { user: currentUser, impersonateUser } = useAuth();
     const navigate = useNavigate();
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
@@ -177,7 +182,6 @@ const UserManagement: React.FC = () => {
         try {
             setUsers(AuthService.getUsers());
             setManagers(AuthService.getManagers());
-            setDepartments(DataService.getDepartments());
             setCompanies(DataService.getCompanies());
         } catch (error) {
             console.error("Failed to load user data", error);
@@ -189,6 +193,18 @@ const UserManagement: React.FC = () => {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    useEffect(() => {
+        const fetchDepartments = async () => {
+            try {
+                const apiDepartments = await DataService.getDepartments();
+                setDepartments(apiDepartments);
+            } catch (error) {
+                console.error("Failed to fetch departments for user management:", error);
+            }
+        };
+        fetchDepartments();
+    }, []);
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -237,6 +253,16 @@ const UserManagement: React.FC = () => {
         if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
             AuthService.deleteUser(userId);
             loadData();
+        }
+    };
+
+    const handleImpersonate = async (userId: string) => {
+        try {
+            await impersonateUser(userId);
+            navigate('/');
+        } catch (error) {
+            console.error("Impersonation failed", error);
+            alert("Could not log in as this user.");
         }
     };
 
@@ -322,7 +348,15 @@ const UserManagement: React.FC = () => {
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {filteredUsers.map(user => {
                         const company = companies.find(c => c.id === user.companyId);
-                        return (<UserCard key={user.id} user={user} companyName={company?.name} onEdit={handleOpenEditModal} onDelete={handleDeleteUser} />);
+                        return (<UserCard 
+                            key={user.id} 
+                            user={user} 
+                            companyName={company?.name} 
+                            onEdit={handleOpenEditModal} 
+                            onDelete={handleDeleteUser}
+                            onImpersonate={handleImpersonate}
+                            currentUser={currentUser}
+                        />);
                     })}
                 </div>
             ) : (
@@ -362,6 +396,15 @@ const UserManagement: React.FC = () => {
                                         <div className="flex items-center space-x-3">
                                             <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
+                                            {currentUser?.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleImpersonate(user.id); }}
+                                                    className="text-slate-500 hover:text-green-600"
+                                                    title={`Log in as ${user.name}`}
+                                                >
+                                                    <LoginIcon />
+                                                </button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
@@ -379,37 +422,29 @@ const UserManagement: React.FC = () => {
             )}
 
             <Modal title={editingUser ? "Edit User" : "Add New Employee"} isOpen={isModalOpen} onClose={handleCloseModal}>
-                <form onSubmit={handleSubmit} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-4">
-                        <Input id="name" type="text" label="Full Name" value={name} onChange={e => setName(e.target.value)} required />
-                        <Input id="email" type="email" label="Email Address" value={email} onChange={e => setEmail(e.target.value)} required disabled={!!editingUser} />
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <Input id="name" type="text" label="Full Name" value={name} onChange={e => setName(e.target.value)} required />
+                    <Input id="email" type="email" label="Email Address" value={email} onChange={e => setEmail(e.target.value)} required disabled={!!editingUser} />
+                    {!editingUser && <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required />}
+                     <div>
+                        <label htmlFor="role" className="block text-sm font-medium text-slate-700">Role</label>
+                        <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                             {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
+                        </select>
                     </div>
-                    
-                    {!editingUser && (
-                        <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required />
-                    )}
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="role" className="block text-sm font-medium text-slate-700">Role</label>
-                            <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                 {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
-                            </select>
-                        </div>
 
-                        <div>
-                            <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
-                            <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                <option value="">No Company</option>
-                                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                        </div>
+                    <div>
+                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
+                        <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                            <option value="">No Company</option>
+                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
                     </div>
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
-                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
-                            {departments.map(dept => (
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
+                            {departments.length > 0 ? departments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -422,38 +457,34 @@ const UserManagement: React.FC = () => {
                                         {dept.name}
                                     </label>
                                 </div>
-                            ))}
+                            )) : <p className="text-sm text-slate-500">Loading departments...</p>}
                         </div>
                     </div>
 
-                    {(role === UserRole.EMPLOYEE || editingUser) && (
-                        <div className="grid grid-cols-2 gap-4">
-                            {role === UserRole.EMPLOYEE && (
-                                <div>
-                                    <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                                    <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                        <option value="">No Manager</option>
-                                        {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                    </select>
-                                </div>
-                            )}
-                            
-                            {editingUser && (
-                                <Input
-                                    id="rating"
-                                    label="Performance Rating (0-10)"
-                                    type="number"
-                                    value={rating}
-                                    onChange={(e) => setRating(parseFloat(e.target.value))}
-                                    min="0"
-                                    max="10"
-                                    step="0.1"
-                                />
-                            )}
+                    {role === UserRole.EMPLOYEE && (
+                        <div>
+                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
+                            <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
+                                <option value="">No Manager</option>
+                                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
                         </div>
                     )}
+                    
+                    {editingUser && (
+                        <Input
+                            id="rating"
+                            label="Performance Rating (0-10)"
+                            type="number"
+                            value={rating}
+                            onChange={(e) => setRating(parseFloat(e.target.value))}
+                            min="0"
+                            max="10"
+                            step="0.1"
+                        />
+                    )}
 
-                    <div className="pt-3 flex justify-end space-x-3">
+                    <div className="pt-4 flex justify-end space-x-3">
                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
                         <Button type="submit">{editingUser ? "Save Changes" : "Create Employee"}</Button>
                     </div>

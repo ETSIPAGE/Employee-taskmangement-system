@@ -25,39 +25,50 @@ const ProjectDetail: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
     const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
+    const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
 
     // Form state
-    const [newTaskName, setNewTaskName] = useState('');
-    const [newTaskDesc, setNewTaskDesc] = useState('');
-    const [newTaskDueDate, setNewTaskDueDate] = useState('');
-    const [newAssigneeId, setNewAssigneeId] = useState<string | undefined>(undefined);
-    const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
-    const [newTaskEstTime, setNewTaskEstTime] = useState('');
+    const [newTaskData, setNewTaskData] = useState({
+        title: '',
+        description: '',
+        due_date: '',
+        priority: 'medium' as 'low' | 'medium' | 'high',
+        est_time: '',
+        assign_to: ''
+    });
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!projectId || !user) return;
         setIsLoading(true);
         try {
-            const currentProject = DataService.getProjectById(projectId);
+            const currentProject = await DataService.getProjectById(projectId);
             if (!currentProject) {
                 setProject(null);
                 return;
             }
             setProject(currentProject);
-            setCompany(DataService.getCompanyById(currentProject.companyId) || null);
 
-            const projectTasks = DataService.getTasksByProject(projectId);
+            const [
+                projectTasks,
+                allEmployees,
+                allDepts,
+                currentCompany
+            ] = await Promise.all([
+                DataService.getTasksByProject(projectId),
+                DataService.getEmployeesFromApi(),
+                DataService.getDepartments(),
+                DataService.getCompanyById(currentProject.companyId)
+            ]);
+            
+            setCompany(currentCompany || null);
             setTasks(projectTasks);
             
-            const allCompanyUsers = AuthService.getUsers();
-            const allEmployees = allCompanyUsers.filter(u => u.role === UserRole.EMPLOYEE);
             setAssignableEmployees(allEmployees);
             
             if (allEmployees.length > 0) {
-                 setNewAssigneeId(allEmployees[0].id);
+                 setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
             }
 
-            const allDepts = DataService.getDepartments();
             setDepartments(allDepts);
 
         } catch (error) {
@@ -84,62 +95,76 @@ const ProjectDetail: React.FC = () => {
     const handleOpenModal = () => setIsTaskModalOpen(true);
     const handleCloseModal = () => {
         setIsTaskModalOpen(false);
-        setNewTaskName('');
-        setNewTaskDesc('');
-        setNewTaskDueDate('');
-        if (assignableEmployees.length > 0) {
-            setNewAssigneeId(assignableEmployees[0].id);
-        } else {
-            setNewAssigneeId(undefined);
-        }
-        setNewTaskPriority('medium');
-        setNewTaskEstTime('');
+        setNewTaskData({
+            title: '',
+            description: '',
+            due_date: '',
+            priority: 'medium',
+            est_time: '',
+            assign_to: assignableEmployees.length > 0 ? assignableEmployees[0].id : ''
+        });
     };
 
-    const handleCreateTask = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newTaskName.trim() || !projectId) return;
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        const { name, value } = e.target;
+        setNewTaskData(prev => ({ ...prev, [name]: value }));
+    };
 
-        DataService.createTask({
-            name: newTaskName,
-            description: newTaskDesc,
-            dueDate: newTaskDueDate,
-            projectId,
-            assigneeId: newAssigneeId,
-            status: TaskStatus.TODO,
-            priority: newTaskPriority,
-            estimatedTime: newTaskEstTime ? parseInt(newTaskEstTime, 10) : undefined,
-        });
+    const handleCreateTask = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newTaskData.title.trim() || !projectId || !user) return;
+
+        const departmentName = project?.departmentIds[0] ? (await DataService.getDepartmentById(project.departmentIds[0]))?.name : '';
+
+        const payload = {
+            ...newTaskData,
+            project: projectId,
+            department: departmentName,
+            currentUserId: user.id,
+        };
+
+        await DataService.createTask(payload);
         
-        loadData(); // Refresh list
+        loadData();
         handleCloseModal();
     };
 
-    const handleSaveRoadmap = (newRoadmap: ProjectMilestone[]) => {
+    const handleSaveRoadmap = async (newRoadmap: ProjectMilestone[]) => {
         if (!project) return;
-        DataService.updateProject(project.id, { roadmap: newRoadmap });
+        await DataService.updateProject(project.id, { roadmap: newRoadmap });
         loadData(); // Refresh project data
         setIsRoadmapModalOpen(false);
     };
 
-    const handleUpdateMilestoneStatus = (milestoneId: string, newStatus: MilestoneStatus) => {
+    const handleUpdateMilestoneStatus = async (milestoneId: string, newStatus: MilestoneStatus) => {
         if (!project || !project.roadmap) return;
         const newRoadmap = project.roadmap.map(ms =>
             ms.id === milestoneId ? { ...ms, status: newStatus } : ms
         );
-        DataService.updateProject(project.id, { roadmap: newRoadmap });
+        await DataService.updateProject(project.id, { roadmap: newRoadmap });
         loadData(); // Re-fetch to update state
     };
     
-    const handleAssigneeChange = (taskId: string, newAssigneeId?: string) => {
-        DataService.updateTask(taskId, { assigneeId: newAssigneeId });
-        loadData();
+    const handleRequestDelete = (taskId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+            setTaskToDelete(task);
+        }
     };
 
-    const handleDeleteTask = (taskId: string) => {
-        DataService.deleteTask(taskId);
-        loadData();
+    const handleConfirmDelete = async () => {
+        if (!taskToDelete || !user) return;
+        try {
+            await DataService.deleteTask(taskToDelete.id, user.id);
+            loadData();
+        } catch (error) {
+            console.error("Failed to delete task:", error);
+            alert(`Failed to delete task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setTaskToDelete(null);
+        }
     };
+
 
     if (isLoading) {
         return <div className="text-center p-8">Loading project details...</div>;
@@ -213,9 +238,8 @@ const ProjectDetail: React.FC = () => {
                                 <TaskCard
                                     key={task.id}
                                     task={task}
-                                    employees={assignableEmployees}
-                                    onAssigneeChange={handleAssigneeChange}
-                                    onDelete={handleDeleteTask}
+                                    assigneeName={assignableEmployees.find(e => e.id === task.assigneeId)?.name}
+                                    onDelete={handleRequestDelete}
                                 />
                             ))}
                         </div>
@@ -225,28 +249,28 @@ const ProjectDetail: React.FC = () => {
 
             <Modal title="Create New Task" isOpen={isTaskModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateTask} className="space-y-4">
-                    <Input id="taskName" type="text" label="Task Title" value={newTaskName} onChange={e => setNewTaskName(e.target.value)} required />
+                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
                     <div>
-                        <label htmlFor="taskDescription" className="block text-sm font-medium text-slate-700">Description</label>
-                        <textarea id="taskDescription" rows={3} value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)}
+                        <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
+                        <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
                             className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                         />
                     </div>
-                    <Input id="dueDate" type="date" label="Due Date" value={newTaskDueDate} onChange={e => setNewTaskDueDate(e.target.value)} />
+                    <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value as 'low' | 'medium' | 'high')} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
                                 <option value="high">High</option>
                             </select>
                         </div>
-                        <Input id="estTime" type="number" label="Est. Time (hours)" value={newTaskEstTime} onChange={e => setNewTaskEstTime(e.target.value)} min="0" />
+                        <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
                     </div>
                     <div>
-                        <label htmlFor="assignee" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assignee" value={newAssigneeId || ''} onChange={e => setNewAssigneeId(e.target.value)}
+                        <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
+                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to || ''} onChange={handleInputChange}
                             className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                             <option value="">Unassigned</option>
                             {assignableEmployees.map(employee => (
@@ -263,12 +287,30 @@ const ProjectDetail: React.FC = () => {
                 </form>
             </Modal>
             
-            <RoadmapBuilderModal
-                isOpen={isRoadmapModalOpen}
-                onClose={() => setIsRoadmapModalOpen(false)}
-                project={project}
-                onSave={handleSaveRoadmap}
-            />
+            {project && (
+                <RoadmapBuilderModal
+                    isOpen={isRoadmapModalOpen}
+                    onClose={() => setIsRoadmapModalOpen(false)}
+                    project={project}
+                    onSave={handleSaveRoadmap}
+                />
+            )}
+
+            <Modal
+                isOpen={!!taskToDelete}
+                onClose={() => setTaskToDelete(null)}
+                title="Confirm Task Deletion"
+            >
+                <p className="text-slate-600">
+                    Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
+                </p>
+                <div className="pt-4 flex justify-end space-x-3">
+                    <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        Cancel
+                    </button>
+                    <Button onClick={handleConfirmDelete}>Delete Task</Button>
+                </div>
+            </Modal>
         </div>
     );
 };

@@ -1,181 +1,13 @@
-import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, OnboardingStepStatus, Company } from '../types';
 
+
+import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
+
+// --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
+// Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
 let COMPANIES: Company[] = [
-    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' },
-    { id: 'comp-2', name: 'TechCore Systems', ownerId: '1', createdAt: '2023-02-15T00:00:00.000Z' },
-    { id: 'comp-3', name: 'Alpha Solutions', ownerId: '1', createdAt: '2023-03-20T00:00:00.000Z' },
-    { id: 'comp-4', name: 'Beta Labs', ownerId: '1', createdAt: '2023-04-05T00:00:00.000Z' }
+    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
 ];
 
-let DEPARTMENTS: Department[] = [
-    { id: 'dept-1', name: 'Administration', companyIds: ['comp-1'] },
-    { id: 'dept-2', name: 'Finance & Accounting', companyIds: ['comp-1'] },
-    { id: 'dept-3', name: 'Human Resources (HR)', companyIds: ['comp-1'] },
-    { id: 'dept-4', name: 'Operations', companyIds: ['comp-1'] },
-    { id: 'dept-5', name: 'Marketing', companyIds: ['comp-1'] },
-    { id: 'dept-6', name: 'Sales', companyIds: ['comp-1'] },
-    { id: 'dept-7', name: 'Information Technology (IT)', companyIds: ['comp-1'] },
-    { id: 'dept-8', name: 'Customer Service', companyIds: ['comp-1'] },
-];
-
-let PROJECTS: Project[] = [
-    { id: 'proj-1', name: 'Q3 Marketing Campaign', description: 'A comprehensive marketing campaign for the third quarter.', managerId: '2', departmentIds: ['dept-5'], deadline: '2025-09-30', priority: 'high', estimatedTime: 120, companyId: 'comp-1' },
-    { 
-        id: 'proj-2', 
-        name: 'New Website Launch', 
-        description: 'Launch of the new corporate website with e-commerce functionality.', 
-        managerId: '2', 
-        departmentIds: ['dept-7', 'dept-5'], 
-        deadline: '2025-09-15', 
-        priority: 'high', 
-        estimatedTime: 300, 
-        companyId: 'comp-1',
-        roadmap: [
-            { id: 'm1', name: 'Phase 1: Discovery & Planning', description: 'Gather requirements and plan project structure.', startDate: '2025-07-01', endDate: '2025-07-15', status: MilestoneStatus.COMPLETED },
-            { id: 'm2', name: 'Phase 2: Design', description: 'UI/UX design and mockups.', startDate: '2025-07-16', endDate: '2025-08-05', status: MilestoneStatus.COMPLETED },
-            { id: 'm3', name: 'Phase 3: Development', description: 'Frontend and backend development.', startDate: '2025-08-06', endDate: '2025-09-01', status: MilestoneStatus.IN_PROGRESS },
-            { id: 'm4', name: 'Phase 4: Testing & Deployment', description: 'QA, UAT, and final launch.', startDate: '2025-09-02', endDate: '2025-09-15', status: MilestoneStatus.PENDING },
-        ]
-    },
-    { id: 'proj-3', name: 'HR Portal Update', description: 'Update the internal HR portal with new features for employees.', managerId: '2', departmentIds: ['dept-3', 'dept-7'], deadline: '2024-09-15', priority: 'medium', estimatedTime: 80, companyId: 'comp-1' },
-    { id: 'proj-4', name: 'Mobile App V2', description: 'Version 2 of the customer-facing mobile application.', managerId: '2', departmentIds: ['dept-7'], deadline: '2024-10-31', priority: 'medium', estimatedTime: 250, companyId: 'comp-1' },
-];
-
-let TASKS: Task[] = [
-    // Project 1 Tasks (Manager '2')
-    { id: 'task-1', name: 'Draft campaign brief', description: 'Create the initial brief document for the Q3 campaign.', dueDate: '2025-08-10', projectId: 'proj-1', assigneeId: '3', status: TaskStatus.COMPLETED, category: 'Planning', priority: 'high', tags: ['brief', 'marketing', 'q3'], estimatedTime: 8 },
-    { id: 'task-2', name: 'Design social media assets', description: 'Create graphics for Facebook, Twitter, and Instagram.', dueDate: '2025-08-15', projectId: 'proj-1', assigneeId: '4', status: TaskStatus.COMPLETED, category: 'Design', priority: 'medium', tags: ['graphics', 'social media'], estimatedTime: 16 },
-    { id: 'task-3', name: 'Develop ad copy', description: 'Write compelling copy for all digital ads.', dueDate: '2025-08-20', projectId: 'proj-1', assigneeId: '3', status: TaskStatus.IN_PROGRESS, category: 'Content', priority: 'medium', tags: ['copywriting', 'ads'], 
-        notes: [
-            { id: 'note-1', authorId: '3', content: 'Initial drafts are done. Waiting for feedback from Sarah.', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString() },
-            { id: 'note-2', authorId: '2', content: 'Good start. Let\'s refine the headline for ad set A.', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString() }
-        ], 
-        estimatedTime: 12 
-    },
-    { 
-        id: 'task-4', 
-        name: 'Schedule posts', 
-        description: 'Use the scheduling tool to plan all posts for the month.', 
-        dueDate: '2025-08-25', 
-        projectId: 'proj-1', 
-        assigneeId: '5', 
-        status: TaskStatus.ON_HOLD, 
-        category: 'Execution', 
-        priority: 'low', 
-        tags: ['scheduling', 'social media'], 
-        estimatedTime: 4, 
-        dependency: { userId: '4', reason: 'Awaiting approval on ad copy from Sarah Chen.' },
-        dependencyLogs: [
-            {
-                authorId: '2',
-                action: 'set',
-                reason: 'Awaiting approval on ad copy from Sarah Chen.',
-                dependencyOnUserId: '4',
-                timestamp: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString()
-            }
-        ]
-    },
-    // Project 2 Tasks (Manager '2')
-    { id: 'task-5', name: 'Finalize homepage design', description: 'Get final approval on the new homepage mockups.', dueDate: '2025-08-05', projectId: 'proj-2', assigneeId: '4', status: TaskStatus.COMPLETED, category: 'Design', priority: 'high', tags: ['ui', 'ux', 'website'], estimatedTime: 24 },
-    { id: 'task-6', name: 'Develop backend API', description: 'Build out all necessary endpoints for the website.', dueDate: '2025-09-01', projectId: 'proj-2', assigneeId: '5', status: TaskStatus.IN_PROGRESS, category: 'Development', priority: 'high', tags: ['api', 'backend'], estimatedTime: 80 },
-    { 
-        id: 'task-7', 
-        name: 'User acceptance testing', 
-        description: 'Conduct UAT with a focus group.', 
-        dueDate: '2025-09-10', 
-        projectId: 'proj-2', 
-        assigneeId: '6', 
-        status: TaskStatus.ON_HOLD, 
-        category: 'QA', 
-        priority: 'medium', 
-        tags: ['testing', 'uat'], 
-        estimatedTime: 20, 
-        dependency: { userId: '2', reason: 'Waiting for manager to provide the list of UAT participants.' },
-        dependencyLogs: [
-            {
-                authorId: '2',
-                action: 'set',
-                reason: 'Waiting for manager to provide the list of UAT participants.',
-                dependencyOnUserId: '2',
-                timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString()
-            }
-        ]
-    },
-    { id: 'task-8', name: 'Deploy to production', description: 'Push the final code to the live servers.', dueDate: '2025-09-15', projectId: 'proj-2', assigneeId: '5', status: TaskStatus.TODO, category: 'DevOps', priority: 'high', tags: ['deployment', 'production'], estimatedTime: 8 },
-    { id: 'task-9', name: 'Create User Documentation', description: 'Develop comprehensive user guides for all dashboards and features.', dueDate: '2025-08-24', projectId: 'proj-2', assigneeId: undefined, status: TaskStatus.TODO, category: 'Documentation', priority: 'medium', tags: ['documentation', 'user', 'guides'], estimatedTime: 16 },
-    // Project 3 Tasks (Manager '2')
-    { id: 'task-10', name: 'Gather requirements', description: 'Meet with stakeholders to define project scope.', dueDate: '2024-07-25', projectId: 'proj-3', assigneeId: '3', status: TaskStatus.COMPLETED, category: 'Planning', priority: 'high', tags: ['requirements', 'stakeholders'], estimatedTime: 10 },
-    { id: 'task-11', name: 'Create wireframes', description: 'Design the low-fidelity wireframes for the new portal.', dueDate: '2024-08-05', projectId: 'proj-3', assigneeId: '4', status: TaskStatus.COMPLETED, category: 'Design', priority: 'medium', tags: ['wireframes', 'ux'], estimatedTime: 15 },
-    { id: 'task-12', name: 'Implement new features', description: 'Code the new features as per the requirements.', dueDate: '2024-09-01', projectId: 'proj-3', assigneeId: undefined, status: TaskStatus.TODO, category: 'Development', priority: 'high', tags: ['coding', 'features'], estimatedTime: 40 },
-    { id: 'task-13', name: 'Review and deploy', description: 'Code review and deployment of the HR portal updates.', dueDate: '2024-09-15', projectId: 'proj-3', assigneeId: '6', status: TaskStatus.TODO, category: 'DevOps', priority: 'medium', tags: ['review', 'deploy'], estimatedTime: 8 },
-     // Project 4 Tasks (Manager '2')
-    { id: 'task-14', name: 'Plan new features', description: 'Roadmap planning for V2 of the mobile app.', dueDate: '2024-08-30', projectId: 'proj-4', assigneeId: '7', status: TaskStatus.IN_PROGRESS, category: 'Planning', priority: 'high', tags: ['roadmap', 'mobile'], estimatedTime: 30 },
-];
-
-const today = new Date();
-const year = today.getFullYear();
-const month = (today.getMonth() + 1).toString().padStart(2, '0');
-
-const ATTENDANCE_DATA: Record<string, string[]> = {
-    [`${year}-${month}-01`]: ['3', '4', '5', '6'],
-    [`${year}-${month}-02`]: ['3', '4', '7'],
-    [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
-    [`${year}-${month}-04`]: ['4', '5', '6'],
-    [`${year}-${month}-05`]: ['3', '5', '6', '7'],
-    [`${year}-${month}-08`]: ['3', '4', '5', '6'],
-    [`${year}-${month}-09`]: ['3', '4', '7'],
-    [`${year}-${month}-10`]: ['3', '4', '5', '6', '7'],
-    [`${year}-${month}-11`]: ['4', '5', '6'],
-    [`${year}-${month}-12`]: ['3', '5', '6', '7'],
-    [`${year}-${month}-15`]: ['3', '4', '5', '6'],
-    [`${year}-${month}-16`]: ['3', '4', '7'],
-    [`${year}-${month}-17`]: ['3', '4', '5', '6', '7'],
-    [`${year}-${month}-18`]: ['4', '5', '6'],
-    [`${year}-${month}-19`]: ['3', '5', '6', '7'],
-};
-
-// --- ONBOARDING DATA ---
-let ONBOARDING_SUBMISSIONS: OnboardingSubmission[] = [
-    {
-        id: 'sub-1',
-        submissionDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
-        email: 'new.intern@university.edu',
-        fullName: 'Alex Ray',
-        guardianName: 'John Ray',
-        dateOfBirth: '2003-05-12T00:00:00.000Z',
-        gender: 'Male',
-        phone: '123-456-7890',
-        altPhone: '098-765-4321',
-        address: '456 University Ave, College Town, USA 12345',
-        addressProof: 'address_proof.pdf',
-        govtId: '1234 5678 9012',
-        collegeName: 'State University of Technology',
-        gradYear: 2026,
-        cgpa: '8.8 / 10',
-        collegeCertificates: 'transcript.pdf',
-        collegeId: 'college_id.jpg',
-        photo: 'profile_pic.png',
-        signature: 'Alex Ray',
-        workTime: '10:00',
-        meetingTime: '14:00',
-        declaration: true,
-        languagesKnown: ['English', 'Hindi'],
-        status: OnboardingStatus.PENDING_REVIEW,
-    }
-];
-
-export const DEFAULT_ONBOARDING_STEPS: string[] = [
-    'Review Application',
-    'Verify Documents',
-    'Background Check',
-    'Send Offer Letter',
-    'Prepare Welcome Kit',
-    'Assign Manager & Team',
-    'Setup IT Accounts',
-];
-
-
-// --- CHAT DATA ---
 let CONVERSATIONS: ChatConversation[] = [
     { id: 'conv-1', type: 'group', name: 'Project Marketing', participantIds: ['2', '3', '4', '5'], adminIds: ['2'] },
     { id: 'conv-2', type: 'group', name: 'Website Dev Team', participantIds: ['2', '4', '5', '6'], adminIds: ['2'] },
@@ -187,21 +19,15 @@ let MESSAGES: ChatMessage[] = [
     { id: 'msg-1', conversationId: 'conv-1', senderId: '2', text: 'Hey team, let\'s sync up on the Q3 campaign status.', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString() },
     { id: 'msg-2', conversationId: 'conv-1', senderId: '3', text: 'Sounds good. My ad copy drafts are ready for review.', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 1.5).toISOString() },
     { id: 'msg-3', conversationId: 'conv-1', senderId: '4', text: 'I\'ve uploaded the first batch of social media assets to the drive.', timestamp: new Date(Date.now() - 1000 * 60 * 55).toISOString() },
-    { id: 'msg-4', conversationId: 'conv-3', senderId: '1', text: 'Can I get a high-level overview of the Mobile App V2 progress?', timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString() },
-    { id: 'msg-5', conversationId: 'conv-4', senderId: '2', text: 'How are you doing with the campaign brief task?', timestamp: new Date(Date.now() - 1000 * 60 * 10).toISOString() },
-    { id: 'msg-6', conversationId: 'conv-4', senderId: '3', text: 'It\'s completed! I marked it in the system.', timestamp: new Date(Date.now() - 1000 * 60 * 8).toISOString() },
 ];
-
-// Update lastMessage for conversations
 CONVERSATIONS.forEach(c => {
     const conversationMessages = MESSAGES.filter(m => m.conversationId === c.id).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     c.lastMessage = conversationMessages[0];
 });
 
-// Mock online status
 const ONLINE_USERS = new Set(['1', '3', '4', '6']);
-export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
 
+<<<<<<< HEAD
 
 // --- COMPANY FUNCTIONS ---
 export const getCompanies = (): Company[] => {
@@ -262,8 +88,125 @@ export const updateDepartment = (departmentId: string, updates: Partial<Departme
     if (index === -1 && updates.name) {
         index = DEPARTMENTS.findIndex(d => d.name === updates.name);
         console.log('🔍 Department not found by ID, searching by name:', updates.name, 'Found index:', index);
+=======
+let ONBOARDING_SUBMISSIONS: OnboardingSubmission[] = [
+    {
+        id: 'sub-1', submissionDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(), email: 'new.intern@university.edu', fullName: 'Alex Ray', guardianName: 'John Ray', dateOfBirth: '2003-05-12T00:00:00.000Z', gender: 'Male', phone: '123-456-7890', altPhone: '098-765-4321', address: '456 University Ave, College Town, USA 12345', addressProof: 'address_proof.pdf', govtId: '1234 5678 9012', collegeName: 'State University of Technology', gradYear: 2026, cgpa: '8.8 / 10', collegeCertificates: 'transcript.pdf', collegeId: 'college_id.jpg', photo: 'profile_pic.png', signature: 'Alex Ray', workTime: '10:00', meetingTime: '14:00', declaration: true, languagesKnown: ['English', 'Hindi'], status: OnboardingStatus.PENDING_REVIEW,
+>>>>>>> origin/main
     }
+];
+export const DEFAULT_ONBOARDING_STEPS: string[] = [ 'Review Application', 'Verify Documents', 'Background Check', 'Send Offer Letter', 'Prepare Welcome Kit', 'Assign Manager & Team', 'Setup IT Accounts', ];
+
+const today = new Date();
+const year = today.getFullYear();
+const month = (today.getMonth() + 1).toString().padStart(2, '0');
+const ATTENDANCE_DATA: Record<string, string[]> = {
+    [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
+};
+
+// --- API BASED DATA SERVICE ---
+
+// Helper to add auth token to requests
+const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
+    const token = localStorage.getItem('ets_token');
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
+    if (token) {
+        // AWS API Gateway custom authorizers often look for a token in the 'Authorization' header.
+        headers.set('Authorization', token);
+    }
+    return fetch(url, { ...options, headers });
+};
+
+
+// Helper to parse AWS API Gateway responses
+const parseApiResponse = async (response: Response) => {
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+    const data = await response.json();
+    if (typeof data.body === 'string') {
+        try {
+            return JSON.parse(data.body);
+        } catch (e) {
+            console.error("Failed to parse API response body:", e);
+            throw new Error("Invalid JSON in API response body.");
+        }
+    }
+    return data;
+};
+
+// Helper to robustly extract an array from a potentially nested API response.
+const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
+    if (Array.isArray(data)) {
+        return data;
+    }
+    if (data && typeof data === 'object') {
+        const possibleKeys = [primaryKey, primaryKey.toLowerCase(), 'Items', 'items', 'data', 'body'];
+        for (const key of possibleKeys) {
+            if (Array.isArray(data[key])) {
+                return data[key];
+            }
+        }
+        // Fallback: find first array property in the object
+        const arrayValue = Object.values(data).find(value => Array.isArray(value));
+        if (arrayValue && Array.isArray(arrayValue)) {
+            return arrayValue;
+        }
+    }
+    console.warn(`Could not extract array from API response for key "${primaryKey}". Response was:`, data);
+    return []; // Return empty array to prevent crashes
+}
+
+
+// Caching mechanism
+let cachedTasks: Task[] | null = null;
+let cachedProjects: Project[] | null = null;
+let cachedDepartments: Department[] | null = null;
+let cachedAllUsers: User[] | null = null;
+
+// Helper to map API user to frontend User
+const mapApiUserToUser = (apiUser: any): User => {
+    const roleString = apiUser.role || 'employee';
+    const role = (roleString.charAt(0).toUpperCase() + roleString.slice(1).toLowerCase()) as UserRole;
+    if (!Object.values(UserRole).includes(role)) {
+        console.warn(`Invalid role "${apiUser.role}" for user ${apiUser.name}. Defaulting to Employee.`);
+    }
+    return {
+        id: apiUser.id,
+        name: apiUser.name,
+        email: apiUser.email,
+        role: Object.values(UserRole).includes(role) ? role : UserRole.EMPLOYEE,
+        companyId: apiUser.companyId,
+        managerId: apiUser.managerId,
+        departmentIds: apiUser.departmentIds || [],
+        jobTitle: apiUser.jobTitle,
+        status: apiUser.status || 'Offline',
+        joinedDate: apiUser.joinedDate || new Date().toISOString(),
+        skills: apiUser.skills || [],
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' }, // Default stats
+        rating: apiUser.rating,
+        personalDetails: apiUser.personalDetails,
+        contactNumber: apiUser.contactNumber,
+        address: apiUser.address,
+        familyMembers: apiUser.familyMembers,
+        education: apiUser.education,
+        compensation: apiUser.compensation,
+        documents: apiUser.documents,
+    };
+};
+
+export const getAllUsersFromApi = async (): Promise<User[]> => {
+    if (cachedAllUsers) return cachedAllUsers;
+
+    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+    const data = await parseApiResponse(response);
+    const usersFromApi = extractArrayFromApiResponse(data, 'users');
     
+<<<<<<< HEAD
     if (index > -1) {
         const originalDept = DEPARTMENTS[index];
         // Preserve timestamp and createdAt if not provided in updates
@@ -285,203 +228,405 @@ export const updateDepartment = (departmentId: string, updates: Partial<Departme
         DEPARTMENTS.push(newDepartment);
         console.log('✅ Created new department in local storage:', newDepartment);
         return newDepartment;
+=======
+    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+    return cachedAllUsers;
+};
+
+export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
+    const allUsers = await getAllUsersFromApi();
+    return allUsers.find(u => u.id === userId);
+};
+
+// --- EMPLOYEES from API ---
+export const getEmployeesFromApi = async (): Promise<User[]> => {
+    const allUsers = await getAllUsersFromApi();
+    return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
+};
+
+
+// --- TASKS ---
+/**
+ * Maps an API status string to the application's TaskStatus enum.
+ * This is designed to be flexible and handle variations in the API response.
+ * @param apiStatus The status string from the API (e.g., "In Progress", "in-progress", "todo").
+ * @returns The corresponding TaskStatus enum value.
+ */
+const mapApiStatusToTaskStatus = (apiStatus?: string): TaskStatus => {
+    if (!apiStatus) return TaskStatus.TODO;
+    
+    // Normalize by removing spaces and hyphens, and converting to lowercase.
+    const normalized = apiStatus.toLowerCase().replace(/[\s-]+/g, '');
+
+    if (normalized.includes('inprogress')) return TaskStatus.IN_PROGRESS;
+    if (normalized.includes('onhold')) return TaskStatus.ON_HOLD;
+    if (normalized.includes('completed')) return TaskStatus.COMPLETED;
+    if (normalized.includes('todo')) return TaskStatus.TODO;
+    
+    console.warn(`Unknown task status from API: "${apiStatus}". Defaulting to To-Do.`);
+    return TaskStatus.TODO;
+};
+
+/**
+ * Fetches all tasks from the API.
+ * This implementation is robustly designed to handle various AWS API Gateway response formats.
+ */
+export const getAllTasks = async (): Promise<Task[]> => {
+    // Return cached tasks if available to improve performance and avoid redundant API calls.
+    if (cachedTasks) return cachedTasks;
+
+    try {
+        // Use a standard fetch for this public endpoint to avoid potential header issues.
+        const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Task API Error Response:", errorText);
+            throw new Error(`API request for tasks failed: ${response.status} ${response.statusText}`);
+        }
+
+        const responseData = await response.json();
+        
+        let tasksFromApi: any[];
+
+        // Handle different possible response structures from AWS API Gateway.
+        if (responseData.body && typeof responseData.body === 'string') {
+            // Case 1: Body is a stringified JSON array.
+            tasksFromApi = JSON.parse(responseData.body);
+        } else if (Array.isArray(responseData.body)) {
+            // Case 2: Body is already a JSON array.
+            tasksFromApi = responseData.body;
+        } else if (Array.isArray(responseData)) {
+            // Case 3: The entire response is the JSON array.
+            tasksFromApi = responseData;
+        } else if (responseData.Tasks && Array.isArray(responseData.Tasks)) {
+             // Case 4: The response is an object with a "Tasks" key
+            tasksFromApi = responseData.Tasks;
+        } else {
+            // Fallback: Try to find any array within the response object.
+            tasksFromApi = extractArrayFromApiResponse(responseData, 'Tasks');
+        }
+
+        if (!Array.isArray(tasksFromApi)) {
+            console.error("Final processed task data is not an array:", tasksFromApi);
+            return []; // Return an empty array to prevent crashes.
+        }
+        
+        // Map the raw API task objects to the application's Task type.
+        cachedTasks = tasksFromApi.map((task: any): Task => ({
+            id: task.id,
+            name: task.title,
+            description: task.description,
+            dueDate: task.due_date,
+            projectId: task.project,
+            assigneeId: task.assign_to,
+            assign_by: task.assign_by,
+            status: mapApiStatusToTaskStatus(task.status),
+            priority: task.priority,
+            estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
+        }));
+        
+        return cachedTasks;
+
+    } catch (error) {
+        console.error("A critical error occurred while fetching tasks:", error);
+        return []; // Return an empty array on failure to prevent the app from crashing.
+>>>>>>> origin/main
     }
 };
 
-export const deleteDepartment = (departmentId: string): void => {
-    DEPARTMENTS = DEPARTMENTS.filter(d => d.id !== departmentId);
-    // Also remove department from any projects' departmentIds
-    PROJECTS = PROJECTS.map(p => ({ ...p, departmentIds: p.departmentIds.filter(id => id !== departmentId) }));
-};
 
-// --- PROJECT & TASK FUNCTIONS ---
-export const getProjectsByManager = (managerId: string): Project[] => {
-    return PROJECTS.filter(p => p.managerId === managerId);
-};
+export const createTask = async (taskData: any): Promise<Task> => {
+    const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task', {
+        method: 'POST',
+        body: JSON.stringify(taskData)
+    });
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create task.');
+    }
+    
+    // Invalidate cache
+    cachedTasks = null;
+    const responseData = await response.json();
+    const createdTaskData = responseData.Task.Item;
 
-export const getProjectsByCompany = (companyId: string): Project[] => {
-    return PROJECTS.filter(p => p.companyId === companyId);
-};
-
-export const getProjectsByDepartment = (departmentId: string): Project[] => {
-    return PROJECTS.filter(p => p.departmentIds.includes(departmentId));
-};
-
-export const getAllProjects = (): Project[] => {
-    return [...PROJECTS];
-};
-
-export const getProjectById = (id: string): Project | undefined => {
-    return PROJECTS.find(p => p.id === id);
-};
-
-export const getTasksByProject = (projectId: string): Task[] => {
-    return TASKS.filter(t => t.projectId === projectId);
-};
-
-export const getTasksByTeam = (teamMemberIds: string[]): Task[] => {
-    const teamSet = new Set(teamMemberIds);
-    return TASKS.filter(t => (t.assigneeId && teamSet.has(t.assigneeId)) || !t.assigneeId);
-};
-
-export const getTasksByAssignee = (assigneeId: string): Task[] => {
-    return TASKS.filter(t => t.assigneeId === assigneeId);
-};
-
-export const getTaskById = (taskId: string): Task | undefined => {
-    return TASKS.find(t => t.id === taskId);
-};
-
-export const createProject = (projectData: { name: string; description: string; managerId: string, departmentIds: string[], deadline?: string, priority?: 'low' | 'medium' | 'high', estimatedTime?: number, companyId: string }): Project => {
-    const newProject: Project = {
-        id: `proj-${Date.now()}`,
-        name: projectData.name,
-        description: projectData.description,
-        managerId: projectData.managerId,
-        departmentIds: projectData.departmentIds,
-        deadline: projectData.deadline,
-        priority: projectData.priority,
-        estimatedTime: projectData.estimatedTime,
-        companyId: projectData.companyId,
+    const newTask: Task = {
+        id: createdTaskData.id,
+        name: createdTaskData.title,
+        description: createdTaskData.description,
+        dueDate: createdTaskData.due_date,
+        projectId: createdTaskData.project,
+        assigneeId: createdTaskData.assign_to,
+        assign_by: createdTaskData.assign_by,
+        status: createdTaskData.status,
+        priority: createdTaskData.priority,
+        estimatedTime: createdTaskData.est_time ? parseInt(createdTaskData.est_time, 10) : undefined,
     };
-    PROJECTS.unshift(newProject);
+    
+    return newTask;
+};
+
+export const getTaskById = async (id: string): Promise<Task | undefined> => {
+    const tasks = await getAllTasks();
+    return tasks.find(t => t.id === id);
+};
+
+export const getTasksByProject = async (projectId: string): Promise<Task[]> => {
+    const tasks = await getAllTasks();
+    return tasks.filter(t => t.projectId === projectId);
+};
+
+export const getTasksByTeam = async (teamMemberIds: string[]): Promise<Task[]> => {
+    const tasks = await getAllTasks();
+    const teamSet = new Set(teamMemberIds);
+    return tasks.filter(t => (t.assigneeId && teamSet.has(t.assigneeId)));
+};
+
+export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> => {
+    const tasks = await getAllTasks();
+    return tasks.filter(t => t.assigneeId === assigneeId);
+};
+
+export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeId?: string | undefined }, currentUserId: string): Promise<Task> => {
+    const payload: { currentUserId: string; status?: TaskStatus; assign_to?: string } = {
+        currentUserId: currentUserId,
+    };
+    if (updates.status) {
+        payload.status = updates.status;
+    }
+    if (updates.hasOwnProperty('assigneeId')) {
+        payload.assign_to = updates.assigneeId || '';
+    }
+
+    const endpointUrl = `https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task/${taskId}`;
+
+    const response = await authenticatedFetch(endpointUrl, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        let errorMessage = 'Failed to update task.';
+        try {
+            const errorBody = await response.text();
+            const errorJson = JSON.parse(errorBody);
+            errorMessage = errorJson.message || errorBody;
+        } catch (e) {
+            // The response was not JSON, which is fine. The text itself might be the error.
+        }
+        throw new Error(errorMessage);
+    }
+    
+    cachedTasks = null; // Invalidate cache to force a refresh on next load
+    
+    const responseData = await response.json();
+    const updatedTaskData = responseData.Task;
+
+    const mappedTask: Task = {
+        id: updatedTaskData.id,
+        name: updatedTaskData.title,
+        description: updatedTaskData.description,
+        dueDate: updatedTaskData.due_date,
+        projectId: updatedTaskData.project,
+        assigneeId: updatedTaskData.assign_to,
+        assign_by: updatedTaskData.assign_by,
+        status: updatedTaskData.status,
+        priority: updatedTaskData.priority,
+        estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
+        notes: updatedTaskData.notes,
+        dependency: updatedTaskData.dependency,
+        dependencyLogs: updatedTaskData.dependencyLogs,
+        tags: updatedTaskData.tags,
+        category: updatedTaskData.category
+    };
+
+    return mappedTask;
+};
+
+// Optimistic local update for data not handled by the API, e.g., notes.
+export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task | undefined => {
+    if (cachedTasks) {
+        const taskIndex = cachedTasks.findIndex(t => t.id === taskId);
+        if (taskIndex > -1) {
+            cachedTasks[taskIndex] = { ...cachedTasks[taskIndex], ...updates };
+            return cachedTasks[taskIndex];
+        }
+    }
+    return undefined;
+};
+
+
+export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
+    const response = await authenticatedFetch(`https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task/${taskId}`, {
+        method: 'POST',
+        body: JSON.stringify({ currentUserId: currentUserId })
+    });
+
+    if (!response.ok) {
+        let errorMessage = 'Failed to delete task.';
+        try {
+            const errorBody = await response.json();
+            errorMessage = errorBody.message || JSON.stringify(errorBody);
+        } catch (e) {
+             const errorText = await response.text();
+             errorMessage = errorText || `Request failed with status ${response.status}`;
+        }
+        throw new Error(errorMessage);
+    }
+    
+    // Invalidate cache
+    cachedTasks = null;
+};
+
+
+// --- PROJECTS ---
+export const getAllProjects = async (): Promise<Project[]> => {
+    if (cachedProjects) return cachedProjects;
+    const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
+    const data = await parseApiResponse(response);
+    const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
+    cachedProjects = projectsFromApi.map((proj: any): Project => ({
+        id: proj.id,
+        name: proj.name,
+        description: proj.description,
+        managerId: proj.manager_id,
+        departmentIds: Array.isArray(proj.department_ids) ? proj.department_ids : [],
+        deadline: proj.deadline,
+        priority: proj.priority,
+        estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
+        companyId: proj.company_id || 'comp-1',
+        roadmap: proj.roadmap || [],
+    }));
+    return cachedProjects;
+};
+
+export const getProjectById = async (id: string): Promise<Project | undefined> => {
+    const projects = await getAllProjects();
+    return projects.find(p => p.id === id);
+};
+
+export const getProjectsByManager = async (managerId: string): Promise<Project[]> => {
+    const projects = await getAllProjects();
+    return projects.filter(p => p.managerId === managerId);
+};
+
+export const getProjectsByCompany = async (companyId: string): Promise<Project[]> => {
+    const projects = await getAllProjects();
+    return projects.filter(p => p.companyId === companyId);
+};
+
+export const getProjectsByDepartment = async (departmentId: string): Promise<Project[]> => {
+    const projects = await getAllProjects();
+    return projects.filter(p => p.departmentIds.includes(departmentId));
+};
+
+export const createProject = (projectData: Omit<Project, 'id'>): Project => {
+    // Optimistic update as no API provided
+    const newProject: Project = { ...projectData, id: `proj-${Date.now()}`};
+    if (cachedProjects) {
+        cachedProjects.unshift(newProject);
+    } else {
+        cachedProjects = [newProject];
+    }
     return newProject;
 };
 
 export const updateProject = (projectId: string, updates: Partial<Project>): Project | undefined => {
-    const projectIndex = PROJECTS.findIndex(p => p.id === projectId);
-    if (projectIndex > -1) {
-        PROJECTS[projectIndex] = { ...PROJECTS[projectIndex], ...updates };
-        return PROJECTS[projectIndex];
+    // Optimistic update
+    if (cachedProjects) {
+        const projectIndex = cachedProjects.findIndex(p => p.id === projectId);
+        if (projectIndex > -1) {
+            cachedProjects[projectIndex] = { ...cachedProjects[projectIndex], ...updates };
+            return cachedProjects[projectIndex];
+        }
     }
     return undefined;
 };
 
-export const createTask = (taskData: Omit<Task, 'id' | 'status'> & { status: TaskStatus }): Task => {
-    const newTask: Task = {
-        id: `task-${Date.now()}`,
-        ...taskData,
-    };
-    TASKS.unshift(newTask);
-    return newTask;
+
+// --- DEPARTMENTS ---
+export const getDepartments = async (): Promise<Department[]> => {
+    if (cachedDepartments) return cachedDepartments;
+    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
+    const data = await parseApiResponse(response);
+    const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
+    cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
+        id: dept.id,
+        name: dept.name,
+        companyId: dept.company_id || 'comp-1',
+    }));
+    return cachedDepartments;
 };
 
-export const updateTask = (taskId: string, updates: Partial<Task>): Task | undefined => {
-    const taskIndex = TASKS.findIndex(t => t.id === taskId);
-    if (taskIndex > -1) {
-        TASKS[taskIndex] = { ...TASKS[taskIndex], ...updates };
-        return TASKS[taskIndex];
+export const getDepartmentById = async (id: string): Promise<Department | undefined> => {
+    const depts = await getDepartments();
+    return depts.find(d => d.id === id);
+};
+
+export const createDepartment = (name: string, companyId: string): Department => {
+    // Optimistic update
+    const newDepartment: Department = { id: `dept-${Date.now()}`, name, companyId };
+    if (cachedDepartments) {
+        cachedDepartments.unshift(newDepartment);
+    } else {
+        cachedDepartments = [newDepartment];
     }
-    return undefined;
+    return newDepartment;
 };
 
-export const deleteTask = (taskId: string): void => {
-    TASKS = TASKS.filter(t => t.id !== taskId);
+// --- MOCKED FUNCTIONS ---
+export const getCompanies = (): Company[] => [...COMPANIES];
+export const getCompanyById = (id: string): Company | undefined => COMPANIES.find(c => c.id === id);
+export const createCompany = (name: string, ownerId: string): Company => {
+    const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
+    COMPANIES.unshift(newCompany);
+    return newCompany;
 };
-
-// --- ATTENDANCE FUNCTIONS ---
-export const getAttendanceByDate = (date: string): string[] => {
-    return ATTENDANCE_DATA[date] || [];
-};
-
+export const getAttendanceByDate = (date: string): string[] => ATTENDANCE_DATA[date] || [];
 export const getAttendanceForUserByMonth = (userId: string, year: number, month: number): string[] => {
     const monthString = (month + 1).toString().padStart(2, '0');
     const presentDates: string[] = [];
     for (const date in ATTENDANCE_DATA) {
-        if (date.startsWith(`${year}-${monthString}`)) {
-            if (ATTENDANCE_DATA[date].includes(userId)) {
-                presentDates.push(date);
-            }
+        if (date.startsWith(`${year}-${monthString}`) && ATTENDANCE_DATA[date].includes(userId)) {
+            presentDates.push(date);
         }
     }
     return presentDates;
 };
-
-
-// --- CHAT FUNCTIONS ---
-export const getConversationsForUser = (userId: string): ChatConversation[] => {
-    return CONVERSATIONS.filter(c => c.participantIds.includes(userId))
-        .sort((a,b) => {
-            const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
-            const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
-            return timeB - timeA;
-        });
-};
-
-export const getMessagesForConversation = (conversationId: string): ChatMessage[] => {
-    return MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-};
-
+export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
+export const getConversationsForUser = (userId: string): ChatConversation[] => CONVERSATIONS.filter(c => c.participantIds.includes(userId)).sort((a,b) => {
+    const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
+    const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
+    return timeB - timeA;
+});
+export const getMessagesForConversation = (conversationId: string): ChatMessage[] => MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 export const sendMessage = (conversationId: string, senderId: string, text: string): ChatMessage => {
-    const newMessage: ChatMessage = {
-        id: `msg-${Date.now()}`,
-        conversationId,
-        senderId,
-        text,
-        timestamp: new Date().toISOString(),
-    };
+    const newMessage: ChatMessage = { id: `msg-${Date.now()}`, conversationId, senderId, text, timestamp: new Date().toISOString() };
     MESSAGES.push(newMessage);
-    // Update last message in conversation
     const convIndex = CONVERSATIONS.findIndex(c => c.id === conversationId);
-    if (convIndex > -1) {
-        CONVERSATIONS[convIndex].lastMessage = newMessage;
-    }
+    if (convIndex > -1) CONVERSATIONS[convIndex].lastMessage = newMessage;
     return newMessage;
 };
-
 export const createGroup = (groupName: string, memberIds: string[], creatorId: string): ChatConversation => {
-    const newGroup: ChatConversation = {
-        id: `conv-${Date.now()}`,
-        type: 'group',
-        name: groupName,
-        participantIds: [...new Set([creatorId, ...memberIds])], // Ensure creator is included and unique
-        adminIds: [creatorId],
-    };
+    const newGroup: ChatConversation = { id: `conv-${Date.now()}`, type: 'group', name: groupName, participantIds: [...new Set([creatorId, ...memberIds])], adminIds: [creatorId] };
     CONVERSATIONS.unshift(newGroup);
     return newGroup;
 };
-
 export const getOrCreateDirectConversation = (userId1: string, userId2: string): ChatConversation => {
-    const existing = CONVERSATIONS.find(c => 
-        c.type === 'direct' &&
-        c.participantIds.length === 2 &&
-        c.participantIds.includes(userId1) &&
-        c.participantIds.includes(userId2)
-    );
-
-    if (existing) {
-        return existing;
-    }
-
-    const newDM: ChatConversation = {
-        id: `conv-${Date.now()}`,
-        type: 'direct',
-        participantIds: [userId1, userId2],
-    };
+    const existing = CONVERSATIONS.find(c => c.type === 'direct' && c.participantIds.length === 2 && c.participantIds.includes(userId1) && c.participantIds.includes(userId2));
+    if (existing) return existing;
+    const newDM: ChatConversation = { id: `conv-${Date.now()}`, type: 'direct', participantIds: [userId1, userId2] };
     CONVERSATIONS.unshift(newDM);
     return newDM;
 };
-
-// --- ONBOARDING FUNCTIONS ---
-export const getOnboardingSubmissions = (): OnboardingSubmission[] => {
-    return [...ONBOARDING_SUBMISSIONS].sort((a,b) => new Date(b.submissionDate).getTime() - new Date(a.submissionDate).getTime());
-};
-
-export const getOnboardingSubmissionById = (id: string): OnboardingSubmission | undefined => {
-    return ONBOARDING_SUBMISSIONS.find(s => s.id === id);
-};
-
+export const getOnboardingSubmissions = (): OnboardingSubmission[] => [...ONBOARDING_SUBMISSIONS].sort((a,b) => new Date(b.submissionDate).getTime() - new Date(a.submissionDate).getTime());
+export const getOnboardingSubmissionById = (id: string): OnboardingSubmission | undefined => ONBOARDING_SUBMISSIONS.find(s => s.id === id);
 export const createOnboardingSubmission = (data: Omit<OnboardingSubmission, 'id' | 'submissionDate' | 'status' | 'steps'>): OnboardingSubmission => {
-    const newSubmission: OnboardingSubmission = {
-        id: `sub-${Date.now()}`,
-        submissionDate: new Date().toISOString(),
-        status: OnboardingStatus.PENDING_REVIEW,
-        ...data,
-    };
+    const newSubmission: OnboardingSubmission = { id: `sub-${Date.now()}`, submissionDate: new Date().toISOString(), status: OnboardingStatus.PENDING_REVIEW, ...data };
     ONBOARDING_SUBMISSIONS.unshift(newSubmission);
     return newSubmission;
 };
-
 export const updateOnboardingSubmission = (submissionId: string, updates: Partial<OnboardingSubmission>): OnboardingSubmission | undefined => {
     const subIndex = ONBOARDING_SUBMISSIONS.findIndex(s => s.id === submissionId);
     if (subIndex > -1) {
@@ -490,3 +635,13 @@ export const updateOnboardingSubmission = (submissionId: string, updates: Partia
     }
     return undefined;
 };
+// Add placeholder for other functions if they exist in the original file
+export const getNoteById = (id: string): Note | undefined => {
+    return undefined;
+}
+export const getDependencyLogById = (id: string): DependencyLog | undefined => {
+    return undefined;
+}
+export const getMilestoneById = (id: string): MilestoneStatus | undefined => {
+    return undefined;
+}
