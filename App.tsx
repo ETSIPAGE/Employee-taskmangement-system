@@ -27,6 +27,7 @@ import OnboardingForm from './components/onboarding/OnboardingForm';
 import OnboardingSubmissions from './components/onboarding/OnboardingSubmissions';
 import SubmissionDetail from './components/onboarding/SubmissionDetail';
 import OnboardingFormView from './components/onboarding/OnboardingFormView';
+import RolesDashboard from './components/dashboard/RolesDashboard';
 
 const App: React.FC = () => {
   const { user, loading } = useAuth();
@@ -66,6 +67,7 @@ const App: React.FC = () => {
                 <Route path="/companies/:companyId" element={<CompanyProjects />} />
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:departmentId" element={<DepartmentProjects />} />
+                <Route path="/roles" element={<RolesDashboard />} />
                 <Route path="/admin-tasks" element={<AdminTasks />} />
                 <Route path="/attendance" element={<Attendance />} />
                 <Route path="/settings" element={<Settings />} />

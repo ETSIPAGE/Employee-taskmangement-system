@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix API Connection Issues</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8fafc;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            margin: 20px 0;
+        }
+        h1 {
+            color: #1e293b;
+            text-align: center;
+        }
+        .error-banner {
+            background-color: #fee2e2;
+            border-left: 4px solid #ef4444;
+            padding: 15px;
+            border-radius: 0 4px 4px 0;
+            margin: 20px 0;
+        }
+        .success-banner {
+            background-color: #dcfce7;
+            border-left: 4px solid #22c55e;
+            padding: 15px;
+            border-radius: 0 4px 4px 0;
+            margin: 20px 0;
+        }
+        .info-banner {
+            background-color: #dbeafe;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            border-radius: 0 4px 4px 0;
+            margin: 20px 0;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #334155;
+        }
+        input[type="password"], input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+        button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 16px;
+            width: 100%;
+            transition: background-color 0.2s;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #2563eb;
+        }
+        button:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background-color: #64748b;
+        }
+        .btn-secondary:hover {
+            background-color: #475569;
+        }
+        .btn-success {
+            background-color: #22c55e;
+        }
+        .btn-success:hover {
+            background-color: #16a34a;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            display: none;
+        }
+        .success {
+            background-color: #dcfce7;
+            border: 1px solid #bbf7d0;
+            color: #166534;
+        }
+        .error {
+            background-color: #fee2e2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+        }
+        .loading {
+            background-color: #e0f2fe;
+            border: 1px solid #bae6fd;
+            color: #0369a1;
+        }
+        .steps {
+            counter-reset: step-counter;
+            list-style: none;
+            padding: 0;
+        }
+        .steps li {
+            counter-increment: step-counter;
+            margin-bottom: 20px;
+            padding-left: 40px;
+            position: relative;
+        }
+        .steps li:before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: #3b82f6;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .endpoint-info {
+            background-color: #f1f5f9;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        .endpoint-info p {
+            margin: 5px 0;
+        }
+        .troubleshooting-steps {
+            background-color: #fffbeb;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            border-radius: 0 4px 4px 0;
+            margin: 20px 0;
+        }
+        .troubleshooting-steps h3 {
+            margin-top: 0;
+            color: #b45309;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Fix API Connection Issues</h1>
+    
+    <div class="error-banner">
+        <h3>⚠️ Persistent API Connection Error Detected</h3>
+        <p>This tool will help you resolve the recurring API connection issues with the Role API.</p>
+    </div>
+    
+    <div class="info-banner">
+        <h3>📋 API Information</h3>
+        <div class="endpoint-info">
+            <p><strong>Primary Endpoint:</strong> https://xo3txgkwkb.execute-api.ap-south-1.amazonaws.com/prod</p>
+            <p><strong>Status:</strong> Requires authentication (403 Forbidden if not configured)</p>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Step-by-Step Fix Process</h2>
+        
+        <ol class="steps">
+            <li>
+                <h3>Check Current Authentication Status</h3>
+                <button id="checkAuthBtn">Check Authentication</button>
+                <div id="authStatus" class="result"></div>
+            </li>
+            
+            <li>
+                <h3>Configure API Authentication</h3>
+                <p>Enter either an API Key or Bearer Token to authenticate with the Role API:</p>
+                
+                <div class="form-group">
+                    <label for="apiKey">API Key 🔑</label>
+                    <input type="password" id="apiKey" placeholder="Enter your API key">
+                </div>
+                
+                <div style="text-align: center; margin: 15px 0; color: #64748b;">OR</div>
+                
+                <div class="form-group">
+                    <label for="bearerToken">Bearer Token 🎩</label>
+                    <input type="password" id="bearerToken" placeholder="Enter your bearer token">
+                </div>
+                
+                <button id="configureAuthBtn">Configure Authentication</button>
+                <div id="configureResult" class="result"></div>
+            </li>
+            
+            <li>
+                <h3>Test API Connection</h3>
+                <button id="testConnectionBtn">Test Connection</button>
+                <div id="testResult" class="result"></div>
+            </li>
+            
+            <li>
+                <h3>Verify Role Operations</h3>
+                <button id="testGetRolesBtn">Test Get Roles</button>
+                <div id="getRolesResult" class="result"></div>
+            </li>
+        </ol>
+        
+        <div class="success-banner">
+            <h3>✅ Success!</h3>
+            <p>Once all steps are completed successfully, your API connection issues should be resolved.</p>
+            <button id="refreshDashboardBtn" class="btn-success">Refresh Roles Dashboard</button>
+        </div>
+    </div>
+    
+    <div class="troubleshooting-steps">
+        <h3>❓ Troubleshooting</h3>
+        <p>If you continue to experience issues:</p>
+        <ol>
+            <li>Verify your network connection</li>
+            <li>Check if the API endpoint is accessible in your browser</li>
+            <li>Confirm your credentials with your system administrator</li>
+            <li>Clear your browser cache and try again</li>
+            <li>Check browser console for detailed error messages</li>
+        </ol>
+    </div>
+
+    <script type="module">
+        // Import the API service
+        import { apiService } from './services/apiService.browser.js';
+        
+        // Utility functions
+        function displayResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.className = 'result ' + type;
+            element.innerHTML = message;
+        }
+        
+        function showLoading(elementId) {
+            displayResult(elementId, '⏳ Testing... Please wait', 'loading');
+        }
+        
+        function disableButtons(disabled) {
+            document.getElementById('checkAuthBtn').disabled = disabled;
+            document.getElementById('configureAuthBtn').disabled = disabled;
+            document.getElementById('testConnectionBtn').disabled = disabled;
+            document.getElementById('testGetRolesBtn').disabled = disabled;
+        }
+        
+        // Step 1: Check Authentication Status
+        document.getElementById('checkAuthBtn').addEventListener('click', () => {
+            disableButtons(true);
+            showLoading('authStatus');
+            
+            try {
+                const hasApiKey = !!apiService.apiAuth.apiKey;
+                const hasBearerToken = !!apiService.apiAuth.bearerToken;
+                
+                if (hasApiKey || hasBearerToken) {
+                    displayResult('authStatus', `
+                        <p>✅ Authentication configured:</p>
+                        <ul>
+                            <li>API Key: ${hasApiKey ? 'SET' : 'NOT SET'}</li>
+                            <li>Bearer Token: ${hasBearerToken ? 'SET' : 'NOT SET'}</li>
+                        </ul>
+                    `, 'success');
+                } else {
+                    displayResult('authStatus', '⚠️ No authentication configured. You need to provide either an API Key or Bearer Token.', 'error');
+                }
+            } catch (error) {
+                displayResult('authStatus', `❌ Error checking authentication: ${error.message}`, 'error');
+            } finally {
+                disableButtons(false);
+            }
+        });
+        
+        // Step 2: Configure Authentication
+        document.getElementById('configureAuthBtn').addEventListener('click', () => {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const bearerToken = document.getElementById('bearerToken').value.trim();
+            
+            if (!apiKey && !bearerToken) {
+                displayResult('configureResult', '⚠️ Please provide either an API Key or Bearer Token', 'error');
+                return;
+            }
+            
+            disableButtons(true);
+            showLoading('configureResult');
+            
+            try {
+                // Configure authentication in the API service
+                apiService.configureRoleAPIAuth(apiKey || undefined, bearerToken || undefined);
+                
+                // Store credentials in localStorage for persistence
+                if (apiKey) {
+                    localStorage.setItem('role_api_key', apiKey);
+                }
+                if (bearerToken) {
+                    localStorage.setItem('role_bearer_token', bearerToken);
+                }
+                
+                displayResult('configureResult', '✅ Authentication configured successfully!', 'success');
+            } catch (error) {
+                displayResult('configureResult', `❌ Error configuring authentication: ${error.message}`, 'error');
+            } finally {
+                disableButtons(false);
+            }
+        });
+        
+        // Step 3: Test API Connection
+        document.getElementById('testConnectionBtn').addEventListener('click', async () => {
+            disableButtons(true);
+            showLoading('testResult');
+            
+            try {
+                const result = await apiService.testRoleAPI();
+                
+                if (result.success) {
+                    displayResult('testResult', `
+                        <p>✅ API Connection Successful!</p>
+                        <p>Status: ${result.status}</p>
+                        <p>Endpoint: ${result.endpoint}</p>
+                    `, 'success');
+                } else {
+                    displayResult('testResult', `
+                        <p>❌ API Connection Failed!</p>
+                        <p>Error: ${result.error}</p>
+                        <p>Endpoint: ${result.endpoint}</p>
+                    `, 'error');
+                }
+            } catch (error) {
+                displayResult('testResult', `❌ Error testing connection: ${error.message}`, 'error');
+            } finally {
+                disableButtons(false);
+            }
+        });
+        
+        // Step 4: Test Get Roles
+        document.getElementById('testGetRolesBtn').addEventListener('click', async () => {
+            disableButtons(true);
+            showLoading('getRolesResult');
+            
+            try {
+                const result = await apiService.getRoles();
+                
+                if (result.success) {
+                    const roleCount = Array.isArray(result.data) ? result.data.length : 0;
+                    displayResult('getRolesResult', `
+                        <p>✅ Get Roles Successful!</p>
+                        <p>Retrieved ${roleCount} roles</p>
+                        <p>Status: ${result.status}</p>
+                    `, 'success');
+                } else {
+                    displayResult('getRolesResult', `
+                        <p>❌ Get Roles Failed!</p>
+                        <p>Error: ${result.error}</p>
+                    `, 'error');
+                }
+            } catch (error) {
+                displayResult('getRolesResult', `❌ Error getting roles: ${error.message}`, 'error');
+            } finally {
+                disableButtons(false);
+            }
+        });
+        
+        // Refresh Dashboard
+        document.getElementById('refreshDashboardBtn').addEventListener('click', () => {
+            window.location.reload();
+        });
+        
+        // Load saved credentials if they exist
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedApiKey = localStorage.getItem('role_api_key');
+            const savedBearerToken = localStorage.getItem('role_bearer_token');
+            
+            if (savedApiKey) {
+                document.getElementById('apiKey').value = savedApiKey;
+            }
+            if (savedBearerToken) {
+                document.getElementById('bearerToken').value = savedBearerToken;
+            }
+        });
+    </script>
+</body>
+</html>

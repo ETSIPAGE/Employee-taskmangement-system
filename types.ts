@@ -15,7 +15,13 @@ export interface Company {
 export interface Department {
   id: string;
   name: string;
+<<<<<<< HEAD
+  companyIds: string[];
+  timestamp?: string; // Make timestamp optional for better compatibility
+  createdAt?: string; // Add createdAt property for sorting
+=======
   companyId: string;
+>>>>>>> origin/main
 }
 
 export interface UserStats {

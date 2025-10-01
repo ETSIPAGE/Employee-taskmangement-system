@@ -27,9 +27,72 @@ CONVERSATIONS.forEach(c => {
 
 const ONLINE_USERS = new Set(['1', '3', '4', '6']);
 
+<<<<<<< HEAD
+
+// --- COMPANY FUNCTIONS ---
+export const getCompanies = (): Company[] => {
+    return [...COMPANIES];
+};
+
+export const getCompanyById = (id: string): Company | undefined => {
+    return COMPANIES.find(c => c.id === id);
+};
+
+export const createCompany = (name: string, ownerId: string): Company => {
+    const newCompany: Company = {
+        id: `comp-${Date.now()}`,
+        name,
+        ownerId,
+        createdAt: new Date().toISOString(),
+    };
+    COMPANIES.unshift(newCompany);
+    return newCompany;
+};
+
+// --- DEPARTMENTS ---
+export const getDepartments = (): Department[] => {
+    console.log('💾 Getting departments from local storage:', DEPARTMENTS.length, 'departments');
+    return [...DEPARTMENTS]; // Return a copy to prevent mutations
+};
+
+export const setDepartments = (departments: Department[]): void => {
+    console.log('💾 Setting departments in local storage:', departments.length, 'departments');
+    DEPARTMENTS.length = 0; // Clear existing
+    DEPARTMENTS.push(...departments); // Add new ones
+    console.log('✅ Departments updated in local storage');
+};
+
+export const getDepartmentById = (id: string): Department | undefined => {
+    return DEPARTMENTS.find(d => d.id === id);
+};
+
+export const createDepartment = (name: string, companyIds: string[]): Department => {
+    const newDepartment: Department = {
+        id: `dept-${Date.now()}`,
+        name,
+        companyIds,
+        timestamp: new Date().toISOString(),
+        createdAt: new Date().toISOString(), // Add createdAt property
+    };
+    DEPARTMENTS.unshift(newDepartment);
+    return newDepartment;
+};
+
+export const updateDepartment = (departmentId: string, updates: Partial<Department>): Department | undefined => {
+    console.log('🔄 Attempting to update department:', { id: departmentId, updates });
+    
+    // First try to find by exact ID match
+    let index = DEPARTMENTS.findIndex(d => d.id === departmentId);
+    
+    // If not found by ID, try to find by name (for API-generated departments)
+    if (index === -1 && updates.name) {
+        index = DEPARTMENTS.findIndex(d => d.name === updates.name);
+        console.log('🔍 Department not found by ID, searching by name:', updates.name, 'Found index:', index);
+=======
 let ONBOARDING_SUBMISSIONS: OnboardingSubmission[] = [
     {
         id: 'sub-1', submissionDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(), email: 'new.intern@university.edu', fullName: 'Alex Ray', guardianName: 'John Ray', dateOfBirth: '2003-05-12T00:00:00.000Z', gender: 'Male', phone: '123-456-7890', altPhone: '098-765-4321', address: '456 University Ave, College Town, USA 12345', addressProof: 'address_proof.pdf', govtId: '1234 5678 9012', collegeName: 'State University of Technology', gradYear: 2026, cgpa: '8.8 / 10', collegeCertificates: 'transcript.pdf', collegeId: 'college_id.jpg', photo: 'profile_pic.png', signature: 'Alex Ray', workTime: '10:00', meetingTime: '14:00', declaration: true, languagesKnown: ['English', 'Hindi'], status: OnboardingStatus.PENDING_REVIEW,
+>>>>>>> origin/main
     }
 ];
 export const DEFAULT_ONBOARDING_STEPS: string[] = [ 'Review Application', 'Verify Documents', 'Background Check', 'Send Offer Letter', 'Prepare Welcome Kit', 'Assign Manager & Team', 'Setup IT Accounts', ];
@@ -143,6 +206,29 @@ export const getAllUsersFromApi = async (): Promise<User[]> => {
     const data = await parseApiResponse(response);
     const usersFromApi = extractArrayFromApiResponse(data, 'users');
     
+<<<<<<< HEAD
+    if (index > -1) {
+        const originalDept = DEPARTMENTS[index];
+        // Preserve timestamp and createdAt if not provided in updates
+        const timestamp = updates.timestamp || originalDept.timestamp || new Date().toISOString();
+        const createdAt = updates.createdAt || originalDept.createdAt || new Date().toISOString();
+        DEPARTMENTS[index] = { ...originalDept, ...updates, timestamp, createdAt } as Department;
+        console.log('✅ Successfully updated department:', DEPARTMENTS[index]);
+        return DEPARTMENTS[index];
+    } else {
+        // If department doesn't exist locally, add it
+        console.log('⚠️ Department not found in local storage, creating new entry');
+        const newDepartment: Department = {
+            id: departmentId,
+            name: updates.name || 'Unknown Department',
+            companyIds: updates.companyIds || [],
+            timestamp: updates.timestamp || new Date().toISOString(),
+            createdAt: updates.createdAt || new Date().toISOString() // Add createdAt property
+        };
+        DEPARTMENTS.push(newDepartment);
+        console.log('✅ Created new department in local storage:', newDepartment);
+        return newDepartment;
+=======
     cachedAllUsers = usersFromApi.map(mapApiUserToUser);
     return cachedAllUsers;
 };
@@ -245,6 +331,7 @@ export const getAllTasks = async (): Promise<Task[]> => {
     } catch (error) {
         console.error("A critical error occurred while fetching tasks:", error);
         return []; // Return an empty array on failure to prevent the app from crashing.
+>>>>>>> origin/main
     }
 };
 
