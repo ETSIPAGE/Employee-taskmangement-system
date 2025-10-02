@@ -15,13 +15,9 @@ export interface Company {
 export interface Department {
   id: string;
   name: string;
-<<<<<<< HEAD
-  companyIds: string[];
-  timestamp?: string; // Make timestamp optional for better compatibility
-  createdAt?: string; // Add createdAt property for sorting
-=======
-  companyId: string;
->>>>>>> origin/main
+  companyId: string; // This will represent the *primary* company if `companyIds` is also used
+  companyIds?: string[]; // Optional array of company IDs a department might belong to
+  timestamp?: string; // Added timestamp to align with APIService.ts transformation
 }
 
 export interface UserStats {
@@ -80,11 +76,13 @@ export interface Document {
   url?: string; // a mock url
 }
 
+// User interface - CORRECTED: Added 'avatar' property
 export interface User {
   id: string;
   name: string;
   email: string;
   role: UserRole;
+  createdAt?: string; // Made optional
   companyId?: string;
   managerId?: string;
   departmentIds?: string[];
@@ -103,6 +101,7 @@ export interface User {
   compensation?: Compensation;
   documents?: Document[];
   rating?: number;
+  avatar?: string; // <--- THIS IS THE FIX: Added avatar property
 }
 
 export enum TaskStatus {
@@ -116,6 +115,7 @@ export enum MilestoneStatus {
     PENDING = 'Pending',
     IN_PROGRESS = 'In Progress',
     COMPLETED = 'Completed',
+    ON_HOLD = 'On Hold',
 }
 
 export interface ProjectMilestone {
@@ -137,6 +137,8 @@ export interface Project {
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
   companyId: string;
+  createdBy?: string; // Made optional
+  createdAt?: string; // Made optional
   roadmap?: ProjectMilestone[];
 }
 
@@ -160,6 +162,7 @@ export interface DependencyLog {
   timestamp: string; // ISO string
 }
 
+// Task interface - CORRECTED: Added 'creatorId' property (as discussed previously)
 export interface Task {
   id: string;
   name: string;
@@ -167,7 +170,7 @@ export interface Task {
   dueDate?: string;
   projectId: string;
   assigneeId?: string;
-  assign_by?: string;
+  creatorId: string; // <--- THIS IS THE FIX: Added creatorId property
   status: TaskStatus;
   category?: string;
   priority?: 'low' | 'medium' | 'high';
@@ -241,4 +244,21 @@ export interface OnboardingSubmission {
     // New fields for onboarding view
     status: OnboardingStatus;
     steps?: OnboardingStep[];
+}
+
+// FIX: Moved from authService.ts to be globally available
+export interface RegisterCredentials {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  managerId?: string;
+  departmentIds?: string[];
+  companyId?: string;
+}
+
+// FIX: Moved from authService.ts to be globally available
+export interface LoginCredentials {
+  email: string;
+  password: string;
 }

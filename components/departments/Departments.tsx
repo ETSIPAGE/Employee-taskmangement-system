@@ -3,7 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Department, User, UserRole, Project, TaskStatus, Company } from '../../types';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from "react-router-dom";
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
@@ -39,12 +39,12 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                 
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Team</h4>
-                    <div className="flex items-center space-x-4 text-slate-700">
-                        <div className="flex items-center space-x-2">
+                    <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2 text-slate-700">
                              <UsersIcon className="h-5 w-5" />
                              <span className="font-medium">{department.employeeCount} Employees</span>
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 text-slate-700">
                             <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{department.managerCount} Managers</span>
                         </div>
@@ -87,7 +87,7 @@ const Departments: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [companyFilter, setCompanyFilter] = useState('all');
 
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(async () => { 
         setIsLoading(true);
         try {
             const [departments, users, projects, allCompanies] = await Promise.all([
@@ -140,13 +140,26 @@ const Departments: React.FC = () => {
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);
+            setDepartmentsWithStats([]); 
+            setCompanies([]); 
         } finally {
             setIsLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        loadData();
+        let isMounted = true; 
+        const fetchData = async () => {
+            if (isMounted) {
+                await loadData();
+            }
+        };
+
+        fetchData();
+
+        return () => {
+            isMounted = false; 
+        };
     }, [loadData]);
 
     const filteredDepartments = useMemo(() => {
@@ -177,373 +190,12 @@ const Departments: React.FC = () => {
         handleCloseModal();
     };
 
-<<<<<<< HEAD
-          if (progress === 100) {
-            projectsCompleted++;
-          } else {
-            projectsInProgress++;
-          }
-        });
-
-        return {
-          ...dept,
-          timestamp: dept.timestamp,
-          createdAt: dept.createdAt, // Include createdAt property
-          employeeCount: deptUsers.filter((u) => u.role === UserRole.EMPLOYEE).length,
-          managerCount: deptUsers.filter((u) => u.role === UserRole.MANAGER).length,
-          projectsCompleted,
-          projectsInProgress,
-          projectsPending,
-          companyNames: companyNames || 'N/A',
-        } as DepartmentWithStats;
-      });
-
-      console.log('📈 Final departments with stats:', stats);
-      
-      // Sort departments by creation date (newest first) - same as roles
-      const sortedStats = stats.sort((a, b) => {
-        // If createdAt exists, sort by createdAt (newest first)
-        if (a.createdAt && b.createdAt) {
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        }
-        // If timestamp exists, sort by timestamp (newest first) as fallback
-        if (a.timestamp && b.timestamp) {
-          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        }
-        // If only one has createdAt, prioritize it
-        if (a.createdAt && !b.createdAt) return -1;
-        if (!a.createdAt && b.createdAt) return 1;
-        // If only one has timestamp, prioritize it
-        if (a.timestamp && !b.timestamp) return -1;
-        if (!a.timestamp && b.timestamp) return 1;
-        // If neither has timestamp or createdAt, maintain original order
-        return 0;
-      });
-      
-      setDepartmentsWithStats(sortedStats);
-      
-      // Success notification
-      if (stats.length > 0) {
-        console.log('Data loading completed successfully');
-      } else {
-        console.warn('⚠️ No departments found after loading');
-        toast.warn('⚠️ No departments found. You may need to create some.');
-      }
-      
-    } catch (error) {
-      console.error('💥 Critical error in loadData:', error);
-      toast.error('❌ Failed to load department data: ' + (error instanceof Error ? error.message : 'Unknown error'));
-      
-      // Fallback to empty state but don't crash
-      setDepartmentsWithStats([]);
-      setCompanies([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const filteredDepartments = useMemo(() => {
-    return departmentsWithStats.filter((dept) => {
-      const companyMatch =
-        companyFilter === 'all' || (dept.companyIds && dept.companyIds.includes(companyFilter));
-      const searchMatch = dept.name.toLowerCase().includes(searchTerm.toLowerCase());
-      return companyMatch && searchMatch;
-    });
-  }, [searchTerm, companyFilter, departmentsWithStats]);
-
-  const visibleCompanies = useMemo(() => {
-    if (!companySearch.trim()) return companies;
-    return companies.filter((c) => c.name.toLowerCase().includes(companySearch.toLowerCase()));
-  }, [companies, companySearch]);
-
-  const handleOpenModal = () => setIsModalOpen(true);
-  const handleOpenEditModal = (dept: DepartmentWithStats) => {
-    setEditingDepartmentId(dept.id);
-    setNewDepartmentName(dept.name);
-    setNewDepartmentCompanyIds(dept.companyIds || []);
-    setIsModalOpen(true);
-  };
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setNewDepartmentName('');
-    if (companies.length > 0) {
-      setNewDepartmentCompanyIds([companies[0].id]);
-    }
-    setEditingDepartmentId(null);
-  };
-
-  const handleCloseConfirm = () => {
-    setIsConfirmOpen(false);
-  };
-
-  const handleCreateDepartment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Enhanced validation with specific toast messages
-    if (!newDepartmentName.trim()) {
-      toast.error('Department name is required!', {
-        position: "top-right",
-        autoClose: 3000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-      });
-      return;
-    }
-    
-    if (newDepartmentCompanyIds.length === 0) {
-      toast.error('Please select at least one company!', {
-        position: "top-right",
-        autoClose: 3000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-      });
-      return;
-    }
-
-    // Show loading toast for better UX
-    const loadingToastId = toast.loading(
-      editingDepartmentId 
-        ? `Updating department "${newDepartmentName}"...` 
-        : `Creating department "${newDepartmentName}"...`,
-      {
-        position: "top-right",
-      }
-    );
-    
-    console.log('Loading toast created with ID:', loadingToastId);
-
-    try {
-      if (editingDepartmentId) {
-        // 🔧 Enhanced update with your specific API endpoint
-        console.log('Updating department:', {
-          id: editingDepartmentId,
-          name: newDepartmentName,
-          companyIds: newDepartmentCompanyIds,
-          latest: true
-        });
-
-        const apiResult = await apiService.updateDepartment({
-          id: editingDepartmentId,
-          name: newDepartmentName,
-          companyIds: newDepartmentCompanyIds,
-          latest: true,
-        });
-
-        console.log('API update result:', apiResult);
-
-        if (apiResult.success) {
-          console.log('API update successful, showing success toast...');
-          
-          // Try alternative approach: dismiss + new toast
-          showSuccessToast(`Department "${newDepartmentName}" updated successfully!`, loadingToastId);
-          
-          console.log('Success toast shown');
-          
-          // Also update locally to keep data in sync
-          // Find the existing department to preserve its createdAt and timestamp
-          const existingDepartment = departmentsWithStats.find(dept => dept.id === editingDepartmentId);
-          const localResult = DataService.updateDepartment(editingDepartmentId, {
-            name: newDepartmentName,
-            companyIds: newDepartmentCompanyIds,
-            timestamp: existingDepartment?.timestamp, // Preserve the timestamp
-            createdAt: existingDepartment?.createdAt // Preserve the createdAt
-          });
-          
-          if (localResult) {
-            console.log('Local update successful - updated department:', localResult);
-          }
-          
-          // Wait a bit before reloading to ensure toast is visible
-          setTimeout(async () => {
-            console.log('Reloading data and closing modal...');
-            await loadData();
-            handleCloseModal();
-          }, 800);
-          
-          return; // Early return to prevent double execution
-        } else {
-          console.warn('API update failed, using local update:', apiResult.error);
-          
-          // Always update local state when API fails
-          // Find the existing department to preserve its createdAt and timestamp
-          const existingDepartment = departmentsWithStats.find(dept => dept.id === editingDepartmentId);
-          const localResult = DataService.updateDepartment(editingDepartmentId, {
-            name: newDepartmentName,
-            companyIds: newDepartmentCompanyIds,
-            timestamp: existingDepartment?.timestamp, // Preserve the timestamp
-            createdAt: existingDepartment?.createdAt // Preserve the createdAt
-          });
-
-          console.log('Local update result:', localResult);
-
-          if (localResult) {
-            console.log('Local update successful - updated department:', localResult);
-            console.log('Showing local success toast...');
-            
-            // Use alternative approach for local success too
-            showSuccessToast(`Department "${newDepartmentName}" updated locally (API unavailable)`, loadingToastId);
-            
-            // Wait a bit before reloading to ensure toast is visible
-            setTimeout(async () => {
-              console.log('Reloading data and closing modal...');
-              await loadData();
-              handleCloseModal();
-            }, 800);
-            
-            return; // Early return to prevent double execution
-          } else {
-            console.error('Local update failed!');
-            
-            // Use alternative approach for error too
-            showErrorToast(`Failed to update department "${newDepartmentName}"`, loadingToastId);
-            return; // Exit early if local update fails
-          }
-        }
-      } else {
-        // Creating new department
-        console.log('🆕 Creating new department:', {
-          name: newDepartmentName,
-          companyIds: newDepartmentCompanyIds
-        });
-
-        let apiResult: any = null;
-        try {
-          apiResult = await apiService.createDepartment({ 
-            name: newDepartmentName, 
-            companyIds: newDepartmentCompanyIds 
-          });
-          
-          console.log('API create result:', apiResult);
-          
-          if (apiResult.success) {
-            // Update loading toast to success
-            toast.update(loadingToastId, {
-              render: `Department "${newDepartmentName}" created successfully!`,
-              type: "success",
-              isLoading: false,
-              autoClose: 4000,
-              hideProgressBar: false,
-              closeOnClick: true,
-              pauseOnHover: true,
-              draggable: true,
-            });
-            
-            // Also update locally to keep data in sync
-            // If the API returns department data, use it; otherwise create locally
-            if (apiResult.data && typeof apiResult.data === 'object') {
-              // Transform the API response to match our Department type
-              const apiDepartment = {
-                id: apiResult.data.id || `dept-${Date.now()}`,
-                name: apiResult.data.name || newDepartmentName,
-                companyIds: apiResult.data.companyIds || newDepartmentCompanyIds,
-                timestamp: apiResult.data.timestamp || apiResult.data.createdAt || new Date().toISOString(),
-                createdAt: apiResult.data.createdAt || apiResult.data.timestamp || new Date().toISOString() // Add createdAt property
-              };
-              DataService.updateDepartment(apiDepartment.id, apiDepartment);
-            } else {
-              DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
-            }
-            
-            // Wait a bit before reloading to ensure toast is visible
-            setTimeout(async () => {
-              await loadData();
-              handleCloseModal();
-            }, 500);
-            
-            return; // Early return to prevent double execution
-          } else {
-            console.warn('API create failed, using local create:', apiResult.error);
-            // Update loading toast to warning
-            toast.update(loadingToastId, {
-              render: `Department "${newDepartmentName}" created locally (API unavailable)`,
-              type: "warning",
-              isLoading: false,
-              autoClose: 5000,
-              hideProgressBar: false,
-              closeOnClick: true,
-              pauseOnHover: true,
-              draggable: true,
-            });
-          }
-        } catch (createError) {
-          console.error('API create error:', createError);
-          // Update loading toast to error
-          toast.update(loadingToastId, {
-            render: 'API create error, department created locally only.',
-            type: "warning",
-            isLoading: false,
-            autoClose: 5000,
-            hideProgressBar: false,
-            closeOnClick: true,
-            pauseOnHover: true,
-            draggable: true,
-          });
-        }
-
-        // Always create locally as fallback (only if API didn't succeed)
-        if (!apiResult || !apiResult.success) {
-          DataService.createDepartment(newDepartmentName, newDepartmentCompanyIds);
-          
-          // If we haven't already shown a success message, show local creation success
-          if (!apiResult || !apiResult.success) {
-            toast.update(loadingToastId, {
-              render: `Department "${newDepartmentName}" created locally!`,
-              type: "success",
-              isLoading: false,
-              autoClose: 4000,
-              hideProgressBar: false,
-              closeOnClick: true,
-              pauseOnHover: true,
-              draggable: true,
-            });
-          }
-        }
-      }
-
-      // Only reload data if we haven't already done it above
-      // (This prevents the loading/modal close from interfering with toast display)
-      if (editingDepartmentId) {
-        // For edits, we handle reload in the success/error blocks above
-        return;
-      } else {
-        // For creates, reload data here if not already handled
-        setTimeout(async () => {
-          await loadData();
-          handleCloseModal();
-        }, 500);
-      }
-    } catch (error) {
-      console.error('Error in handleCreateDepartment:', error);
-      
-      // Update loading toast to error
-      toast.update(loadingToastId, {
-        render: `An error occurred while ${editingDepartmentId ? 'updating' : 'creating'} the department: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        type: "error",
-        isLoading: false,
-        autoClose: 6000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-      });
-      
-      // Don't close modal on error so user can retry
-=======
     if (user?.role !== UserRole.ADMIN) {
         return <Navigate to="/" />;
     }
 
     if (isLoading) {
-        return <div>Loading departments...</div>;
->>>>>>> origin/main
+        return <div className="text-center py-8 text-lg text-slate-600">Loading departments...</div>;
     }
 
     return (

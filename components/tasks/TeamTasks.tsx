@@ -33,8 +33,8 @@ const TeamTasks: React.FC = () => {
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
     const [newTaskData, setNewTaskData] = useState({
-        department: '',
-        project: '',
+        department: '', // Storing department ID for new task creation
+        project: '', // Project ID for new task creation
         title: '',
         description: '',
         due_date: '',
@@ -51,15 +51,19 @@ const TeamTasks: React.FC = () => {
     const [assigneeFilter, setAssigneeFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
+    const [editingTask, setEditingTask] = useState<Task | null>(null);
+
+
     const loadData = useCallback(async () => {
-        if (!user || user.role !== UserRole.MANAGER) return;
+        if (!user || user.role !== UserRole.MANAGER) {
+            setIsLoading(false);
+            return;
+        }
         setIsLoading(true);
         try {
-            // Step 1: Reliably get team members from local authService, which is synced on login.
-            const team = AuthService.getTeamMembers(user.id);
+            const team = AuthService.getTeamMembers(user.id); // Assuming this is synchronous and returns User[]
             setTeamMembers(team);
 
-            // If no team members are found, we can stop early.
             if (team.length === 0) {
                 setHydratedTasks([]);
                 setAllProjects([]);
@@ -69,29 +73,28 @@ const TeamTasks: React.FC = () => {
             
             const teamMemberIds = team.map(tm => tm.id);
 
-            // Step 2: Fetch other data, including tasks specifically for the team.
-            const [projects, teamTasks, allUsersFromApi] = await Promise.all([
+            const [projects, teamTasks, allUsersFromApi, departments] = await Promise.all([
                 DataService.getAllProjects(),
                 DataService.getTasksByTeam(teamMemberIds),
-                DataService.getAllUsersFromApi(), // Still fetch all users for name lookups
+                AuthService.getUsers(), // Changed to AuthService.getUsers
+                DataService.getDepartments(),
             ]);
             
             setAllProjects(projects);
+            setApiDepartments(departments); // For the create/edit modal
             
-            // Step 3: Create maps for efficient name lookups from the full, fresh API data.
             const projectsMap = new Map(projects.map(p => [p.id, p]));
             const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
 
-            // Step 4: Hydrate tasks with project and assignee names.
             const newHydratedTasks = teamTasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
                 assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
             }));
             setHydratedTasks(newHydratedTasks);
-            
+ 
         } catch (error) {
-            console.error("Failed to load team task data:", error);
+            console.error("[TeamTasks] Failed to load team task data:", error);
             setHydratedTasks([]); // Clear tasks on error
         } finally {
             setIsLoading(false);
@@ -102,8 +105,49 @@ const TeamTasks: React.FC = () => {
         loadData();
     }, [loadData]);
 
+    const resetForm = useCallback(() => {
+        setNewTaskData({
+            department: '',
+            project: '',
+            title: '',
+            description: '',
+            due_date: '',
+            priority: 'medium',
+            est_time: '',
+            assign_to: teamMembers.length > 0 ? teamMembers[0].id : ''
+        });
+        setEditingTask(null);
+        setSubmitError('');
+    }, [teamMembers]);
+
+    const handleOpenModal = () => {
+        resetForm();
+        setIsModalOpen(true);
+    };
+    
+    const handleOpenEditModal = (task: Task) => {
+        setEditingTask(task);
+        // Pre-fill form with task data
+        setNewTaskData({
+            department: allProjects.find(p => p.id === task.projectId)?.departmentIds[0] || '', // Assuming project has one department
+            project: task.projectId,
+            title: task.name,
+            description: task.description || '',
+            due_date: task.dueDate || '',
+            priority: task.priority || 'medium',
+            est_time: task.estimatedTime ? String(task.estimatedTime) : '',
+            assign_to: task.assigneeId || ''
+        });
+        setIsModalOpen(true);
+    };
+    
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        resetForm(); // Reset form state when closing modal
+    };
+
     useEffect(() => {
-        if (isModalOpen) {
+        if (isModalOpen && !editingTask) { // Only fetch dropdowns when creating a new task and modal opens
             const fetchDropdownData = async () => {
                 setDropdownsLoading(true);
                 try {
@@ -113,10 +157,10 @@ const TeamTasks: React.FC = () => {
                     ]);
                     setApiDepartments(depts);
                     setApiProjects(projs);
-                    if (depts.length > 0) {
-                        setNewTaskData(prev => ({ ...prev, department: depts[0].name }));
+                     if (depts.length > 0 && !newTaskData.department) {
+                        setNewTaskData(prev => ({ ...prev, department: depts[0].id })); // Store ID
                     }
-                    if (projs.length > 0) {
+                    if (projs.length > 0 && !newTaskData.project) {
                         setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
                     }
                 } catch (error) {
@@ -127,50 +171,69 @@ const TeamTasks: React.FC = () => {
             };
             fetchDropdownData();
         }
-    }, [isModalOpen]);
+    }, [isModalOpen, editingTask, newTaskData.department, newTaskData.project]);
 
     useEffect(() => {
-        if (teamMembers.length > 0 && !newTaskData.assign_to) {
+        if (teamMembers.length > 0 && !newTaskData.assign_to && !editingTask) { // Only set default if not editing
             setNewTaskData(prev => ({...prev, assign_to: teamMembers[0].id}));
         }
-    }, [teamMembers, newTaskData.assign_to]);
-
-    const handleOpenModal = () => setIsModalOpen(true);
-    const handleCloseModal = () => {
-        setIsModalOpen(false);
-        setSubmitError('');
-    };
-
+    }, [teamMembers, newTaskData.assign_to, editingTask]);
+ 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         setNewTaskData(prev => ({ ...prev, [name]: value }));
     };
 
-    const handleCreateTask = async (e: React.FormEvent) => {
+    const handleCreateUpdateTask = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user) {
-            setSubmitError('You must be logged in to create a task.');
+            setSubmitError('You must be logged in to save a task.');
             return;
         }
+        if (!user.id) {
+            setSubmitError('Creator ID not available. Please log in.');
+            return;
+        }
+        if (!newTaskData.title.trim() || !newTaskData.project) {
+            setSubmitError('Task title and project are required.');
+            return;
+        }
+
         setSubmitError('');
         setIsSubmitting(true);
+
+        const taskPayload = {
+            name: newTaskData.title,
+            description: newTaskData.description,
+            dueDate: newTaskData.due_date || undefined,
+            projectId: newTaskData.project,
+            assigneeId: newTaskData.assign_to || undefined,
+            status: editingTask?.status || TaskStatus.TODO, // Keep existing status if editing, else default
+            priority: newTaskData.priority,
+            estimatedTime: newTaskData.est_time ? parseInt(newTaskData.est_time, 10) : undefined,
+            creatorId: user.id // creatorId for new tasks, or for audit log on update
+        };
+
         try {
-            const payload = {
-                ...newTaskData,
-                currentUserId: user.id
-            };
-            await DataService.createTask(payload);
+            if (editingTask) {
+                // For update, we only send the changed fields
+                await DataService.updateTask(editingTask.id, taskPayload, user.id); 
+            } else {
+                await DataService.createTask(taskPayload);
+            }
+            
+            loadData();
             handleCloseModal();
-            loadData(); // Refresh the task list
         } catch (error) {
-            setSubmitError(error instanceof Error ? error.message : 'An unknown error occurred.');
+            console.error("Failed to save task:", error);
+            setSubmitError(`Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setIsSubmitting(false);
         }
     };
     
     const handleRequestDelete = (taskId: string) => {
-        const task = filteredTasks.find(t => t.id === taskId);
+        const task = hydratedTasks.find(t => t.id === taskId);
         if (task) {
             setTaskToDelete({ id: task.id, name: task.name });
         }
@@ -188,7 +251,54 @@ const TeamTasks: React.FC = () => {
             setTaskToDelete(null);
         }
     };
-    
+
+    const handleAssigneeChange = async (taskId: string, newAssigneeId?: string) => { 
+        if (!user) {
+            alert('You must be logged in to change assignee.');
+            return;
+        }
+        try {
+            await DataService.updateTask(taskId, { assigneeId: newAssigneeId }, user.id); 
+            loadData();
+        } catch (error) {
+            console.error("[TeamTasks] Failed to update assignee:", error);
+            alert('Failed to update assignee. Please try again.');
+        }
+    };
+
+    const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
+        if (!user) {
+            alert('You must be logged in to change task status.');
+            return;
+        }
+        const task = hydratedTasks.find(t => t.id === taskId);
+        if (task?.status === TaskStatus.ON_HOLD && task.dependency && newStatus !== TaskStatus.ON_HOLD) {
+            alert("This task cannot be taken off hold until its dependency is cleared.");
+            return;
+        }
+        try {
+            await DataService.updateTask(taskId, { status: newStatus }, user.id);
+            loadData();
+        } catch (error) {
+            console.error("[TeamTasks] Failed to update task status:", error);
+            alert('Failed to update task status. Please try again.');
+        }
+    };
+
+    const filteredProjectsByDepartment = useMemo(() => {
+        const selectedDepartmentId = newTaskData.department; 
+        
+        if (!selectedDepartmentId) {
+            // If no department is selected, return all projects that the manager can see (allProjects)
+            // Or more specifically, projects that belong to the manager's team departments
+            const managerDepartmentIds = apiDepartments.filter(d => teamMembers.some(tm => tm.departmentId === d.id)).map(d => d.id);
+            return apiProjects.filter(p => p.departmentIds.some(dId => managerDepartmentIds.includes(dId)));
+        }
+
+        return apiProjects.filter(p => p.departmentIds.includes(selectedDepartmentId)); 
+    }, [apiProjects, apiDepartments, newTaskData.department, teamMembers]);
+
+
     const filteredTasks = useMemo(() => {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -198,6 +308,7 @@ const TeamTasks: React.FC = () => {
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
     }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
+ 
 
     if (user?.role !== UserRole.MANAGER) {
         return <Navigate to="/" />;
@@ -254,9 +365,13 @@ const TeamTasks: React.FC = () => {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            assigneeName={task.assigneeName}
+                            employees={teamMembers}
+                            onAssigneeChange={handleAssigneeChange} 
+                            onDelete={handleRequestDelete} 
+                            onEdit={handleOpenEditModal} 
                             projectName={task.projectName}
-                            onDelete={handleRequestDelete}
+                            assigneeName={task.assigneeName}
+                            onStatusChange={handleStatusChange} // Pass status change handler
                         />
                     ))}
                 </div>
@@ -276,29 +391,38 @@ const TeamTasks: React.FC = () => {
                         <tbody>
                             {filteredTasks.map(task => {
                                 const statusStyles = {
-                                    [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800', [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
-                                    [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
+                                    [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800', 
+                                    [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
+                                    [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', 
+                                    [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
                                 };
                                 return (
-                                    <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
+                                    <tr key={task.id} className="group cursor-pointer hover:bg-slate-50 transition-colors">
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800" onClick={() => navigate(`/tasks/${task.id}`)}>{task.name}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
-                                            <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
+                                            <select
+                                                value={task.status}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
+                                                className="text-sm border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                                            >
+                                                {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
                                         </td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <div className="flex items-center space-x-3">
                                                 <button 
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        navigate(`/tasks/${task.id}`);
+                                                        handleOpenEditModal(task);
                                                     }} 
                                                     className="text-slate-500 hover:text-indigo-600"
                                                     title="Edit Task"
                                                 >
-                                                    <EditIcon />
+                                                    <EditIcon className="w-5 h-5" />
                                                 </button>
                                                 <button
                                                     onClick={(e) => {
@@ -308,7 +432,7 @@ const TeamTasks: React.FC = () => {
                                                     className="text-slate-500 hover:text-red-600"
                                                     title="Delete Task"
                                                 >
-                                                    <TrashIcon />
+                                                    <TrashIcon className="w-5 h-5" />
                                                 </button>
                                             </div>
                                         </td>
@@ -319,8 +443,8 @@ const TeamTasks: React.FC = () => {
                     </table>
                 </div>
             )}
-            <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
-                <form onSubmit={handleCreateTask} className="space-y-4">
+            <Modal title={editingTask ? "Edit Task" : "Create New Task"} isOpen={isModalOpen} onClose={handleCloseModal}>
+                <form onSubmit={handleCreateUpdateTask} className="space-y-4">
                     {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
                     
                     <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
@@ -336,15 +460,17 @@ const TeamTasks: React.FC = () => {
                         <div>
                             <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
                             <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                <option value="">Select Department</option>
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.name}>{d.name}</option>) : <option value="">No departments found</option>}
+                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
                             </select>
                         </div>
                         <div>
                             <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
                             <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                <option value="">Select Project</option>
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found</option>}
+                                 filteredProjectsByDepartment.length > 0 ? filteredProjectsByDepartment.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found for selected department</option>}
                             </select>
                         </div>
                     </div>
@@ -366,6 +492,7 @@ const TeamTasks: React.FC = () => {
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
                         <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <option value="">Unassigned</option>
                              {teamMembers.map(employee => (
                                 <option key={employee.id} value={employee.id}>{employee.name}</option>
                             ))}
@@ -376,7 +503,7 @@ const TeamTasks: React.FC = () => {
                          <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
-                        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Creating...' : 'Create Task'}</Button>
+                        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Saving...' : (editingTask ? 'Update Task' : 'Create Task')}</Button>
                     </div>
                 </form>
             </Modal>
