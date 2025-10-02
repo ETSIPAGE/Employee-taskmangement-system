@@ -34,7 +34,7 @@ const PieChart = ({ data }: { data: { label: string; value: number; color: strin
           accumulatedPercent += percent;
           return (
             <circle
-              key={item.label} // Key is handled here
+              key={item.label}
               cx={75}
               cy={75}
               r={radius}
@@ -66,7 +66,7 @@ const BarChart = ({ data, title }: { data: { label: string; value: number }[]; t
     <h3 className="text-md font-semibold text-slate-700 mb-2">{title}</h3>
     <div className="space-y-2">
       {data.map((item) => (
-        <div key={item.label}> {/* Key is handled here */}
+        <div key={item.label}>
           <div className="flex justify-between items-center text-sm mb-1">
             <span className="text-slate-600">{item.label}</span>
             <span className="font-semibold text-slate-800">{item.value}%</span>
@@ -80,21 +80,19 @@ const BarChart = ({ data, title }: { data: { label: string; value: number }[]; t
   </div>
 );
 
-// Define an interface for the props of OverdueTaskItem for clarity
 interface OverdueTaskItemProps {
   task: Task;
-  projectsMap: Record<string, Project>;
-  usersMap: Record<string, User>;
+  projectsMap: Map<string, Project>;
+  usersMap: Map<string, User>;
 }
 
-// Use React.FC to correctly type the functional component, allowing React to handle the `key` prop
 const OverdueTaskItem: React.FC<OverdueTaskItemProps> = ({
   task,
   projectsMap,
   usersMap,
 }) => {
-  const assignee = task.assigneeId ? usersMap[task.assigneeId] : undefined;
-  const project = projectsMap[task.projectId];
+  const assignee = task.assigneeId ? usersMap.get(task.assigneeId) : undefined;
+  const project = projectsMap.get(task.projectId);
 
   return (
     <li className="py-3 border-b border-slate-100 last:border-b-0">
@@ -123,55 +121,53 @@ const AdminDashboard: React.FC = () => {
   const [taskStatusData, setTaskStatusData] = useState<{ label: string; value: number; color: string }[]>([]);
   const [projectProgressData, setProjectProgressData] = useState<{ label: string; value: number }[]>([]);
   const [overdueTasksList, setOverdueTasksList] = useState<Task[]>([]);
-  const [projectsMap, setProjectsMap] = useState<Record<string, Project>>({});
-  const [usersMap, setUsersMap] = useState<Record<string, User>>({});
+  const [projectsMap, setProjectsMap] = useState<Map<string, Project>>(new Map());
+  const [usersMap, setUsersMap] = useState<Map<string, User>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const users: User[] = await AuthService.getUsers();
-      const projects: Project[] = await DataService.getAllProjects();
-      const tasks: Task[] = await DataService.getTasksByTeam(users.map((u) => u.id));
+      const [users, projects, tasks] = await Promise.all([
+        AuthService.getUsers(),
+        DataService.getAllProjects(),
+        DataService.getTasks() // Corrected from getAllTasks to getTasks
+      ]);
 
-      const projectsMapData: Record<string, Project> = Object.fromEntries(projects.map((p) => [p.id, p]));
-      const usersMapData: Record<string, User> = Object.fromEntries(users.map((u) => [u.id, u]));
+      setUsersMap(new Map(users.map(u => [u.id, u])));
+      setProjectsMap(new Map(projects.map(p => [p.id, p])));
 
-      setProjectsMap(projectsMapData);
-      setUsersMap(usersMapData);
-
-      const projectProgress = projects.map((p) => {
-        const projectTasks = tasks.filter((t) => t.projectId === p.id);
-        const completed = projectTasks.filter((t) => t.status === TaskStatus.COMPLETED).length;
+      const projectProgressPromises = projects.map(async p => {
+        const projectTasks = tasks.filter(t => t.projectId === p.id); // Filter tasks locally
+        const completed = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
         return {
           label: p.name,
           value: projectTasks.length > 0 ? Math.round((completed / projectTasks.length) * 100) : 0,
         };
       });
+      const projectProgress = await Promise.all(projectProgressPromises);
 
-      const overdueTasks = tasks
-        .filter((t) => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TaskStatus.COMPLETED)
+      const overdueTasks = tasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TaskStatus.COMPLETED)
         .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
-
       setOverdueTasksList(overdueTasks.slice(0, 5));
 
       setStats({
         totalUsers: users.length,
         totalProjects: projects.length,
-        completedProjects: projectProgress.filter((p) => p.value === 100).length,
+        completedProjects: projectProgress.filter(p => p.value === 100).length,
         overdueTasks: overdueTasks.length,
       });
 
       setTaskStatusData([
-        { label: TaskStatus.TODO, value: tasks.filter((t) => t.status === TaskStatus.TODO).length, color: '#f59e0b' },
-        { label: TaskStatus.IN_PROGRESS, value: tasks.filter((t) => t.status === TaskStatus.IN_PROGRESS).length, color: '#3b82f6' },
-        { label: TaskStatus.ON_HOLD, value: tasks.filter((t) => t.status === TaskStatus.ON_HOLD).length, color: '#94a3b8' },
-        { label: TaskStatus.COMPLETED, value: tasks.filter((t) => t.status === TaskStatus.COMPLETED).length, color: '#22c55e' },
+        { label: TaskStatus.TODO, value: tasks.filter(t => t.status === TaskStatus.TODO).length, color: '#f59e0b' },
+        { label: TaskStatus.IN_PROGRESS, value: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length, color: '#3b82f6' },
+        { label: TaskStatus.ON_HOLD, value: tasks.filter(t => t.status === TaskStatus.ON_HOLD).length, color: '#94a3b8' },
+        { label: TaskStatus.COMPLETED, value: tasks.filter(t => t.status === TaskStatus.COMPLETED).length, color: '#22c55e' },
       ]);
 
-      setProjectProgressData(projectProgress.sort((a, b) => b.value - a.value).slice(0, 5));
+      setProjectProgressData(projectProgress.sort((a,b) => b.value - a.value).slice(0, 5));
     } catch (error) {
-      console.error('Failed to load dashboard data:', error);
+      console.error("Failed to load dashboard data:", error);
     } finally {
       setIsLoading(false);
     }
@@ -199,10 +195,30 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <StatCard icon={<UsersIcon />} title="Total Employees" value={`${stats.totalUsers}`} color="bg-sky-100 text-sky-600" />
-        <StatCard icon={<ClipboardListIcon />} title="Active Projects" value={`${stats.totalProjects - stats.completedProjects}`} color="bg-indigo-100 text-indigo-600" />
-        <StatCard icon={<ExclamationTriangleIcon />} title="Overdue Tasks" value={`${stats.overdueTasks}`} color="bg-red-100 text-red-600" />
-        <StatCard icon={<ChartBarIcon />} title="Projects Completed" value={`${stats.completedProjects}`} color="bg-emerald-100 text-emerald-600" />
+        <StatCard
+          icon={<UsersIcon />}
+          title="Total Employees"
+          value={`${stats.totalUsers}`}
+          color="bg-sky-100 text-sky-600"
+        />
+        <StatCard
+          icon={<ClipboardListIcon />}
+          title="Active Projects"
+          value={`${stats.totalProjects - stats.completedProjects}`}
+          color="bg-indigo-100 text-indigo-600"
+        />
+        <StatCard
+          icon={<ExclamationTriangleIcon />}
+          title="Overdue Tasks"
+          value={`${stats.overdueTasks}`}
+          color="bg-red-100 text-red-600"
+        />
+        <StatCard
+          icon={<ChartBarIcon />}
+          title="Projects Completed"
+          value={`${stats.completedProjects}`}
+          color="bg-emerald-100 text-emerald-600"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

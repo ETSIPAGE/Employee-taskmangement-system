@@ -15,7 +15,9 @@ export interface Company {
 export interface Department {
   id: string;
   name: string;
-  companyId: string;
+  companyId: string; // This will represent the *primary* company if `companyIds` is also used
+  companyIds?: string[]; // Optional array of company IDs a department might belong to
+  timestamp?: string; // Added timestamp to align with APIService.ts transformation
 }
 
 export interface UserStats {

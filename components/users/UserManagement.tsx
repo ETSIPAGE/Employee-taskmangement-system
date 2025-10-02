@@ -8,7 +8,7 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import ViewSwitcher from '../shared/ViewSwitcher';
-import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon } from '../../constants';
+import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
 
 const getInitials = (name: string) => {
@@ -27,7 +27,7 @@ const StatItem: React.FC<{ icon: React.ReactNode; value: React.ReactNode; label:
     </div>
 );
 
-const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void }> = ({ user, companyName, onEdit, onDelete }) => {
+const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void; onImpersonate: (userId: string) => void; currentUser: User; }> = ({ user, companyName, onEdit, onDelete, onImpersonate, currentUser }) => {
     const statusStyles = {
         Active: { dot: 'bg-green-500' },
         Busy: { dot: 'bg-orange-500' },
@@ -39,11 +39,9 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
         [UserRole.MANAGER]: { border: 'border-sky-500', bg: 'bg-sky-100', text: 'text-sky-800' },
         [UserRole.EMPLOYEE]: { border: 'border-emerald-500', bg: 'bg-emerald-100', text: 'text-emerald-800' },
         [UserRole.HR]: { border: 'border-rose-500', bg: 'bg-rose-100', text: 'text-rose-800' },
-        // --- ADDED: Default style for unknown/undefined roles ---
         default: { border: 'border-slate-300', bg: 'bg-slate-100', text: 'text-slate-800' }
     };
 
-    // Safely get role style, defaulting to 'default' if user.role is not found
     const currentRoleStyle = roleStyles[user.role as UserRole] || roleStyles.default;
 
     const workloadStyles = {
@@ -70,7 +68,6 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                          <div className="flex items-center gap-x-2">
                             <h3 className="text-xl font-bold text-slate-800">{user.name}</h3>
                              <span className={`${currentRoleStyle.bg} ${currentRoleStyle.text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
-                                {/* Display user.role, or a fallback like 'Unknown' */}
                                 {user.role || 'Unknown'} 
                             </span>
                         </div>
@@ -89,6 +86,11 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     {isMenuOpen && (
                         <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg z-10 border">
                             <a href="#" onClick={(e) => { e.preventDefault(); onEdit(user); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Edit User</a>
+                            {currentUser.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                <a href="#" onClick={(e) => { e.preventDefault(); onImpersonate(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                                    Impersonate
+                                </a>
+                            )}
                             <a href="#" onClick={(e) => { e.preventDefault(); onDelete(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Delete User</a>
                         </div>
                     )}
@@ -153,7 +155,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
 
 
 const UserManagement: React.FC = () => {
-    const { user: currentUser } = useAuth();
+    const { user: currentUser, impersonateUser } = useAuth();
     const navigate = useNavigate();
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
@@ -173,8 +175,6 @@ const UserManagement: React.FC = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
-    // --- MODIFIED: Initialize managerId and companyId to null to avoid initial setting
-    //     which could trigger unnecessary re-renders. Will set in resetForm instead.
     const [managerId, setManagerId] = useState<string | undefined>(undefined);
     const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
@@ -184,7 +184,8 @@ const UserManagement: React.FC = () => {
         setIsLoading(true);
         try {
             const fetchedUsers = await AuthService.getUsers();
-            const fetchedManagers = await AuthService.getManagers();
+            // Assuming AuthService.getManagers exists for fetching managers specifically
+            const fetchedManagers = fetchedUsers.filter(u => u.role === UserRole.MANAGER); 
             const fetchedDepartments = await DataService.getDepartments();
             const fetchedCompanies = await DataService.getCompanies();
 
@@ -193,24 +194,17 @@ const UserManagement: React.FC = () => {
             setDepartments(fetchedDepartments);
             setCompanies(fetchedCompanies);
 
-            // --- REMOVED: Conditional setState for managerId/companyId directly in loadData.
-            //     This logic belongs in `resetForm` or initial `useState` setup for form.
-            //     Keeping it here caused the infinite loop because `managerId`/`companyId`
-            //     are dependencies of `loadData` itself.
-            //     `resetForm` is a better place for these defaults.
-
         } catch (error) {
             console.error("Failed to load user data", error);
             // Optionally, show a toast/notification to the user
         } finally {
             setIsLoading(false);
         }
-    }, []); // --- MODIFIED: No dependencies here to prevent infinite loops.
-            //     This useCallback now only changes if its internal logic changes.
+    }, []); 
 
     useEffect(() => {
         loadData();
-    }, [loadData]); // This will trigger the API fetch on component mount and on loadData changes.
+    }, [loadData]); 
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -220,22 +214,20 @@ const UserManagement: React.FC = () => {
         });
     }, [users, searchTerm, roleFilter]);
 
-    // --- MODIFIED: resetForm to set defaults based on loaded data ---
     const resetForm = useCallback(() => {
         setName('');
         setEmail('');
         setPassword('');
         setRole(UserRole.EMPLOYEE);
-        // Set managerId and companyId defaults here using the `managers` and `companies` states
         setManagerId(managers.length > 0 ? managers[0].id : undefined);
         setCompanyId(companies.length > 0 ? companies[0].id : undefined);
         setEditingUser(null);
         setDepartmentIds([]);
         setRating(0);
-    }, [managers, companies]); // Dependencies ensure managers/companies lists are fresh for defaults
+    }, [managers, companies]); 
 
     const handleOpenCreateModal = () => {
-        resetForm(); // Call resetForm to set initial values
+        resetForm(); 
         setIsModalOpen(true);
     };
 
@@ -243,7 +235,7 @@ const UserManagement: React.FC = () => {
         setEditingUser(userToEdit);
         setName(userToEdit.name);
         setEmail(userToEdit.email);
-        setPassword(''); // Password is never pre-filled for security
+        setPassword(''); 
         setRole(userToEdit.role);
         setManagerId(userToEdit.managerId);
         setDepartmentIds(userToEdit.departmentIds || []);
@@ -259,11 +251,20 @@ const UserManagement: React.FC = () => {
     
     const handleDeleteUser = useCallback(async (userId: string) => {
         if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            // This will call the LOCAL storage delete from authService.ts for now
             await AuthService.deleteUser(userId); 
-            loadData(); // Reload data to reflect local change (and refresh from API if token valid)
+            loadData(); 
         }
     }, [loadData]);
+
+    const handleImpersonate = async (userId: string) => {
+        try {
+            await impersonateUser(userId);
+            navigate('/');
+        } catch (error) {
+            console.error("Impersonation failed", error);
+            alert("Could not log in as this user.");
+        }
+    };
 
     const handleDepartmentToggle = (deptId: string) => {
         setDepartmentIds(prev => {
@@ -288,17 +289,13 @@ const UserManagement: React.FC = () => {
                     companyId,
                     managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
                     rating: rating,
-                    // jobTitle, skills, etc., can be added here if you add form fields for them
                 };
-                // This will call the LOCAL storage update from authService.ts for now
                 await AuthService.updateUser(editingUser.id, updates); 
             } else {
                 if (!password) {
                     alert("Password is required for new users.");
                     return;
                 }
-                // This will call the AuthService.register API (for signup) and then
-                // manage the user profile locally, as implemented in authService.ts.
                 await AuthService.register({ 
                     name, 
                     email, 
@@ -307,22 +304,19 @@ const UserManagement: React.FC = () => {
                     departmentIds,
                     companyId,
                     managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
-                    // Add other properties here if `RegisterCredentials` expands and form has them
                 });
             }
-            loadData(); // Reload data to reflect local change (and refresh from API if token valid)
+            loadData(); 
             handleCloseModal();
         } catch(err) {
-            alert(err instanceof Error ? err.message : 'An error occurred during save.'); // More specific error
+            alert(err instanceof Error ? err.message : 'An error occurred during save.'); 
         }
     };
 
-    // Role-based access control for the whole management page
     if (!currentUser || ![UserRole.ADMIN, UserRole.HR].includes(currentUser.role)) {
-        return <Navigate to="/" />; // Redirect if not authorized
+        return <Navigate to="/" />; 
     }
     
-    // Loading state UI
     if (isLoading) return <div className="text-center py-8 text-lg text-slate-600">Loading employees...</div>;
 
     return (
@@ -333,7 +327,6 @@ const UserManagement: React.FC = () => {
             </div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <div className="w-full md:w-auto md:flex-1">
-                    {/* Placeholder for other filters if needed, currently just spacing */}
                 </div>
                 <div className="w-full md:w-64">
                     <ViewSwitcher view={view} setView={setView} />
@@ -350,17 +343,24 @@ const UserManagement: React.FC = () => {
                 </div>
             </div>
 
-            {/* Conditional Rendering for Empty State or List */}
             {filteredUsers.length === 0 ? (
                 <div className="col-span-full text-center py-12 bg-white rounded-lg shadow">
                     <h3 className="text-xl font-semibold text-slate-700">No Employees Found</h3>
                     <p className="text-slate-500 mt-2">No users match the current search or filter criteria.</p>
                 </div>
             ) : view === 'card' ? (
-                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"> {/* Adjusted grid for more cards */}
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"> 
                     {filteredUsers.map(user => {
                         const company = companies.find(c => c.id === user.companyId);
-                        return (<UserCard key={user.id} user={user} companyName={company?.name} onEdit={handleOpenEditModal} onDelete={handleDeleteUser} />);
+                        return (<UserCard 
+                            key={user.id} 
+                            user={user} 
+                            companyName={company?.name} 
+                            onEdit={handleOpenEditModal} 
+                            onDelete={handleDeleteUser}
+                            onImpersonate={handleImpersonate}
+                            currentUser={currentUser}
+                        />);
                     })}
                 </div>
             ) : (
@@ -398,8 +398,17 @@ const UserManagement: React.FC = () => {
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <div className="flex items-center space-x-3">
-                                            <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon className="w-5 h-5" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon className="w-5 h-5" /></button>
+                                            {currentUser?.role === UserRole.ADMIN && currentUser.id !== user.id && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleImpersonate(user.id); }}
+                                                    className="text-slate-500 hover:text-green-600"
+                                                    title={`Log in as ${user.name}`}
+                                                >
+                                                    <LoginIcon className="w-5 h-5" />
+                                                </button>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>
@@ -431,8 +440,8 @@ const UserManagement: React.FC = () => {
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
-                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
-                            {departments.map(dept => (
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
+                            {departments.length > 0 ? departments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -445,7 +454,7 @@ const UserManagement: React.FC = () => {
                                         {dept.name}
                                     </label>
                                 </div>
-                            ))}
+                            )) : <p className="text-sm text-slate-500">Loading departments...</p>}
                         </div>
                     </div>
 

@@ -3,6 +3,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import Login from './components/auth/Login';
 import Register from './components/auth/Register';
+import ForgotPassword from './components/auth/ForgotPassword';
+import ResetPassword from './components/auth/ResetPassword';
 import MainLayout from './components/layout/MainLayout';
 import Dashboard from './components/dashboard/Dashboard';
 import MyTeam from './components/team/MyTeam';
@@ -25,6 +27,7 @@ import OnboardingForm from './components/onboarding/OnboardingForm';
 import OnboardingSubmissions from './components/onboarding/OnboardingSubmissions';
 import SubmissionDetail from './components/onboarding/SubmissionDetail';
 import OnboardingFormView from './components/onboarding/OnboardingFormView';
+import RolesDashboard from './components/dashboard/RolesDashboard';
 
 const App: React.FC = () => {
   const { user, loading } = useAuth();
@@ -41,6 +44,8 @@ const App: React.FC = () => {
     <Routes>
       <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
       <Route path="/register" element={!user ? <Register /> : <Navigate to="/" />} />
+      <Route path="/forgot-password" element={!user ? <ForgotPassword /> : <Navigate to="/" />} />
+      <Route path="/reset-password" element={!user ? <ResetPassword /> : <Navigate to="/" />} />
       <Route path="/onboarding-form" element={<OnboardingForm showWrapper={true} />} />
       <Route 
         path="/*"
@@ -62,6 +67,7 @@ const App: React.FC = () => {
                 <Route path="/companies/:companyId" element={<CompanyProjects />} />
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:departmentId" element={<DepartmentProjects />} />
+                <Route path="/roles" element={<RolesDashboard />} />
                 <Route path="/admin-tasks" element={<AdminTasks />} />
                 <Route path="/attendance" element={<Attendance />} />
                 <Route path="/settings" element={<Settings />} />

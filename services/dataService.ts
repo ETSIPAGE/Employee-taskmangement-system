@@ -1,6 +1,5 @@
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, OnboardingStepStatus, Company, User, UserRole } from '../types';
-//  import { v4 as uuidv4 } from 'uuid'
-import {v4 as uuidv4} from 'uuid';
+import { v4 as uuidv4 } from 'uuid';
 import * as AuthService from './authService'; // Assuming AuthService is available for token
 
 // Helper to parse API Gateway responses
@@ -107,14 +106,14 @@ initializeCompanies();
 
 // --- DEPARTMENTS ---
 let DEPARTMENTS: Department[] = [
-    { id: 'dept-1', name: 'Administration', companyId: 'comp-1' },
-    { id: 'dept-2', name: 'Finance & Accounting', companyId: 'comp-1' },
-    { id: 'dept-3', name: 'Human Resources (HR)', companyId: 'comp-1' },
-    { id: 'dept-4', name: 'Operations', companyId: 'comp-1' },
-    { id: 'dept-5', name: 'Marketing', companyId: 'comp-1' },
-    { id: 'dept-6', name: 'Sales', companyId: 'comp-1' },
-    { id: 'dept-7', name: 'Information Technology (IT)', companyId: 'comp-1' },
-    { id: 'dept-8', name: 'Customer Service', companyId: 'comp-1' },
+    { id: 'dept-1', name: 'Administration', companyIds: ['comp-1'] },
+    { id: 'dept-2', name: 'Finance & Accounting', companyIds: ['comp-1'] },
+    { id: 'dept-3', name: 'Human Resources (HR)', companyIds: ['comp-1'] },
+    { id: 'dept-4', name: 'Operations', companyIds: ['comp-1'] },
+    { id: 'dept-5', name: 'Marketing', companyIds: ['comp-1'] },
+    { id: 'dept-6', name: 'Sales', companyIds: ['comp-1'] },
+    { id: 'dept-7', name: 'Information Technology (IT)', companyIds: ['comp-1'] },
+    { id: 'dept-8', name: 'Customer Service', companyIds: ['comp-1'] },
 ];
 
 const DEPARTMENTS_API_URL = 'https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod';
@@ -144,9 +143,9 @@ const initializeDepartments = async (): Promise<void> => {
                 .map(item => ({
                     id: item.id || item._id || uuidv4(),
                     name: item.name,
-                    companyId: item.companyId || item.company_id || 'comp-1',
+                    companyIds: item.companyIds || item.company_ids || ['comp-1'], // Changed to companyIds array
                 }))
-                .filter(dept => dept.name && dept.id && dept.companyId);
+                .filter(dept => dept.name && dept.id && dept.companyIds);
 
             if (fetchedDepartments.length > 0) {
                 console.log(`[DataService] Departments successfully fetched. Total: ${fetchedDepartments.length}`);
@@ -428,7 +427,7 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'roadmap' 
     // --- API Call for creating a project ---
     try {
         console.log(`[DataService] Attempting to create project via API at ${CREATE_PROJECT_API_URL}`);
-        const token = AuthService.getToken(); // Get token
+        const token = AuthService.getToken(); // Get token from AuthService
         const response = await fetch(CREATE_PROJECT_API_URL, {
             method: 'POST',
             headers: {
@@ -459,7 +458,7 @@ export const deleteProject = async (projectId: string): Promise<void> => {
     // --- API Call for deleting a project ---
     try {
         console.log(`[DataService] Attempting to delete project ${projectId} via API at ${DELETE_PROJECT_API_URL}`); // URL without ID placeholder
-        const token = AuthService.getToken(); // Get token
+        const token = AuthService.getToken(); // Get token from AuthService
         const deletePayload = { id: projectId }; // Assuming backend expects ID in body for DELETE
 
         const response = await fetch(DELETE_PROJECT_API_URL, {
@@ -749,12 +748,12 @@ export const getDepartmentById = async (id: string): Promise<Department | undefi
     return DEPARTMENTS.find(d => d.id === id);
 };
 
-export const createDepartment = async (name: string, companyId: string): Promise<Department> => {
+export const createDepartment = async (name: string, companyIds: string[]): Promise<Department> => {
     await departmentsLoadPromise;
     const newDepartment: Department = {
         id: uuidv4(),
         name,
-        companyId,
+        companyIds, // Changed to companyIds array
     };
     DEPARTMENTS.unshift(newDepartment);
     return newDepartment;
@@ -854,7 +853,7 @@ export const createTask = async (taskData: Omit<Task, 'id'>): Promise<Task> => {
 
     try {
         console.log(`[DataService] Attempting to create task via API at ${CREATE_TASK_API_URL}`);
-        const token = AuthService.getToken(); // Get token
+        const token = AuthService.getToken(); // Get token from AuthService
         const apiPayload = {
             ...newTask,
             title: newTask.name,
@@ -887,7 +886,7 @@ export const createTask = async (taskData: Omit<Task, 'id'>): Promise<Task> => {
     return newTask;
 };
 
-export const updateTask = async (taskId: string, updates: Partial<Task>): Promise<Task | undefined> => {
+export const updateTask = async (taskId: string, updates: Partial<Task>, updaterId?: string): Promise<Task | undefined> => {
     await tasksLoadPromise;
     const taskIndex = TASKS.findIndex(t => t.id === taskId);
     const existingTask = taskIndex > -1 ? TASKS[taskIndex] : undefined;
@@ -905,8 +904,10 @@ export const updateTask = async (taskId: string, updates: Partial<Task>): Promis
         assign_to: updates.assigneeId,
         department: updates.category,
         est_time: updates.estimatedTime,
+        updaterId: updaterId // Pass updaterId to API
     };
 
+    // Remove undefined values to avoid sending them in the payload
     Object.keys(apiPayload).forEach(key => {
         if (apiPayload[key] === undefined) {
             delete apiPayload[key];
@@ -915,7 +916,7 @@ export const updateTask = async (taskId: string, updates: Partial<Task>): Promis
 
     try {
         console.log(`[DataService] Attempting to update task ${taskId} via API at ${UPDATE_TASK_API_URL}/${taskId}`);
-        const token = AuthService.getToken(); // Get token
+        const token = AuthService.getToken(); // Get token from AuthService
         const response = await fetch(`${UPDATE_TASK_API_URL}/${taskId}`, { // Assuming API expects ID in path
             method: 'PUT', // Or 'PATCH'
             headers: {
@@ -965,15 +966,16 @@ export const updateTask = async (taskId: string, updates: Partial<Task>): Promis
     }
 };
 
-export const deleteTask = async (taskId: string): Promise<void> => {
+export const deleteTask = async (taskId: string, deleterId?: string): Promise<void> => {
     try {
         console.log(`[DataService] Attempting to delete task ${taskId} via API at ${DELETE_TASK_API_URL}/${taskId}`);
-        const token = AuthService.getToken(); // Get token
+        const token = AuthService.getToken(); // Get token from AuthService
         const response = await fetch(`${DELETE_TASK_API_URL}/${taskId}`, {
             method: 'DELETE',
             headers: {
                 ...(token && { 'Authorization': `Bearer ${token}` })
-            }
+            },
+            body: JSON.stringify({ deleterId }) // Assuming deleterId is passed in body
         });
         await parseApiResponse(response);
     } catch (error) {
@@ -1006,7 +1008,6 @@ export const createOnboardingSubmission = (data: Omit<OnboardingSubmission, 'id'
     ONBOARDING_SUBMISSIONS.unshift(newSubmission);
     return newSubmission;
 };
-
 export const updateOnboardingSubmission = (submissionId: string, updates: Partial<OnboardingSubmission>): OnboardingSubmission | undefined => {
     const subIndex = ONBOARDING_SUBMISSIONS.findIndex(s => s.id === submissionId);
     if (subIndex > -1) {
@@ -1015,3 +1016,13 @@ export const updateOnboardingSubmission = (submissionId: string, updates: Partia
     }
     return undefined;
 };
+// Add placeholder for other functions if they exist in the original file
+export const getNoteById = (id: string): Note | undefined => {
+    return undefined;
+}
+export const getDependencyLogById = (id: string): DependencyLog | undefined => {
+    return undefined;
+}
+export const getMilestoneById = (id: string): MilestoneStatus | undefined => {
+    return undefined;
+}

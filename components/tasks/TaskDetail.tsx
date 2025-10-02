@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService'; // These functions return Promises
-// import * as AuthService from '../../services/authService'; // Removed - assuming DataService is the source for getUsers
+import * as AuthService from '../../services/authService';
 import { Task, TaskStatus, User, Project, UserRole, Note, DependencyLog } from '../../types';
 import Button from '../shared/Button';
-import { ClockIcon, BriefcaseIcon, UserCircleIcon, LinkIcon } from '../../constants';
+import { ClockIcon, BriefcaseIcon, UserCircleIcon, LinkIcon } from '../../constants'; // Added LinkIcon for dependency
 
 const DetailItem: React.FC<{ icon: React.ReactNode, label: string, children: React.ReactNode }> = ({ icon, label, children }) => (
     <div className="flex items-start py-3">
@@ -40,49 +40,55 @@ const TaskDetail: React.FC = () => {
     const [allUsers, setAllUsers] = useState<User[]>([]);
     const [newNote, setNewNote] = useState('');
     const [isLoading, setIsLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState('');
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
+    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeId?: string }>({});
     const [isSettingDependency, setIsSettingDependency] = useState(false);
-    const [dependencyReason, setDependencyReason] = useState('');
     const [dependencyUserId, setDependencyUserId] = useState('');
+    const [dependencyReason, setDependencyReason] = useState('');
+    
+    const isDirty = useMemo(() => {
+        if (!task) return false;
+        const hasStatusChanged = editedTask.status !== undefined && editedTask.status !== task.status;
+        const hasAssigneeChanged = editedTask.assigneeId !== undefined && editedTask.assigneeId !== (task.assigneeId || '');
+        return hasStatusChanged || hasAssigneeChanged;
+    }, [task, editedTask]);
 
-    // --- CRUCIAL FIX: Make loadData an async function and AWAIT API calls ---
+
     const loadData = useCallback(async () => {
-        if (!taskId) {
-            setTask(null);
-            setProject(null);
-            setAllUsers([]);
-            setIsLoading(false);
-            return;
-        }
+        if (!taskId) return;
         setIsLoading(true);
         try {
-            // AWAIT DataService.getTaskById
-            const fetchedTask = await DataService.getTaskById(taskId);
-            if (!fetchedTask) {
-                console.warn(`Task with ID ${taskId} not found.`);
+            const currentTask = await DataService.getTaskById(taskId);
+            if (!currentTask) {
                 setTask(null);
                 setProject(null);
                 setAllUsers([]);
                 navigate('/tasks'); // Redirect or show a specific "not found" message
                 return;
             }
-            setTask(fetchedTask);
+ 
+            setTask(currentTask);
+            setEditedTask({ status: currentTask.status, assigneeId: currentTask.assigneeId || '' });
 
-            // AWAIT DataService.getProjectById
-            const fetchedProject = await DataService.getProjectById(fetchedTask.projectId);
-            setProject(fetchedProject);
+            const [taskProject, users] = await Promise.all([
+                DataService.getProjectById(currentTask.projectId),
+                AuthService.getUsers() // Changed to AuthService.getUsers
+            ]);
 
-            // AWAIT DataService.getUsers (assuming users are now in DataService)
-            const fetchedUsers = await DataService.getUsers(); // Use DataService.getUsers
-            setAllUsers(fetchedUsers);
+            setProject(taskProject || null);
+            setAllUsers(users);
 
-            // Initialize dependencyUserId if it's currently invalid or not set
-            // Only set if dependencyUserId is not already a valid user ID among fetchedUsers
-            if (fetchedUsers.length > 0 && !fetchedUsers.some(u => u.id === dependencyUserId)) {
-                 // Default to the first user or the current assignee if available, otherwise first user
-                setDependencyUserId(fetchedTask.assigneeId || fetchedUsers[0].id);
-            } else if (fetchedUsers.length === 0) {
-                setDependencyUserId(''); // Clear if no users available
+            // Initialize dependencyUserId if a dependency is set, or for new dependency creation
+            if (currentTask.dependency) {
+                setDependencyUserId(currentTask.dependency.userId);
+                setDependencyReason(currentTask.dependency.reason || '');
+            } else if (users.length > 0 && !dependencyUserId) {
+                setDependencyUserId(currentTask.assigneeId || users[0].id); // Default to assignee or first user
+            } else if (users.length === 0) {
+                setDependencyUserId('');
             }
 
         } catch (error) {
@@ -94,21 +100,30 @@ const TaskDetail: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [taskId, navigate, dependencyUserId]); // Added dependencyUserId to prevent re-initialization unless necessary
+    }, [taskId, navigate, dependencyUserId]); 
 
     useEffect(() => {
         loadData();
     }, [loadData]);
 
-    const { canEdit, canUpdateStatus } = useMemo(() => {
-        const isAdmin = currentUser?.role === UserRole.ADMIN;
-        const isManager = currentUser?.id === project?.managerId;
-        const isAssignee = currentUser?.id === task?.assigneeId;
+    const { canChangeStatus, canChangeAssignee, canAddNote, canEdit } = useMemo(() => {
+        if (!currentUser || !task || !project) {
+            return { canChangeStatus: false, canChangeAssignee: false, canAddNote: false, canEdit: false };
+        }
+        
+        const isAdmin = currentUser.role === UserRole.ADMIN;
+        const isProjectManager = currentUser.id === project.managerId;
+        const isAssignee = currentUser.id === task.assigneeId;
+
+        const canManageTask = isAdmin || isProjectManager;
+
         return {
-            canEdit: isAdmin || isManager,
-            canUpdateStatus: isAdmin || isManager || isAssignee
+            canChangeStatus: canManageTask || isAssignee,
+            canChangeAssignee: canManageTask,
+            canAddNote: canManageTask || isAssignee,
+            canEdit: canManageTask // General permission for setting/clearing dependency
         };
-    }, [currentUser, project, task]);
+    }, [currentUser, task, project]);
 
     const activityFeed = useMemo(() => {
         if (!task) return [];
@@ -129,21 +144,20 @@ const TaskDetail: React.FC = () => {
 
 
     const handleUpdateTask = async (updates: Partial<Task>) => {
-        if (!taskId) return;
-        setIsLoading(true); // Show loading state during update
+        if (!taskId || !currentUser) return; // Ensure currentUser is available for updaterId
+        setIsLoading(true); 
         try {
-            // CRUCIAL FIX: AWAIT DataService.updateTask
-            await DataService.updateTask(taskId, updates);
-            await loadData(); // Refresh data after successful update
+            await DataService.updateTask(taskId, updates, currentUser.id); // Pass currentUser.id as updaterId
+            await loadData(); 
         } catch (error) {
             console.error("Failed to update task:", error);
             alert("Failed to update task. Please try again.");
         } finally {
-            setIsLoading(false); // Hide loading state
+            setIsLoading(false); 
         }
     };
 
-    const handleAddNote = async () => { // Make async since it calls async handleUpdateTask
+    const handleAddNote = async () => {
         if (!newNote.trim() || !currentUser || !task) return;
 
         const noteToAdd: Note = {
@@ -152,12 +166,40 @@ const TaskDetail: React.FC = () => {
             content: newNote.trim(),
             timestamp: new Date().toISOString(),
         };
-
+ 
         await handleUpdateTask({ notes: [...(task.notes || []), noteToAdd] });
         setNewNote('');
     };
+    
+    const handleSaveChanges = async () => {
+        if (!taskId || !currentUser || !isDirty) return;
+        setIsSaving(true);
+        setSaveError('');
+        setSaveSuccess(false);
 
-    const handleSetDependency = async () => { // Make async
+        try {
+            const updates: { status?: TaskStatus; assigneeId?: string | undefined } = {};
+            if (editedTask.status !== task?.status) {
+                updates.status = editedTask.status;
+            }
+             if (editedTask.assigneeId !== (task?.assigneeId || '')) {
+                updates.assigneeId = editedTask.assigneeId === '' ? undefined : editedTask.assigneeId;
+            }
+
+            // Corrected: DataService.updateTask expects updaterId as the third argument
+            await DataService.updateTask(taskId, updates, currentUser.id); 
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 3000);
+            await loadData();
+        } catch (error) {
+            console.error("Failed to save changes:", error);
+            setSaveError(error instanceof Error ? error.message : 'An unknown error occurred.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleSetDependency = async () => { 
         if (!dependencyUserId || !dependencyReason.trim() || !currentUser || !task) {
             alert("Please select a person and provide a reason for the dependency.");
             return;
@@ -183,7 +225,7 @@ const TaskDetail: React.FC = () => {
         setDependencyReason('');
     };
 
-    const handleClearDependency = async () => { // Make async
+    const handleClearDependency = async () => { 
         if (!currentUser || !task) {
             alert("Failed to clear dependency: current user or task not found.");
             return;
@@ -202,12 +244,10 @@ const TaskDetail: React.FC = () => {
         }
     };
 
+    const dependencyUser = useMemo(() => allUsers.find(u => u.id === task?.dependency?.userId), [allUsers, task?.dependency?.userId]);
 
     if (isLoading) return <div className="text-center p-8 text-lg text-slate-600">Loading task...</div>;
     if (!task) return <div className="text-center p-8 text-lg text-slate-600">Task not found.</div>;
-
-    const assignee = allUsers.find(u => u.id === task.assigneeId);
-    const dependencyUser = task.dependency ? allUsers.find(u => u.id === task.dependency?.userId) : null;
 
     return (
         <div className="p-4 sm:p-6 lg:p-8">
@@ -221,6 +261,15 @@ const TaskDetail: React.FC = () => {
                         <p className="text-slate-500 mt-1">
                             Part of project: <Link to={`/projects/${project.id}`} className="font-semibold text-indigo-600 hover:underline">{project.name}</Link>
                         </p>
+                    )}
+                </div>
+                 <div className="flex items-center space-x-4">
+                    {saveSuccess && <span className="text-sm font-medium text-green-600">Changes saved!</span>}
+                    {saveError && <span className="text-sm font-medium text-red-600">Failed to save changes.</span>}
+                    {isDirty && (
+                        <Button onClick={handleSaveChanges} disabled={isSaving}>
+                            {isSaving ? 'Saving...' : 'Save Changes'}
+                        </Button>
                     )}
                 </div>
             </div>
@@ -237,11 +286,11 @@ const TaskDetail: React.FC = () => {
                         <div className="max-h-96 overflow-y-auto pr-2 space-y-4 mb-4">
                             {activityFeed.length > 0 ? (
                                 activityFeed.map((item, index) => {
+                                    const author = allUsers.find(u => u.id === item.data.authorId);
                                     if (item.type === 'note') {
                                         const note = item.data as Note;
-                                        const author = allUsers.find(u => u.id === note.authorId);
                                         return (
-                                            <div key={`note-${note.id}`} className="flex items-start space-x-3">
+                                            <div key={`note-${note.id}-${index}`} className="flex items-start space-x-3">
                                                 <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold flex-shrink-0">
                                                     {author ? getInitials(author.name) : '?'}
                                                 </div>
@@ -254,24 +303,24 @@ const TaskDetail: React.FC = () => {
                                                 </div>
                                             </div>
                                         );
-                                    } else { // It's a log
+                                    } else { // type === 'log'
                                         const log = item.data as DependencyLog;
-                                        const author = allUsers.find(u => u.id === log.authorId);
-                                        const dependencyOnUser = log.dependencyOnUserId ? allUsers.find(u => u.id === log.dependencyOnUserId) : null;
-
+                                        const dependentUser = allUsers.find(u => u.id === log.dependencyOnUserId);
                                         return (
-                                            <div key={`log-${index}`} className="flex items-start space-x-3 py-2">
-                                                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold flex-shrink-0">
+                                            <div key={`log-${index}`} className="flex items-start space-x-3 text-sm text-slate-600">
+                                                <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold flex-shrink-0">
                                                     <LinkIcon className="w-4 h-4" />
                                                 </div>
-                                                <div className="flex-1">
-                                                    <p className="text-sm text-slate-600">
-                                                        <span className="font-semibold">{author?.name || 'System'}</span>
-                                                        {log.action === 'set' ? ` set a dependency on ` : ` cleared a dependency.`}
-                                                        {log.action === 'set' && <span className="font-semibold">{dependencyOnUser?.name || 'a user'}</span>}
-                                                        <span className="text-xs text-slate-400 ml-2">{new Date(log.timestamp).toLocaleString()}</span>
+                                                <div className="flex-1 bg-indigo-50 p-3 rounded-md">
+                                                    <div className="flex items-center space-x-2">
+                                                        <p className="font-semibold text-sm text-indigo-800">{author?.name || 'Unknown'}</p>
+                                                        <p className="text-xs text-slate-500">{new Date(log.timestamp).toLocaleString()}</p>
+                                                    </div>
+                                                    <p className="mt-1">
+                                                        {log.action === 'set' 
+                                                            ? `set a dependency on ${dependentUser?.name || 'an unknown user'} for reason: "${log.reason}"`
+                                                            : 'cleared a dependency.'}
                                                     </p>
-                                                    {log.reason && <p className="text-sm text-slate-800 mt-1 p-2 bg-slate-50 rounded-md border italic">"{log.reason}"</p>}
                                                 </div>
                                             </div>
                                         );
@@ -281,8 +330,8 @@ const TaskDetail: React.FC = () => {
                                 <p className="text-sm text-slate-500 text-center py-4">No activity on this task yet.</p>
                             )}
                         </div>
-
-                        {canUpdateStatus && (
+                        
+                        {canAddNote && (
                             <div className="border-t pt-4">
                                 <textarea
                                     value={newNote}
@@ -305,37 +354,35 @@ const TaskDetail: React.FC = () => {
                          <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Details</h3>
                          <div className="divide-y divide-slate-200">
                              <DetailItem icon={<BriefcaseIcon className="w-5 h-5"/>} label="Status">
-                                 <select
-                                    value={task.status}
-                                    onChange={(e) => handleUpdateTask({ status: e.target.value as TaskStatus })}
-                                    disabled={!canUpdateStatus || (task.status === TaskStatus.ON_HOLD && currentUser?.role !== UserRole.ADMIN && currentUser?.id !== project?.managerId)} // Disable if task is ON_HOLD unless Admin/Manager
-                                    className="w-full p-1 border-slate-300 rounded-md shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                 <select 
+                                    value={editedTask.status} 
+                                    onChange={(e) => setEditedTask(prev => ({ ...prev, status: e.target.value as TaskStatus }))}
+                                    disabled={!canChangeStatus}
+                                    className="w-full p-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed transition-colors"
                                 >
                                      {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                  </select>
-                                 {task.status === TaskStatus.ON_HOLD && !canEdit && // Show message only if it's ON_HOLD and current user can't edit
-                                    <p className="text-xs text-slate-500 mt-1">Status is locked due to a dependency. Only a manager or admin can clear it.</p>
-                                 }
                             </DetailItem>
                              <DetailItem icon={<UserCircleIcon />} label="Assignee">
-                                 <select
-                                    value={task.assigneeId || ''}
-                                    onChange={(e) => handleUpdateTask({ assigneeId: e.target.value || undefined })}
-                                    disabled={!canEdit} // Only admins/managers can change assignee
-                                    className="w-full p-1 border-slate-300 rounded-md shadow-sm disabled:bg-slate-100 disabled:cursor-not-allowed"
+                                 <select 
+                                    value={editedTask.assigneeId} 
+                                    onChange={(e) => setEditedTask(prev => ({ ...prev, assigneeId: e.target.value || undefined }))}
+                                    disabled={!canChangeAssignee}
+                                    className="w-full p-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed transition-colors"
                                 >
                                      <option value="">Unassigned</option>
                                      {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                  </select>
                             </DetailItem>
-                            <DetailItem icon={<ClockIcon />} label="Due Date">
+                            <DetailItem icon={<ClockIcon className="w-5 h-5"/>} label="Due Date">
                                 {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}
                             </DetailItem>
-                            <DetailItem icon={<BriefcaseIcon />} label="Estimated Time">
+                            <DetailItem icon={<BriefcaseIcon className="w-5 h-5"/>} label="Estimated Time">
                                 {task.estimatedTime ? `${task.estimatedTime} hours` : 'Not set'}
                             </DetailItem>
                          </div>
                     </div>
+ 
                     <div className="bg-white p-6 rounded-lg shadow">
                          <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Dependency</h3>
                         {task.dependency ? (
@@ -347,7 +394,7 @@ const TaskDetail: React.FC = () => {
                                     <p className="font-semibold text-slate-800">Reason:</p>
                                     <p className="whitespace-pre-wrap">{task.dependency.reason}</p>
                                 </div>
-                                {canEdit && ( // Only admins/managers can clear dependency
+                                {canEdit && ( 
                                      <Button onClick={handleClearDependency} fullWidth>Clear Dependency</Button>
                                 )}
                              </div>
@@ -364,14 +411,14 @@ const TaskDetail: React.FC = () => {
                                     <textarea id="dependencyReason" value={dependencyReason} onChange={(e) => setDependencyReason(e.target.value)} rows={3} className="w-full p-2 border border-slate-300 rounded-md"></textarea>
                                 </div>
                                 <div className="flex justify-end space-x-2">
-                                    <button onClick={() => setIsSettingDependency(false)} className="px-3 py-1 text-sm rounded-md bg-slate-100 hover:bg-slate-200">Cancel</button>
+                                    <button type="button" onClick={() => setIsSettingDependency(false)} className="px-3 py-1 text-sm rounded-md bg-slate-100 hover:bg-slate-200">Cancel</button>
                                     <Button onClick={handleSetDependency}>Save</Button>
                                 </div>
                             </div>
                         ) : (
                              <div>
                                 <p className="text-sm text-slate-500 mb-3">No dependencies are set for this task.</p>
-                                {canEdit && ( // Only admins/managers can set dependency
+                                {canEdit && ( 
                                     <Button onClick={() => setIsSettingDependency(true)} fullWidth>Set Dependency</Button>
                                 )}
                             </div>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Role API Integration Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .result {
+            background-color: #e2e3e5;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            white-space: pre-wrap;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Role API Integration Test</h1>
+        
+        <div class="form-group">
+            <label for="apiKey">API Key (optional):</label>
+            <input type="password" id="apiKey" placeholder="Enter API Key if required">
+        </div>
+        
+        <div class="form-group">
+            <label for="bearerToken">Bearer Token (optional):</label>
+            <input type="password" id="bearerToken" placeholder="Enter Bearer Token if required">
+        </div>
+        
+        <button id="configureAuth">Configure Authentication</button>
+        <button id="testConnection">Test API Connection</button>
+        
+        <div id="authResult" class="hidden"></div>
+        
+        <hr style="margin: 20px 0;">
+        
+        <h2>Create Test Role</h2>
+        <div class="form-group">
+            <label for="roleName">Role Name:</label>
+            <input type="text" id="roleName" placeholder="Enter role name" value="Test Role">
+        </div>
+        
+        <div class="form-group">
+            <label for="roleDescription">Role Description:</label>
+            <textarea id="roleDescription" placeholder="Enter role description">A test role for integration testing</textarea>
+        </div>
+        
+        <button id="createRole">Create Role</button>
+        <button id="getRoles">Get All Roles</button>
+        
+        <div id="result" class="result hidden"></div>
+    </div>
+
+    <script type="module">
+        import { apiService } from './services/apiService.js';
+
+        document.getElementById('configureAuth').addEventListener('click', () => {
+            const apiKey = document.getElementById('apiKey').value;
+            const bearerToken = document.getElementById('bearerToken').value;
+            
+            apiService.configureRoleAPIAuth(apiKey || undefined, bearerToken || undefined);
+            
+            const resultDiv = document.getElementById('authResult');
+            resultDiv.className = 'success';
+            resultDiv.textContent = 'Authentication configured successfully!';
+            resultDiv.classList.remove('hidden');
+            
+            console.log('Authentication configured:', { apiKey: !!apiKey, bearerToken: !!bearerToken });
+        });
+
+        document.getElementById('testConnection').addEventListener('click', async () => {
+            try {
+                const result = await apiService.testRoleAPI();
+                displayResult(result, 'API Connection Test');
+            } catch (error) {
+                displayResult({ success: false, error: error.message }, 'API Connection Test');
+            }
+        });
+
+        document.getElementById('createRole').addEventListener('click', async () => {
+            const roleName = document.getElementById('roleName').value;
+            const roleDescription = document.getElementById('roleDescription').value;
+            
+            if (!roleName.trim()) {
+                alert('Please enter a role name');
+                return;
+            }
+            
+            const payload = {
+                name: roleName,
+                description: roleDescription,
+                permissions: ['view_dashboard', 'manage_tasks'],
+                color: 'indigo',
+                bgColor: 'bg-indigo-500',
+                createdBy: 'test-user'
+            };
+            
+            try {
+                const result = await apiService.createRole(payload);
+                displayResult(result, 'Create Role');
+            } catch (error) {
+                displayResult({ success: false, error: error.message }, 'Create Role');
+            }
+        });
+
+        document.getElementById('getRoles').addEventListener('click', async () => {
+            try {
+                const result = await apiService.getRoles();
+                displayResult(result, 'Get Roles');
+            } catch (error) {
+                displayResult({ success: false, error: error.message }, 'Get Roles');
+            }
+        });
+
+        function displayResult(result, operation) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.classList.remove('hidden');
+            
+            if (result.success) {
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `<strong>${operation} Success:</strong>\n${JSON.stringify(result, null, 2)}`;
+            } else {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `<strong>${operation} Failed:</strong>\n${JSON.stringify(result, null, 2)}`;
+            }
+            
+            // Scroll to results
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import { AcademicCapIcon, BriefcaseIcon, CurrencyDollarIcon, DocumentTextIcon, IdentificationIcon, LocationMarkerIcon, UsersIcon } from '../../constants';
@@ -22,13 +22,28 @@ const getInitials = (name: string) => {
 
 const Profile: React.FC = () => {
     const { user, updateProfile } = useAuth();
-    // Use the user from context as the source of truth, and local state for optimistic updates.
     const [profileData, setProfileData] = useState<User | null>(user);
+    const [allDepartments, setAllDepartments] = useState<Record<string, Department>>({});
+    const [isLoading, setIsLoading] = useState(true);
 
-    const allDepartments = DataService.getDepartments().reduce((acc, dept) => {
-        acc[dept.id] = dept;
-        return acc;
-    }, {} as Record<string, Department>);
+    useEffect(() => {
+        const fetchDepts = async () => {
+            setIsLoading(true);
+            try {
+                const depts = await DataService.getDepartments();
+                const deptsMap = depts.reduce((acc, dept) => {
+                    acc[dept.id] = dept;
+                    return acc;
+                }, {} as Record<string, Department>);
+                setAllDepartments(deptsMap);
+            } catch (error) {
+                console.error("Failed to load departments", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchDepts();
+    }, []);
 
     const sectionRefs = {
         personal: useRef<HTMLDivElement>(null),
@@ -55,7 +70,6 @@ const Profile: React.FC = () => {
     const handleUpdate = async (updates: Partial<User>) => {
         if (!profileData) return;
         
-        // Optimistically update local state
         const updatedData = { ...profileData, ...updates };
         setProfileData(updatedData);
 
@@ -63,18 +77,16 @@ const Profile: React.FC = () => {
             await updateProfile(updates);
         } catch (error) {
             console.error("Failed to update profile:", error);
-            // Revert on failure by refetching from auth context
             setProfileData(user); 
             alert("Failed to save changes. Please try again.");
         }
     };
     
-    // Ensure profileData is in sync with the user from AuthContext
-    React.useEffect(() => {
+    useEffect(() => {
         setProfileData(user);
     }, [user]);
 
-    if (!profileData) {
+    if (!profileData || isLoading) {
         return <div className="text-center p-8">Loading profile...</div>;
     }
 

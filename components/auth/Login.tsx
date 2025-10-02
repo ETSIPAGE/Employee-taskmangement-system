@@ -51,6 +51,13 @@ const Login: React.FC = () => {
                         onChange={(e) => setPassword(e.target.value)}
                         required
                     />
+                    <div className="flex items-center justify-end">
+                        <div className="text-sm">
+                            <Link to="/forgot-password" className="font-medium text-indigo-600 hover:text-indigo-500">
+                                Forgot your password?
+                            </Link>
+                        </div>
+                    </div>
                     <Button type="submit" fullWidth disabled={isLoading}>
                         {isLoading ? 'Signing In...' : 'Sign In'}
                     </Button>

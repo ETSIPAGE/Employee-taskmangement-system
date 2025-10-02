@@ -90,72 +90,53 @@ const Departments: React.FC = () => {
     const loadData = useCallback(async () => { 
         setIsLoading(true);
         try {
-            const departments = await DataService.getDepartments();
-            const users = AuthService.getUsers(); 
-            const projects = await DataService.getAllProjects(); // This was the previous fix, still correct.
-            const allCompanies = await DataService.getCompanies(); 
-            setCompanies(allCompanies);
+            const [departments, users, projects, allCompanies] = await Promise.all([
+                DataService.getDepartments(),
+                AuthService.getUsers(),
+                DataService.getAllProjects(),
+                DataService.getCompanies()
+            ]);
 
+            setCompanies(allCompanies);
             if (allCompanies.length > 0) {
                 setNewDepartmentCompanyId(allCompanies[0].id);
-            } else {
-                setNewDepartmentCompanyId(''); 
             }
 
-            // Since the .map callback will now contain await, we need to await the array of promises it returns
-            const stats = await Promise.all(
-                departments.map(async dept => { // Make the callback for map async
-                    const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
-                    const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
-                    const company = allCompanies.find(c => c.id === dept.companyId); 
-                    
-                    let projectsCompleted = 0;
-                    let projectsInProgress = 0;
-                    let projectsPending = 0;
+            const statsPromises = departments.map(async dept => {
+                const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
+                const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
+                const company = allCompanies.find(c => c.id === dept.companyId);
 
-                    // To properly await tasks for each project, we can collect promises
-                    // from deptProjects and then await them with Promise.all
-                    const projectTaskStatusPromises = deptProjects.map(async project => {
-                        const tasks = await DataService.getTasksByProject(project.id); // FIX: Await getTasksByProject()
+                let projectsCompleted = 0;
+                let projectsInProgress = 0;
+                let projectsPending = 0;
+                
+                await Promise.all(deptProjects.map(async project => {
+                    const tasks = await DataService.getTasksByProject(project.id);
+                    if (tasks.length === 0) {
+                        projectsPending++;
+                        return;
+                    }
+                    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
+                    if (completedTasks === tasks.length) {
+                        projectsCompleted++;
+                    } else {
+                        projectsInProgress++;
+                    }
+                }));
 
-                        if (tasks.length === 0) { // Now tasks is an array, .length works
-                            return 'pending'; // Project with no tasks is considered pending
-                        }
-                        
-                        const totalTasks = tasks.length;
-                        const completedTasksCount = tasks.filter(t => t.status === TaskStatus.COMPLETED).length; // .filter works
-                        const inProgressTasksCount = tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length; // .filter works
+                return {
+                    ...dept,
+                    employeeCount: deptUsers.filter(u => u.role === UserRole.EMPLOYEE).length,
+                    managerCount: deptUsers.filter(u => u.role === UserRole.MANAGER).length,
+                    projectsCompleted,
+                    projectsInProgress,
+                    projectsPending,
+                    companyName: company?.name || 'N/A',
+                };
+            });
 
-                        if (completedTasksCount === totalTasks) {
-                            return 'completed';
-                        } else if (inProgressTasksCount > 0 || completedTasksCount > 0) {
-                            return 'inProgress';
-                        } else {
-                            return 'pending';
-                        }
-                    });
-
-                    // Await all project task status calculations for the current department
-                    const projectStatuses = await Promise.all(projectTaskStatusPromises);
-
-                    projectStatuses.forEach(status => {
-                        if (status === 'completed') projectsCompleted++;
-                        else if (status === 'inProgress') projectsInProgress++;
-                        else if (status === 'pending') projectsPending++;
-                    });
-
-                    return {
-                        ...dept,
-                        employeeCount: deptUsers.filter(u => u.role === UserRole.EMPLOYEE).length,
-                        managerCount: deptUsers.filter(u => u.role === UserRole.MANAGER).length,
-                        projectsCompleted,
-                        projectsInProgress,
-                        projectsPending,
-                        companyName: company?.name || 'N/A',
-                    };
-                })
-            );
-
+            const stats = await Promise.all(statsPromises);
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);
@@ -195,19 +176,17 @@ const Departments: React.FC = () => {
         setNewDepartmentName('');
         if (companies.length > 0) {
             setNewDepartmentCompanyId(companies[0].id);
-        } else {
-            setNewDepartmentCompanyId('');
         }
     };
 
-    const handleCreateDepartment = async (e: React.FormEvent) => { 
+    const handleCreateDepartment = (e: React.FormEvent) => {
         e.preventDefault();
         if (!newDepartmentName.trim() || !newDepartmentCompanyId) {
             alert('Department name and company are required.');
             return;
         }
-        await DataService.createDepartment(newDepartmentName, newDepartmentCompanyId); 
-        await loadData(); 
+        DataService.createDepartment(newDepartmentName, newDepartmentCompanyId);
+        loadData();
         handleCloseModal();
     };
 

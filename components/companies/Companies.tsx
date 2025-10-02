@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -83,11 +84,14 @@ const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; on
     );
 };
 
+ 
 // Define the ToastMessage type locally
 type ToastMessage = {
     message: string;
     type: 'success' | 'error' | 'info' | 'warning';
 };
+ 
+ 
 
 const Companies: React.FC = () => {
     const { user } = useAuth();
@@ -342,7 +346,7 @@ const Companies: React.FC = () => {
                         onEdit={() => {
                             setEditingCompany(comp);
                             setNewCompanyName(comp.name);
-                            setIsCreateEditModalOpen(true);
+                            setIsCreateEditModalOpen(true); // Corrected function call
                         }}
                         onDelete={() => handleOpenDeleteConfirmModal(comp)} // Changed to open confirmation modal
                     />

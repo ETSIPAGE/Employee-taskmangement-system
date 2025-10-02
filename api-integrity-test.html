@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Integrity Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 30px;
+            margin: 20px 0;
+        }
+        h1, h2 {
+            color: #2d3748;
+        }
+        .btn {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 10px 5px;
+        }
+        .btn:hover {
+            background-color: #4338ca;
+        }
+        .btn-success {
+            background-color: #10b981;
+        }
+        .btn-success:hover {
+            background-color: #059669;
+        }
+        .btn-warning {
+            background-color: #f59e0b;
+        }
+        .btn-warning:hover {
+            background-color: #d97706;
+        }
+        .result {
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f1f5f9;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .success {
+            background-color: #dcfce7;
+            border-left: 4px solid #22c55e;
+        }
+        .error {
+            background-color: #fee2e2;
+            border-left: 4px solid #ef4444;
+        }
+        .warning {
+            background-color: #ffedd5;
+            border-left: 4px solid #f59e0b;
+        }
+        .api-section {
+            margin: 30px 0;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-connected {
+            background-color: #22c55e;
+        }
+        .status-disconnected {
+            background-color: #ef4444;
+        }
+        .status-pending {
+            background-color: #f59e0b;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 API Integrity Test</h1>
+    <p>Run comprehensive tests to verify all API connections are working properly.</p>
+    
+    <div class="container">
+        <h2>Authentication Configuration</h2>
+        <p>Enter your API credentials to test authenticated endpoints:</p>
+        
+        <div>
+            <label for="apiKey">API Key:</label>
+            <input type="password" id="apiKey" placeholder="Enter API Key" style="width: 100%; padding: 8px; margin: 8px 0;">
+        </div>
+        
+        <div>
+            <label for="bearerToken">Bearer Token:</label>
+            <input type="password" id="bearerToken" placeholder="Enter Bearer Token" style="width: 100%; padding: 8px; margin: 8px 0;">
+        </div>
+        
+        <button id="configureAuthBtn" class="btn">🔒 Configure Authentication</button>
+        <button id="clearAuthBtn" class="btn btn-warning">🗑️ Clear Authentication</button>
+        
+        <div id="authStatus" class="result" style="display: none;"></div>
+    </div>
+    
+    <div class="container">
+        <h2>📋 API Tests</h2>
+        <p>Run individual tests or all tests at once:</p>
+        
+        <button id="testRoleApiBtn" class="btn">👥 Test Role API</button>
+        <button id="testCompanyApiBtn" class="btn">🏢 Test Company API</button>
+        <button id="testDepartmentApiBtn" class="btn">_dept Test Department API</button>
+        <button id="runAllTestsBtn" class="btn btn-success">🚀 Run All API Tests</button>
+        
+        <div id="testResults" class="result" style="display: none;"></div>
+    </div>
+    
+    <div class="container">
+        <h2>📊 Current API Status</h2>
+        <div id="apiStatus">
+            <p>Loading API status...</p>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import the API service
+        import { apiService } from './services/apiService.browser.js';
+        
+        // DOM elements
+        const configureAuthBtn = document.getElementById('configureAuthBtn');
+        const clearAuthBtn = document.getElementById('clearAuthBtn');
+        const testRoleApiBtn = document.getElementById('testRoleApiBtn');
+        const testCompanyApiBtn = document.getElementById('testCompanyApiBtn');
+        const testDepartmentApiBtn = document.getElementById('testDepartmentApiBtn');
+        const runAllTestsBtn = document.getElementById('runAllTestsBtn');
+        const authStatus = document.getElementById('authStatus');
+        const testResults = document.getElementById('testResults');
+        const apiStatus = document.getElementById('apiStatus');
+        const apiKeyInput = document.getElementById('apiKey');
+        const bearerTokenInput = document.getElementById('bearerToken');
+        
+        // Load saved credentials if available
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedApiKey = localStorage.getItem('role_api_key');
+            const savedBearerToken = localStorage.getItem('role_bearer_token');
+            
+            if (savedApiKey) apiKeyInput.value = savedApiKey;
+            if (savedBearerToken) bearerTokenInput.value = savedBearerToken;
+            
+            updateApiStatus();
+        });
+        
+        // Configure authentication
+        configureAuthBtn.addEventListener('click', () => {
+            const apiKey = apiKeyInput.value.trim();
+            const bearerToken = bearerTokenInput.value.trim();
+            
+            if (!apiKey && !bearerToken) {
+                showAuthStatus('⚠️ Please provide at least one authentication credential', 'warning');
+                return;
+            }
+            
+            try {
+                // Configure authentication
+                apiService.configureRoleAPIAuth(
+                    apiKey || undefined,
+                    bearerToken || undefined
+                );
+                
+                // Store credentials
+                if (apiKey) {
+                    localStorage.setItem('role_api_key', apiKey);
+                }
+                if (bearerToken) {
+                    localStorage.setItem('role_bearer_token', bearerToken);
+                }
+                
+                showAuthStatus('✅ Authentication configured successfully!', 'success');
+                updateApiStatus();
+            } catch (error) {
+                showAuthStatus(`❌ Error configuring authentication: ${error.message}`, 'error');
+            }
+        });
+        
+        // Clear authentication
+        clearAuthBtn.addEventListener('click', () => {
+            // Clear credentials
+            apiService.configureRoleAPIAuth(undefined, undefined);
+            
+            // Clear stored credentials
+            localStorage.removeItem('role_api_key');
+            localStorage.removeItem('role_bearer_token');
+            
+            // Clear input fields
+            apiKeyInput.value = '';
+            bearerTokenInput.value = '';
+            
+            showAuthStatus('🗑️ Authentication cleared', 'warning');
+            updateApiStatus();
+        });
+        
+        // Test Role API
+        testRoleApiBtn.addEventListener('click', async () => {
+            showTestResults('🧪 Testing Role API...', 'info');
+            try {
+                const result = await apiService.testRoleAPI();
+                showTestResults(`✅ Role API Test Result:\n${JSON.stringify(result, null, 2)}`, 'success');
+            } catch (error) {
+                showTestResults(`❌ Error testing Role API: ${error.message}`, 'error');
+            }
+        });
+        
+        // Test Company API
+        testCompanyApiBtn.addEventListener('click', async () => {
+            showTestResults('🧪 Testing Company API...', 'info');
+            try {
+                const result = await apiService.testAPI();
+                showTestResults(`✅ Company API Test Result:\n${JSON.stringify(result, null, 2)}`, 'success');
+            } catch (error) {
+                showTestResults(`❌ Error testing Company API: ${error.message}`, 'error');
+            }
+        });
+        
+        // Test Department API
+        testDepartmentApiBtn.addEventListener('click', async () => {
+            showTestResults('🧪 Testing Department API...', 'info');
+            try {
+                const result = await apiService.testDepartmentAPI();
+                showTestResults(`✅ Department API Test Result:\n${JSON.stringify(result, null, 2)}`, 'success');
+            } catch (error) {
+                showTestResults(`❌ Error testing Department API: ${error.message}`, 'error');
+            }
+        });
+        
+        // Run all tests
+        runAllTestsBtn.addEventListener('click', async () => {
+            showTestResults('🚀 Running all API tests...\n', 'info');
+            
+            // Test Role API
+            try {
+                const roleResult = await apiService.testRoleAPI();
+                showTestResults(`✅ Role API: Success\n${JSON.stringify(roleResult, null, 2)}\n`, 'success', true);
+            } catch (error) {
+                showTestResults(`❌ Role API: ${error.message}\n`, 'error', true);
+            }
+            
+            // Test Company API
+            try {
+                const companyResult = await apiService.testAPI();
+                showTestResults(`✅ Company API: Success\n${JSON.stringify(companyResult, null, 2)}\n`, 'success', true);
+            } catch (error) {
+                showTestResults(`❌ Company API: ${error.message}\n`, 'error', true);
+            }
+            
+            // Test Department API
+            try {
+                const departmentResult = await apiService.testDepartmentAPI();
+                showTestResults(`✅ Department API: Success\n${JSON.stringify(departmentResult, null, 2)}\n`, 'success', true);
+            } catch (error) {
+                showTestResults(`❌ Department API: ${error.message}\n`, 'error', true);
+            }
+        });
+        
+        // Helper functions
+        function showAuthStatus(message, type) {
+            authStatus.textContent = message;
+            authStatus.className = `result ${type}`;
+            authStatus.style.display = 'block';
+        }
+        
+        function showTestResults(message, type, append = false) {
+            if (append && testResults.style.display === 'block') {
+                testResults.textContent += message + '\n';
+            } else {
+                testResults.textContent = message;
+            }
+            testResults.className = `result ${type}`;
+            testResults.style.display = 'block';
+        }
+        
+        function updateApiStatus() {
+            // Get current authentication status
+            const savedApiKey = localStorage.getItem('role_api_key');
+            const savedBearerToken = localStorage.getItem('role_bearer_token');
+            
+            let authHtml = '<h3>🔒 Authentication Status</h3>';
+            if (savedApiKey || savedBearerToken) {
+                authHtml += '<p><span class="status-indicator status-connected"></span> Authenticated</p>';
+                if (savedApiKey) {
+                    authHtml += `<p>API Key: ${savedApiKey.substring(0, 8)}...${savedApiKey.substring(savedApiKey.length - 4)}</p>`;
+                }
+                if (savedBearerToken) {
+                    authHtml += `<p>Bearer Token: ${savedBearerToken.substring(0, 8)}...${savedBearerToken.substring(savedBearerToken.length - 4)}</p>`;
+                }
+            } else {
+                authHtml += '<p><span class="status-indicator status-disconnected"></span> Not Authenticated</p>';
+                authHtml += '<p>Please configure authentication to test protected endpoints.</p>';
+            }
+            
+            // Display role API endpoints
+            authHtml += '<h3>🌐 Role API Endpoints</h3>';
+            authHtml += '<ul>';
+            apiService.roleEndpoints.forEach((endpoint, index) => {
+                authHtml += `<li>${index === 0 ? '<strong>Primary:</strong> ' : 'Fallback: '} ${endpoint}</li>`;
+            });
+            authHtml += '</ul>';
+            
+            apiStatus.innerHTML = authHtml;
+        }
+    </script>
+</body>
+</html>

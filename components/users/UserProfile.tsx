@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'; // Added useCallback
+import React, { useState, useEffect, useCallback, useMemo } from 'react'; // Added useCallback
 import { useParams, Link, Navigate } from 'react-router-dom';
-import * as AuthService from '../../services/authService'; // Assuming AuthService.getUserById is sync or a wrapper for DataService.getUserById
-import * as DataService from '../../services/dataService';
+import * as DataService from '../../services/dataService'; 
+import * as AuthService from '../../services/authService'; // Use this for getUserById
 import { User, Task, Project, TaskStatus, UserRole, Department } from '../../types';
 import { MailIcon, CalendarIcon, BriefcaseIcon, ClockIcon, CheckCircleIcon, ExclamationTriangleIcon, TrendingUpIcon } from '../../constants';
 import { useAuth } from '../../hooks/useAuth';
@@ -45,26 +45,28 @@ const UserProfile: React.FC = () => {
 
         setIsLoading(true);
         try {
-            // Await user data from DataService as AuthService.getUserById might be deprecated or not async
-            const fetchedUser = await DataService.getUserById(userId); 
+            // Await user data from AuthService (assuming it's your primary user source)
+            const fetchedUser = await AuthService.getUserById(userId); 
             
             if (fetchedUser) {
                 setUser(fetchedUser);
 
                 // Await all async calls
-                const userTasks = await DataService.getTasksByAssignee(userId);
+                const [userTasks, allProjects, allDepts, allUsersFromApi] = await Promise.all([
+                    DataService.getTasksByAssignee(userId),
+                    DataService.getAllProjects(),
+                    DataService.getDepartments(),
+                    AuthService.getUsers(), // Fetch all users to find manager
+                ]);
+                
                 setTasks(userTasks);
+                setProjects(allProjects.reduce((acc, p) => ({...acc, [p.id]: p }), {}));
+                setDepartments(allDepts.reduce((acc, d) => ({...acc, [d.id]: d }), {}));
 
                 if (fetchedUser.managerId) {
-                    const fetchedManager = await DataService.getUserById(fetchedUser.managerId); // Await here too
+                    const fetchedManager = allUsersFromApi.find(u => u.id === fetchedUser.managerId);
                     setManager(fetchedManager || null);
                 }
-
-                const allProjects = await DataService.getAllProjects();
-                setProjects(allProjects.reduce((acc, p) => ({...acc, [p.id]: p }), {}));
-
-                const allDepts = await DataService.getDepartments();
-                setDepartments(allDepts.reduce((acc, d) => ({...acc, [d.id]: d }), {}));
 
             } else {
                 setUser(null);
@@ -98,11 +100,13 @@ const UserProfile: React.FC = () => {
     }
 
     // Role-based access control (RBAC)
-    // If only ADMIN can view any profile, this is fine.
-    // If managers can view their direct reports, or employees can view their own profile,
-    // this logic needs expansion.
-    if (currentUser?.role !== UserRole.ADMIN && currentUser?.id !== userId) {
-        // Redirect if not admin AND not viewing their own profile
+    // Admins can view any profile. Managers can view profiles within their company. Employees can view their own.
+    const isAuthorized = currentUser?.role === UserRole.ADMIN || 
+                         (currentUser?.id === userId) ||
+                         (currentUser?.role === UserRole.MANAGER && currentUser.companyId === user.companyId);
+
+
+    if (!isAuthorized) {
         return <Navigate to="/" />;
     }
 
@@ -146,7 +150,7 @@ const UserProfile: React.FC = () => {
                                 <div className="flex flex-wrap gap-2">
                                     {user.departmentIds?.map(id => departments[id] ? (
                                         <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">{departments[id].name}</span>
-                                    ) : null)} {/* Add null check for departments[id] */}
+                                    ) : null)} 
                                     {(!user.departmentIds || user.departmentIds.length === 0) && <p className="text-sm text-slate-500">No departments assigned.</p>}
                                 </div>
                             </div>

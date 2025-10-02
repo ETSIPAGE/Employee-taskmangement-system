@@ -19,6 +19,7 @@ export interface LoginCredentials {
 const USERS_KEY = 'ets_users';
 const CURRENT_USER_KEY = 'ets_current_user';
 const TOKEN_KEY = 'ets_token';
+const ORIGINAL_USER_KEY = 'ets_original_user_id';
 
 const getInitialUsers = (): User[] => {
     return [
@@ -175,6 +176,13 @@ const saveUsers = (users: User[]) => {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 };
 
+const nameFromEmail = (email: string): string => {
+    const [namePart] = email.split('@');
+    return namePart.split(/[\._-]/)
+                   .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                   .join(' ');
+};
+
 export const register = async (credentials: RegisterCredentials): Promise<User> => {
     // Step 1: Call the backend API to register the user.
     // The backend API might not handle all fields like role, managerId, etc., directly on signup
@@ -280,42 +288,86 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         throw new Error(responseData.message || 'Invalid email or password.');
     }
     
-    // Step 2: Store the received token.
-    localStorage.setItem(TOKEN_KEY, responseData.token);
+    // Step 2: Extract authoritative data from API response.
+    const { token, role: apiRole, id: apiUserId } = responseData;
 
-    // Step 3: Find or create the user profile in the frontend's local storage.
-    const users = getUsers();
-    let user = users.find(u => u.email === email);
+    if (!apiRole || !Object.values(UserRole).includes(apiRole)) {
+        throw new Error(`Invalid or missing role received from server. Role was: ${apiRole}`);
+    }
+    if (!apiUserId) {
+        throw new Error('User ID was not returned from the server.');
+    }
 
-    if (!user) {
-        // If the user authenticated successfully but doesn't have a local profile, create one.
+    // Step 3: Store the received token.
+    localStorage.setItem(TOKEN_KEY, token);
+
+    // Step 4: Find or create a user in local storage and sync with API data.
+    let users = getUsers();
+    const localUser = users.find(u => u.email === email);
+    
+    let sessionUser: User;
+
+    if (localUser) {
+        const oldId = localUser.id;
+
+        // Deconstruct the existing local user to safely merge with API data.
+        // This ensures the role and ID from the server always override local values.
+        const { id: _, role: __, ...restOfLocalUser } = localUser;
+        
+        sessionUser = {
+            ...restOfLocalUser, // All other details from the local profile
+            id: apiUserId,      // Authoritative ID from the API
+            role: apiRole,      // Authoritative Role from the API
+        };
+        
+        // Find the user in our full list by their OLD ID and update them.
+        const userIndex = users.findIndex(u => u.id === oldId);
+        if (userIndex > -1) {
+            users[userIndex] = sessionUser;
+        }
+
+        // CRITICAL: If the user's ID changed and they are a manager, update employee references.
+        if (oldId !== apiUserId && apiRole === UserRole.MANAGER) {
+            users = users.map(u => {
+                if (u.managerId === oldId) {
+                    return { ...u, managerId: apiUserId };
+                }
+                return u;
+            });
+        }
+        
+        saveUsers(users);
+
+    } else {
+        // User does not exist locally. Create a new profile with data from the API.
         console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
         
-        const nameFromEmail = email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
-        const newUser: User = {
-            id: responseData.userId || `user-${Date.now()}`, // Use ID from API if provided, else generate
-            name: nameFromEmail,
+        const name = nameFromEmail(email);
+        
+        sessionUser = {
+            id: apiUserId, // Use ID from API
+            name: name,
             email: email,
-            role: UserRole.EMPLOYEE, // Default role for dynamically created local user
+            role: apiRole, // Use role from API
             status: 'Active',
             joinedDate: new Date().toISOString(),
             createdAt: new Date().toISOString(), // ADDED: createdAt
             avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png', // Default
         };
-        users.push(newUser);
+        users.push(sessionUser);
         saveUsers(users);
-        user = newUser;
     }
 
-    // Step 4: Set as current user for the session.
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-    return user;
+    // Step 5: Set the corrected user object as the current user for the session.
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(sessionUser));
+    return sessionUser;
 };
+
 
 export const logout = (): void => {
   localStorage.removeItem(CURRENT_USER_KEY);
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(ORIGINAL_USER_KEY);
 };
 
 export const getCurrentUser = (): User | null => {
@@ -335,6 +387,45 @@ export const getToken = (): string | null => {
 export const getUserById = (userId: string): User | undefined => {
     const users = getUsers();
     return users.find(u => u.id === userId);
+};
+
+export const getOriginalUser = (): User | null => {
+    const originalUserId = localStorage.getItem(ORIGINAL_USER_KEY);
+    if (!originalUserId) return null;
+    return getUserById(originalUserId);
+};
+
+export const impersonate = (userId: string): User | null => {
+    const originalUser = getCurrentUser();
+    if (!originalUser) {
+        throw new Error("Cannot impersonate without being logged in.");
+    }
+    if (originalUser.id === userId || originalUser.role !== UserRole.ADMIN) {
+        console.error("Impersonation attempt failed due to invalid permissions or target.");
+        return null;
+    }
+
+    const userToImpersonate = getUserById(userId);
+    if (userToImpersonate) {
+        localStorage.setItem(ORIGINAL_USER_KEY, originalUser.id);
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(userToImpersonate));
+        return userToImpersonate;
+    }
+    return null;
+};
+
+export const stopImpersonating = (): User | null => {
+    const originalUserId = localStorage.getItem(ORIGINAL_USER_KEY);
+    if (!originalUserId) {
+        return null;
+    }
+    const originalUser = getUserById(originalUserId);
+    if (originalUser) {
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(originalUser));
+        localStorage.removeItem(ORIGINAL_USER_KEY);
+        return originalUser;
+    }
+    return null;
 };
 
 export const getTeamMembers = (managerId: string): User[] => {

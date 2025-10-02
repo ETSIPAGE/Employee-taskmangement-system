@@ -2,16 +2,21 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService'; // Ensure this service has async functions
-import { Project, Task, TaskStatus, User, UserRole } from '../../types';
+import { Project, Task, TaskStatus, UserRole } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
+import { EditIcon, TrashIcon } from '../../constants';
+
+interface HydratedTask extends Task {
+    projectName: string;
+}
 
 const EmployeeTasks: React.FC = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
 
-    const [allTasks, setAllTasks] = useState<Task[]>([]);
-    const [projects, setProjects] = useState<Record<string, Project>>({});
+    const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
+    const [projects, setProjects] = useState<Project[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [view, setView] = useState<'card' | 'table'>('card');
 
@@ -20,7 +25,6 @@ const EmployeeTasks: React.FC = () => {
     const [projectFilter, setProjectFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
-    // --- FIX: Make loadData an async function ---
     const loadData = useCallback(async () => {
         if (!user) { // Ensure user is available
             setIsLoading(false);
@@ -28,18 +32,20 @@ const EmployeeTasks: React.FC = () => {
         }
         setIsLoading(true);
         try {
-            // --- FIX: Await the async DataService calls ---
-            const userTasks = await DataService.getTasksByAssignee(user.id);
-            setAllTasks(userTasks);
+            const [userTasks, allProjects] = await Promise.all([
+                DataService.getTasksByAssignee(user.id),
+                DataService.getAllProjects()
+            ]);
+            
+            setProjects(allProjects);
 
-            // Fetch all projects to get their names
-            // --- FIX: Await the async DataService call ---
-            const allProjects = await DataService.getAllProjects();
-            const projectsMap = allProjects.reduce((acc, p) => {
-                acc[p.id] = p;
-                return acc;
-            }, {} as Record<string, Project>);
-            setProjects(projectsMap);
+            const projectsMap = new Map(allProjects.map(p => [p.id, p]));
+            const newHydratedTasks = userTasks.map(task => ({
+                ...task,
+                projectName: projectsMap.get(task.projectId)?.name || 'N/A'
+            }));
+            setHydratedTasks(newHydratedTasks);
+
         } catch (error) {
             console.error("Failed to load task data:", error);
             // Optionally, handle error state for UI
@@ -52,16 +58,16 @@ const EmployeeTasks: React.FC = () => {
         loadData();
     }, [loadData]);
 
-    const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => { // --- FIX: Make async ---
-        const task = allTasks.find(t => t.id === taskId);
+    const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => { 
+        const task = hydratedTasks.find(t => t.id === taskId);
         // Prevent employee from moving a task out of 'On Hold' if a dependency is set
         if(task?.status === TaskStatus.ON_HOLD && task.dependency && newStatus !== TaskStatus.ON_HOLD) {
             alert("This task cannot be taken off hold until its dependency is cleared by a manager.");
             return;
         }
-        // --- FIX: Await the async DataService call ---
         try {
-            await DataService.updateTask(taskId, { status: newStatus });
+            // Assuming updateTask takes taskId, updatedFields, and updaterId
+            await DataService.updateTask(taskId, { status: newStatus }, user?.id); 
             loadData(); // Reload data after successful update
         } catch (error) {
             console.error("Failed to update task status:", error);
@@ -70,16 +76,14 @@ const EmployeeTasks: React.FC = () => {
     };
 
     const filteredTasks = useMemo(() => {
-        return allTasks.filter(task => {
+        return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && statusMatch;
         });
-    }, [allTasks, searchTerm, projectFilter, statusFilter]);
+    }, [hydratedTasks, searchTerm, projectFilter, statusFilter]);
     
-    const uniqueProjectIds = useMemo(() => [...new Set(allTasks.map(t => t.projectId))], [allTasks]);
-
     if (!user || user.role !== UserRole.EMPLOYEE) {
         return <Navigate to="/" />;
     }
@@ -108,7 +112,7 @@ const EmployeeTasks: React.FC = () => {
                     />
                     <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Projects</option>
-                        {uniqueProjectIds.map(id => projects[id] && <option key={id} value={id}>{projects[id].name}</option>)}
+                        {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Statuses</option>
@@ -118,17 +122,21 @@ const EmployeeTasks: React.FC = () => {
             </div>
 
             {/* Conditional rendering for empty state */}
-            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500">No tasks found matching the current filters.</p>}
-
-            {view === 'card' ? (
+            {filteredTasks.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 col-span-full">
+                    <h3 className="text-xl font-semibold text-slate-700">No Tasks Found</h3>
+                    <p className="text-slate-500 mt-2">You have no tasks matching the current filters, or there was an issue fetching them.</p>
+                </div>
+            ) : view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredTasks.map(task => (
                     <TaskCard
                             key={task.id}
                             task={task}
-                            employees={[]} // Not needed for employee view - kept as is
+                            employees={[]} // Not needed for employee view
                             onStatusChange={handleStatusChange}
-                            projectName={projects[task.projectId]?.name}
+                            projectName={task.projectName}
+                            assigneeName={user.name}
                         />
                     ))}
                 </div>
@@ -139,33 +147,63 @@ const EmployeeTasks: React.FC = () => {
                             <tr>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Task</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignee</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Due Date</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredTasks.map(task => (
-                                <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-slate-800">{task.name}</td>
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{projects[task.projectId]?.name}</td>
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
+                            {filteredTasks.map(task => {
+                                const statusStyles = {
+                                    [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800',
+                                    [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
+                                    [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800',
+                                    [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
+                                };
+                                return (
+                                <tr key={task.id} className="group cursor-pointer hover:bg-slate-50 transition-colors">
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800" onClick={() => navigate(`/tasks/${task.id}`)}>{task.name}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{user?.name}</td> {/* Use optional chaining for user?.name */}
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <select 
                                             value={task.status}
                                             onClick={(e) => e.stopPropagation()} // Prevent row click when clicking select
-                                            onChange={async (e) => await handleStatusChange(task.id, e.target.value as TaskStatus)} // --- FIX: Await handleStatusChange ---
+                                            onChange={async (e) => await handleStatusChange(task.id, e.target.value as TaskStatus)} 
                                             className="text-sm border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
                                         >
                                             {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                         </select>
+                                        {/* The span below is redundant if using a select for status display */}
+                                        {/* <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>
+                                            {task.status}
+                                        </span> */}
+                                    </td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
+                                        <div className="flex items-center space-x-3">
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    navigate(`/tasks/${task.id}`);
+                                                }} 
+                                                className="text-slate-500 hover:text-indigo-600"
+                                                title="View Task Details"
+                                            >
+                                                <EditIcon className="w-5 h-5" />
+                                            </button>
+                                            <button disabled className="text-slate-300 cursor-not-allowed" title="Delete disabled">
+                                                <TrashIcon className="w-5 h-5" />
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
-                            ))}
+                            )})}
                         </tbody>
                     </table>
                 </div>
             )}
-            {/* Moved this empty state message to be conditional with the main filteredTasks check */}
         </div>
     );
 };

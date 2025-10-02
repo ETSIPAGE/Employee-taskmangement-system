@@ -20,7 +20,7 @@ const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazo
 // based on your existing usage in handleSaveProject and handleUpdateMilestoneStatus.
 // If your backend *does* require the ID in the URL path (e.g., /updt-project/{id}),
 // you would need to adjust the fetch URL like: PROJECTS_UPDATE_BASE_URL.replace('{id}', projectId)
-const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project/{id}';
+const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project';
 
 
 export interface ProjectDisplayData extends Project {
@@ -96,6 +96,7 @@ const Projects: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
+ 
             const token = AuthService.getToken();
 
             const projectsResponse = await fetch(PROJECTS_GET_ALL_API_URL, {
@@ -126,24 +127,25 @@ const Projects: React.FC = () => {
             console.log(`[Projects] Fetched ${allProjects.length} raw projects.`);
 
             const [allUsers, managerList, depts, allCompanies] = await Promise.all([
-                AuthService.getUsers(),
-                AuthService.getManagers(),
+                DataService.getUsers(), // Corrected from AuthService.getUsers()
+                DataService.getManagers(), // Corrected from AuthService.getManagers()
                 DataService.getDepartments(),
                 DataService.getCompanies()
             ]);
-
+            
             setDepartments(depts);
             setCompanies(allCompanies);
             setManagers(managerList);
 
             // Set initial manager/company for new project if not already set
-            if (!assignedManagerId && managerList.length > 0) {
+            if (managerList.length > 0) {
                 setAssignedManagerId(user?.id || managerList[0].id);
             }
             if (!newProjectCompanyId && allCompanies.length > 0) {
                 setNewProjectCompanyId(allCompanies[0].id);
             }
 
+ 
             const projectsWithDetails: ProjectDisplayData[] = await Promise.all(
                 allProjects.map(async (p) => {
                     const cleanedManagerId = p.managerId ? String(p.managerId).trim() : '';
@@ -223,6 +225,7 @@ const Projects: React.FC = () => {
             );
 
             projectsWithDetails.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+ 
 
             setProjects(projectsWithDetails);
         } catch (error) {
@@ -231,7 +234,7 @@ const Projects: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [user, showToast, assignedManagerId, newProjectCompanyId]);
+    }, [user, showToast, newProjectCompanyId]); // removed assignedManagerId from dependency array to prevent unnecessary re-runs
 
     useEffect(() => {
         let isMounted = true;
@@ -372,7 +375,7 @@ const Projects: React.FC = () => {
                 console.log('Attempting to update project. URL:', PROJECTS_UPDATE_BASE_URL);
                 console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
 
-                const response = await fetch(PROJECTS_UPDATE_BASE_URL, {
+                const response = await fetch(`${PROJECTS_UPDATE_BASE_URL}/${editingProject.id}`, { // Include ID in path for PUT
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -527,7 +530,7 @@ const Projects: React.FC = () => {
                 // Using PROJECTS_UPDATE_BASE_URL as is, assuming backend expects ID in body.
                 // If backend requires ID in URL path (e.g., /updt-project/some-id),
                 // you would change this to: PROJECTS_UPDATE_BASE_URL.replace('{id}', projectId)
-                PROJECTS_UPDATE_BASE_URL,
+                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`, // Corrected to include ID in path
                 {
                     method: 'PUT',
                     headers: {
@@ -610,7 +613,7 @@ const Projects: React.FC = () => {
             console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
 
             const response = await fetch(
-                PROJECTS_UPDATE_BASE_URL,
+                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`, // Corrected to include ID in path
                 {
                     method: 'PUT',
                     headers: {

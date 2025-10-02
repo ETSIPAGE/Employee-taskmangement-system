@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Integration Status</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 30px;
+            margin: 20px 0;
+        }
+        h1, h2 {
+            color: #2d3748;
+        }
+        .btn {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 10px 5px;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background-color: #4338ca;
+        }
+        .btn-success {
+            background-color: #10b981;
+        }
+        .btn-success:hover {
+            background-color: #059669;
+        }
+        .btn-warning {
+            background-color: #f59e0b;
+        }
+        .btn-warning:hover {
+            background-color: #d97706;
+        }
+        .status-card {
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+        }
+        .status-connected {
+            background-color: #dcfce7;
+            border-left: 4px solid #22c55e;
+        }
+        .status-disconnected {
+            background-color: #fee2e2;
+            border-left: 4px solid #ef4444;
+        }
+        .status-pending {
+            background-color: #ffedd5;
+            border-left: 4px solid #f59e0b;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 12px;
+        }
+        .indicator-connected {
+            background-color: #22c55e;
+        }
+        .indicator-disconnected {
+            background-color: #ef4444;
+        }
+        .indicator-pending {
+            background-color: #f59e0b;
+        }
+        .api-section {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 6px;
+            background-color: #f8fafc;
+        }
+        .result {
+            margin: 15px 0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            display: none;
+        }
+        .success {
+            background-color: #dcfce7;
+            border-left: 4px solid #22c55e;
+            color: #166534;
+        }
+        .error {
+            background-color: #fee2e2;
+            border-left: 4px solid #ef4444;
+            color: #991b1b;
+        }
+        .info {
+            background-color: #dbeafe;
+            border-left: 4px solid #3b82f6;
+            color: #1e40af;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 API Integration Status</h1>
+        <p>Current status of all integrated APIs in the system.</p>
+        
+        <div class="api-section">
+            <h2>📊 API Status Overview</h2>
+            
+            <div id="roleApiStatus" class="status-card status-pending">
+                <div class="status-indicator indicator-pending"></div>
+                <div>
+                    <h3>Role API</h3>
+                    <p>https://xo3txgkwkb.execute-api.ap-south-1.amazonaws.com/prod</p>
+                    <p id="roleApiStatusText">Checking connection...</p>
+                </div>
+            </div>
+            
+            <div id="companyApiStatus" class="status-card status-pending">
+                <div class="status-indicator indicator-pending"></div>
+                <div>
+                    <h3>Company API</h3>
+                    <p>https://mjtdslnlpl.execute-api.ap-south-1.amazonaws.com/prod/companies</p>
+                    <p id="companyApiStatusText">Checking connection...</p>
+                </div>
+            </div>
+            
+            <div id="departmentApiStatus" class="status-card status-pending">
+                <div class="status-indicator indicator-pending"></div>
+                <div>
+                    <h3>Department API</h3>
+                    <p>https://jdq9lmtoth.execute-api.ap-south-1.amazonaws.com/departments</p>
+                    <p id="departmentApiStatusText">Checking connection...</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="api-section">
+            <h2>🔧 Integration Actions</h2>
+            <button id="testAllBtn" class="btn">🚀 Test All APIs</button>
+            <button id="configureAuthBtn" class="btn btn-success">🔒 Configure Authentication</button>
+            <button id="clearResultsBtn" class="btn btn-warning">🗑️ Clear Results</button>
+        </div>
+        
+        <div id="result" class="result"></div>
+    </div>
+
+    <script type="module">
+        // DOM elements
+        const testAllBtn = document.getElementById('testAllBtn');
+        const configureAuthBtn = document.getElementById('configureAuthBtn');
+        const clearResultsBtn = document.getElementById('clearResultsBtn');
+        const resultDiv = document.getElementById('result');
+        const roleApiStatus = document.getElementById('roleApiStatus');
+        const companyApiStatus = document.getElementById('companyApiStatus');
+        const departmentApiStatus = document.getElementById('departmentApiStatus');
+        const roleApiStatusText = document.getElementById('roleApiStatusText');
+        const companyApiStatusText = document.getElementById('companyApiStatusText');
+        const departmentApiStatusText = document.getElementById('departmentApiStatusText');
+        
+        // Update status indicators
+        function updateStatus(element, status, text) {
+            element.className = `status-card status-${status}`;
+            const indicator = element.querySelector('.status-indicator');
+            indicator.className = `status-indicator indicator-${status}`;
+            const statusText = element.querySelector('p:last-child');
+            statusText.textContent = text;
+        }
+        
+        // Test all APIs
+        testAllBtn.addEventListener('click', async () => {
+            showResult('🚀 Testing all APIs...\n', 'info');
+            
+            // Test Role API
+            try {
+                roleApiStatusText.textContent = 'Testing...';
+                updateStatus(roleApiStatus, 'pending', 'Testing...');
+                
+                // Try to import and test the browser-compatible API service
+                const { apiService } = await import('./services/apiService.browser.js');
+                
+                const roleResult = await apiService.testRoleAPI();
+                if (roleResult.success) {
+                    updateStatus(roleApiStatus, 'connected', 'Connected successfully');
+                    showResult(`✅ Role API: Connected\nEndpoint: ${roleResult.endpoint}\n`, 'success', true);
+                } else {
+                    updateStatus(roleApiStatus, 'disconnected', `Failed: ${roleResult.error}`);
+                    showResult(`❌ Role API: ${roleResult.error}\n`, 'error', true);
+                }
+            } catch (error) {
+                updateStatus(roleApiStatus, 'disconnected', `Error: ${error.message}`);
+                showResult(`❌ Role API Error: ${error.message}\n`, 'error', true);
+            }
+            
+            // Test Company API
+            try {
+                companyApiStatusText.textContent = 'Testing...';
+                updateStatus(companyApiStatus, 'pending', 'Testing...');
+                
+                const { apiService } = await import('./services/apiService.browser.js');
+                
+                const companyResult = await apiService.testAPI();
+                if (companyResult.success) {
+                    updateStatus(companyApiStatus, 'connected', 'Connected successfully');
+                    showResult(`✅ Company API: Connected\nEndpoint: ${companyResult.endpoint}\n`, 'success', true);
+                } else {
+                    updateStatus(companyApiStatus, 'disconnected', `Failed: ${companyResult.error}`);
+                    showResult(`❌ Company API: ${companyResult.error}\n`, 'error', true);
+                }
+            } catch (error) {
+                updateStatus(companyApiStatus, 'disconnected', `Error: ${error.message}`);
+                showResult(`❌ Company API Error: ${error.message}\n`, 'error', true);
+            }
+            
+            // Test Department API
+            try {
+                departmentApiStatusText.textContent = 'Testing...';
+                updateStatus(departmentApiStatus, 'pending', 'Testing...');
+                
+                const { apiService } = await import('./services/apiService.browser.js');
+                
+                const departmentResult = await apiService.testDepartmentAPI();
+                if (departmentResult.success) {
+                    updateStatus(departmentApiStatus, 'connected', 'Connected successfully');
+                    showResult(`✅ Department API: Connected\nEndpoint: ${departmentResult.endpoint}\n`, 'success', true);
+                } else {
+                    updateStatus(departmentApiStatus, 'disconnected', `Failed: ${departmentResult.error}`);
+                    showResult(`❌ Department API: ${departmentResult.error}\n`, 'error', true);
+                }
+            } catch (error) {
+                updateStatus(departmentApiStatus, 'disconnected', `Error: ${error.message}`);
+                showResult(`❌ Department API Error: ${error.message}\n`, 'error', true);
+            }
+        });
+        
+        // Configure authentication
+        configureAuthBtn.addEventListener('click', () => {
+            // Redirect to the authentication configuration page
+            window.location.href = 'configure-role-api.html';
+        });
+        
+        // Clear results
+        clearResultsBtn.addEventListener('click', () => {
+            resultDiv.style.display = 'none';
+            resultDiv.textContent = '';
+        });
+        
+        // Helper function to show results
+        function showResult(message, type, append = false) {
+            if (append && resultDiv.style.display === 'block') {
+                resultDiv.textContent += message;
+            } else {
+                resultDiv.textContent = message;
+            }
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+        }
+        
+        // Initialize status checks
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check if we have saved authentication
+            const savedApiKey = localStorage.getItem('role_api_key');
+            const savedBearerToken = localStorage.getItem('role_bearer_token');
+            
+            if (savedApiKey || savedBearerToken) {
+                roleApiStatusText.textContent = 'Authentication configured - ready to test';
+                updateStatus(roleApiStatus, 'pending', 'Authentication configured - ready to test');
+            } else {
+                roleApiStatusText.textContent = 'Authentication required';
+                updateStatus(roleApiStatus, 'disconnected', 'Authentication required');
+            }
+            
+            // Company and Department APIs don't require authentication in this setup
+            companyApiStatusText.textContent = 'Ready to test';
+            updateStatus(companyApiStatus, 'pending', 'Ready to test');
+            
+            departmentApiStatusText.textContent = 'Ready to test';
+            updateStatus(departmentApiStatus, 'pending', 'Ready to test');
+        });
+    </script>
+</body>
+</html>

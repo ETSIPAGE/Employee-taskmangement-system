@@ -1,214 +1,264 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
-import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
+import * as DataService from '../../services/dataService';
 import { Project, Task, TaskStatus, User, UserRole, Department } from '../../types';
-import Modal from '../shared/Modal';
-import Button from '../shared/Button';
-import Input from '../shared/Input';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import { EditIcon, TrashIcon } from '../../constants';
+import Button from '../shared/Button';
+import Modal from '../shared/Modal';
+import Input from '../shared/Input';
 
-const AdminTasks: React.FC = () => {
-    const { user } = useAuth(); // Get the current logged-in user
+interface HydratedTask extends Task {
+    projectName: string;
+    assigneeName: string;
+}
+
+export default function AdminTasks() {
+    const { user } = useAuth();
     const navigate = useNavigate();
 
-    const [allTasks, setAllTasks] = useState<Task[]>([]);
+    const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
     const [allEmployees, setAllEmployees] = useState<User[]>([]);
     const [allProjects, setAllProjects] = useState<Project[]>([]);
-    const [departments, setDepartments] = useState<Department[]>([]);
     
     const [isLoading, setIsLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [view, setView] = useState<'card' | 'table'>('card');
+    
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [apiDepartments, setApiDepartments] = useState<Department[]>([]);
+    const [apiProjects, setApiProjects] = useState<Project[]>([]);
+    const [dropdownsLoading, setDropdownsLoading] = useState(false);
+    const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
+    const [newTaskData, setNewTaskData] = useState({
+        department: '', // Storing department name/ID temporarily for selection
+        project: '', // Project ID
+        title: '',
+        description: '',
+        due_date: '',
+        priority: 'medium' as 'low' | 'medium' | 'high',
+        est_time: '',
+        assign_to: '' // Assignee User ID
+    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState('');
 
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
     const [projectFilter, setProjectFilter] = useState('all');
     const [assigneeFilter, setAssigneeFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
+    const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-    // Form state
-    const [taskName, setTaskName] = useState('');
-    const [taskDesc, setTaskDesc] = useState('');
-    const [taskDueDate, setTaskDueDate] = useState('');
-    const [assigneeId, setAssigneeId] = useState<string | undefined>(undefined);
-    const [departmentId, setDepartmentId] = useState('');
-    const [projectId, setProjectId] = useState<string>('');
-    const [taskStatus, setTaskStatus] = useState<TaskStatus>(TaskStatus.TODO);
-    const [taskPriority, setTaskPriority] = useState<'low' | 'medium' | 'high'>('medium');
-    const [taskEstTime, setTaskEstTime] = useState('');
 
     const loadData = useCallback(async () => {
-        // Ensure user is defined before proceeding, or handle unauthorized state
-        if (!user) {
-            setIsLoading(false);
-            return;
-        }
-        if (user.role !== UserRole.ADMIN) { // Ensure only admin can load data for this component
-            setIsLoading(false);
-            return;
-        }
-
+        if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const allUsers = await AuthService.getUsers();
-            const employees = allUsers.filter(u => u.role === UserRole.EMPLOYEE);
-            setAllEmployees(employees);
-
-            // FIX: Await DataService.getAllProjects() - This was already fixed in your code.
-            const projects = await DataService.getAllProjects(); 
-            setAllProjects(projects);
-
-            // FIX: Await DataService.getTasksByTeam - Ensure this is correctly fetching based on allUsers
-            const tasks = await DataService.getTasksByTeam(allUsers.map(u => u.id));
-            setAllTasks(tasks);
-
-            const depts = await DataService.getDepartments();
-            setDepartments(depts);
+            const [tasks, projects, allUsersFromApi, departments] = await Promise.all([
+                DataService.getTasks(), // Assuming getTasks fetches all tasks
+                DataService.getAllProjects(),
+                AuthService.getUsers(), // Assuming getUsers fetches all users
+                DataService.getDepartments() // Fetch departments
+            ]);
             
+            setAllProjects(projects);
+            setApiDepartments(departments); // For the create/edit modal
+            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
+            setAllEmployees(employees);
+            
+            const projectsMap = new Map(projects.map(p => [p.id, p]));
+            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
+    
+            const newHydratedTasks = tasks.map(task => ({
+                ...task,
+                projectName: projectsMap.get(task.projectId)?.name || 'N/A',
+                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+            }));
+            setHydratedTasks(newHydratedTasks);
         } catch (error) {
             console.error("Failed to load admin task data:", error);
         } finally {
             setIsLoading(false);
         }
-    }, [user]); // `user` is correctly a dependency here.
+    }, [user]);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
 
     const resetForm = useCallback(() => {
-        setTaskName('');
-        setTaskDesc('');
-        setTaskDueDate('');
-        setAssigneeId(undefined);
-        setDepartmentId('');
-        setProjectId('');
-        setTaskStatus(TaskStatus.TODO);
+        setNewTaskData({
+            department: '',
+            project: '',
+            title: '',
+            description: '',
+            due_date: '',
+            priority: 'medium',
+            est_time: '',
+            assign_to: allEmployees.length > 0 ? allEmployees[0].id : ''
+        });
         setEditingTask(null);
-        setTaskPriority('medium');
-        setTaskEstTime('');
-    }, []);
+        setSubmitError('');
+    }, [allEmployees]);
 
-    const handleOpenCreateModal = () => {
+    const handleOpenModal = () => {
         resetForm();
-        // Set default project/department if available
-        if (departments.length > 0) setDepartmentId(departments[0].id);
-        if (allProjects.length > 0) setProjectId(allProjects[0].id);
         setIsModalOpen(true);
     };
     
     const handleOpenEditModal = (task: Task) => {
         setEditingTask(task);
-        setTaskName(task.name);
-        setTaskDesc(task.description || '');
-        setTaskDueDate(task.dueDate || '');
-        setAssigneeId(task.assigneeId);
-        setProjectId(task.projectId);
-        
-        const project = allProjects.find(p => p.id === task.projectId);
-        if (project && project.departmentIds.length > 0) {
-            setDepartmentId(project.departmentIds[0]);
-        } else {
-            setDepartmentId('');
-        }
-
-        setTaskStatus(task.status);
-        setTaskPriority(task.priority || 'medium');
-        setTaskEstTime(task.estimatedTime?.toString() || '');
+        // Pre-fill form with task data
+        setNewTaskData({
+            department: allProjects.find(p => p.id === task.projectId)?.departmentIds[0] || '', // Assuming project has one department
+            project: task.projectId,
+            title: task.name,
+            description: task.description || '',
+            due_date: task.dueDate || '',
+            priority: task.priority || 'medium',
+            est_time: task.estimatedTime ? String(task.estimatedTime) : '',
+            assign_to: task.assigneeId || ''
+        });
         setIsModalOpen(true);
     };
-
+    
     const handleCloseModal = () => {
         setIsModalOpen(false);
-        resetForm();
+        resetForm(); // Reset form state when closing modal
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    useEffect(() => {
+        if (isModalOpen && !editingTask) { // Only fetch dropdowns when creating a new task and modal opens
+            const fetchDropdownData = async () => {
+                setDropdownsLoading(true);
+                try {
+                    const [depts, projs] = await Promise.all([
+                        DataService.getDepartments(),
+                        DataService.getAllProjects()
+                    ]);
+                    setApiDepartments(depts);
+                    setApiProjects(projs);
+                     if (depts.length > 0 && !newTaskData.department) {
+                        setNewTaskData(prev => ({ ...prev, department: depts[0].id })); // Store ID
+                    }
+                    if (projs.length > 0 && !newTaskData.project) {
+                        setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
+                    }
+                } catch (error) {
+                    console.error("Failed to fetch dropdown data:", error);
+                } finally {
+                    setDropdownsLoading(false);
+                }
+            };
+            fetchDropdownData();
+        }
+    }, [isModalOpen, editingTask, newTaskData.department, newTaskData.project]);
+    
+     useEffect(() => {
+        if (allEmployees.length > 0 && !newTaskData.assign_to && !editingTask) { // Only set default if not editing
+            setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
+        }
+    }, [allEmployees, newTaskData.assign_to, editingTask]);
+
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        const { name, value } = e.target;
+        setNewTaskData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleCreateUpdateTask = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!taskName.trim() || !projectId) {
-            alert('Task Title and Project are required.');
+        if (!user) {
+            setSubmitError('You must be logged in to save a task.');
             return;
         }
-        // Ensure user is logged in and available
-        if (!user?.id) {
-            alert('Creator ID not available. Please log in.');
+        if (!user.id) {
+            setSubmitError('Creator ID not available. Please log in.');
+            return;
+        }
+        if (!newTaskData.title.trim() || !newTaskData.project) {
+            setSubmitError('Task title and project are required.');
             return;
         }
 
-        const taskData: Omit<Task, 'id'> = { // Explicitly type to catch missing properties
-            creatorId: user.id, // <--- FIX: Add creatorId here
-            name: taskName,
-            description: taskDesc,
-            dueDate: taskDueDate,
-            projectId: projectId,
-            assigneeId: assigneeId,
-            status: taskStatus,
-            priority: taskPriority,
-            estimatedTime: taskEstTime ? parseInt(taskEstTime, 10) : undefined,
-            // Add other properties that are part of Omit<Task, 'id'> if they are required and not optional
-            // e.g., category: '', tags: [], notes: [], dependencyLogs: [],
+        setSubmitError('');
+        setIsSubmitting(true);
+
+        const taskPayload = {
+            name: newTaskData.title,
+            description: newTaskData.description,
+            dueDate: newTaskData.due_date || undefined,
+            projectId: newTaskData.project,
+            assigneeId: newTaskData.assign_to || undefined,
+            status: editingTask?.status || TaskStatus.TODO, // Keep existing status if editing, else default
+            priority: newTaskData.priority,
+            estimatedTime: newTaskData.est_time ? parseInt(newTaskData.est_time, 10) : undefined,
+            creatorId: user.id // creatorId for new tasks, or for audit log on update
         };
 
         try {
             if (editingTask) {
-                // When editing, creatorId is already part of the existing task.
-                // You only pass the partial updates.
-                await DataService.updateTask(editingTask.id, taskData); // taskData is Partial<Task> for update
+                // For update, we only send the changed fields
+                await DataService.updateTask(editingTask.id, taskPayload, user.id); 
             } else {
-                await DataService.createTask(taskData);
+                await DataService.createTask(taskPayload);
             }
             
             loadData();
             handleCloseModal();
         } catch (error) {
             console.error("Failed to save task:", error);
-            alert('Failed to save task. Please try again.');
+            setSubmitError(`Failed to save task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsSubmitting(false);
         }
     };
     
-    const handleDeleteTask = async (taskId: string) => {
-        if(window.confirm("Are you sure you want to delete this task?")) {
-            try {
-                await DataService.deleteTask(taskId);
-                loadData();
-            } catch (error) {
-                console.error("Failed to delete task:", error);
-                alert('Failed to delete task. Please try again.');
-            }
-        }
-    };
-    
-    const handleAssigneeChange = async (taskId: string, newAssigneeId?: string) => {
-        try {
-            await DataService.updateTask(taskId, { assigneeId: newAssigneeId });
-            loadData();
-        } catch (error) {
-            console.error("Failed to update assignee:", error);
-            alert('Failed to update assignee. Please try again.');
+    const handleRequestDelete = (taskId: string) => {
+        const task = hydratedTasks.find(t => t.id === taskId);
+        if (task) {
+            setTaskToDelete({ id: task.id, name: task.name });
         }
     };
 
+    const handleConfirmDelete = async () => {
+        if (!taskToDelete || !user) return;
+        try {
+            await DataService.deleteTask(taskToDelete.id, user.id);
+            loadData();
+        } catch (error) {
+            console.error("Failed to delete task:", error);
+            alert(`Failed to delete task: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setTaskToDelete(null);
+        }
+    };
+
+    const filteredProjectsByDepartment = useMemo(() => {
+        const selectedDepartmentId = newTaskData.department; 
+        
+        if (!selectedDepartmentId) {
+            return apiProjects; // If no department selected or found, show all projects
+        }
+
+        // Filter projects by department ID
+        return apiProjects.filter(p => p.departmentIds.includes(selectedDepartmentId)); 
+    }, [apiProjects, newTaskData.department]);
+
+
     const filteredTasks = useMemo(() => {
-        return allTasks.filter(task => {
+        return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
-    }, [allTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
-
-    const availableProjects = useMemo(() => {
-        if (!departmentId) return allProjects; 
-        return allProjects.filter(p => p.departmentIds.includes(departmentId));
-    }, [allProjects, departmentId]);
-
-    const getProjectName = (pId: string) => allProjects.find(p => p.id === pId)?.name;
+    }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
+ 
 
     if (user?.role !== UserRole.ADMIN) {
         return <Navigate to="/" />;
@@ -222,7 +272,7 @@ const AdminTasks: React.FC = () => {
         <div>
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-slate-800">All Tasks</h1>
-                <Button onClick={handleOpenCreateModal}>Create New Task</Button>
+                <Button onClick={handleOpenModal}>Create New Task</Button>
             </div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <div className="w-full md:w-auto md:flex-1"></div>
@@ -255,19 +305,21 @@ const AdminTasks: React.FC = () => {
                 </div>
             </div>
 
-            {filteredTasks.length === 0 && <p className="text-center py-8 text-slate-500 col-span-full">No tasks match the current filters.</p>}
-
-            {view === 'card' ? (
+            {filteredTasks.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 col-span-full">
+                    <h3 className="text-xl font-semibold text-slate-700">No Tasks Found</h3>
+                    <p className="text-slate-500 mt-2">No tasks were found or there was an issue fetching them.</p>
+                </div>
+            ) : view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                     {filteredTasks.map(task => (
                     <TaskCard
                             key={task.id}
                             task={task}
-                            employees={allEmployees}
-                            onAssigneeChange={handleAssigneeChange}
-                            onDelete={handleDeleteTask}
-                            onEdit={handleOpenEditModal}
-                            projectName={getProjectName(task.projectId)}
+                            assigneeName={task.assigneeName}
+                            projectName={task.projectName}
+                            onDelete={handleRequestDelete}
+                            onEdit={() => handleOpenEditModal(task)} // Pass the task to the edit handler
                         />
                     ))}
                 </div>
@@ -286,24 +338,43 @@ const AdminTasks: React.FC = () => {
                         </thead>
                         <tbody>
                             {filteredTasks.map(task => {
-                                const assignee = allEmployees.find(e => e.id === task.assigneeId);
                                 const statusStyles = {
-                                    [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800', [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
-                                    [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
+                                    [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800', 
+                                    [TaskStatus.IN_PROGRESS]: 'bg-blue-100 text-blue-800',
+                                    [TaskStatus.ON_HOLD]: 'bg-slate-100 text-slate-800', 
+                                    [TaskStatus.COMPLETED]: 'bg-green-100 text-green-800',
                                 };
                                 return (
-                                    <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-slate-800">{task.name}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{getProjectName(task.projectId)}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{assignee?.name || 'Unassigned'}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
+                                    <tr key={task.id} className="group cursor-pointer hover:bg-slate-50 transition-colors">
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800" onClick={() => navigate(`/tasks/${task.id}`)}>{task.name}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
                                         </td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <div className="flex items-center space-x-3">
-                                                <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(task); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
-                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleOpenEditModal(task);
+                                                    }} 
+                                                    className="text-slate-500 hover:text-indigo-600"
+                                                    title="Edit Task"
+                                                >
+                                                    <EditIcon className="w-5 h-5" />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleRequestDelete(task.id);
+                                                    }}
+                                                    className="text-slate-500 hover:text-red-600"
+                                                    title="Delete Task"
+                                                >
+                                                    <TrashIcon className="w-5 h-5" />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -315,73 +386,77 @@ const AdminTasks: React.FC = () => {
             )}
             
             <Modal title={editingTask ? "Edit Task" : "Create New Task"} isOpen={isModalOpen} onClose={handleCloseModal}>
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleCreateUpdateTask} className="space-y-4">
+                    {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
+                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
                     <div>
-                        <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
-                        <select id="department" value={departmentId} onChange={e => {
-                            setDepartmentId(e.target.value);
-                            setProjectId('');
-                        }} required
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                            <option value="">Select a Department</option>
-                            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                        </select>
+                        <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
+                        <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
+                            className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        />
                     </div>
-
-                    <div>
-                        <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
-                        <select id="project" value={projectId} onChange={e => setProjectId(e.target.value)} required
-                            disabled={!departmentId}
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
-                            <option value="">Select a Project</option>
-                            {availableProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
+                            <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                <option value="">Select Department</option> {/* Added default option */}
+                                {dropdownsLoading ? <option>Loading...</option> : 
+                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
+                            <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                <option value="">Select Project</option> {/* Added default option */}
+                                {dropdownsLoading ? <option>Loading...</option> : 
+                                 filteredProjectsByDepartment.length > 0 ? filteredProjectsByDepartment.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found for selected department</option>}
+                            </select>
+                        </div>
                     </div>
-
-                    <Input id="taskName" type="text" label="Task Title" value={taskName} onChange={e => setTaskName(e.target.value)} required />
-
-                    <div>
-                        <label htmlFor="taskDescription" className="block text-sm font-medium text-slate-700">Description</label>
-                        <textarea id="taskDescription" rows={3} value={taskDesc} onChange={e => setTaskDesc(e.target.value)} className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm" />
-                    </div>
-                    <Input id="dueDate" type="date" label="Due Date" value={taskDueDate} onChange={e => setTaskDueDate(e.target.value)} />
-                    
-                    <div className="grid grid-cols-2 gap-4">
+                    <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" value={taskPriority} onChange={e => setTaskPriority(e.target.value as 'low' | 'medium' | 'high')} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
                                 <option value="high">High</option>
                             </select>
                         </div>
-                        <Input id="estTime" type="number" label="Est. Time (hours)" value={taskEstTime} onChange={e => setTaskEstTime(e.target.value)} min="0" />
+                        <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
                     </div>
-
                     <div>
-                        <label htmlFor="assignee" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assignee" value={assigneeId || ''} onChange={e => setAssigneeId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                        <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
+                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                             <option value="">Unassigned</option>
-                            {allEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                            {allEmployees.map(employee => (
+                                <option key={employee.id} value={employee.id}>{employee.name}</option>
+                            ))}
                         </select>
                     </div>
-
-                    {editingTask && (
-                        <div>
-                             <label htmlFor="status" className="block text-sm font-medium text-slate-700">Status</label>
-                             <select id="status" value={taskStatus} onChange={e => setTaskStatus(e.target.value as TaskStatus)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                                {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                        </div>
-                    )}
                     <div className="pt-4 flex justify-end space-x-3">
-                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 shadow-sm">Cancel</button>
-                        <Button type="submit">{editingTask ? "Update Task" : "Create Task"}</Button>
+                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                            Cancel
+                        </button>
+                        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Saving...' : (editingTask ? 'Update Task' : 'Create Task')}</Button>
                     </div>
                 </form>
             </Modal>
+            <Modal
+                isOpen={!!taskToDelete}
+                onClose={() => setTaskToDelete(null)}
+                title="Confirm Task Deletion"
+            >
+                <p className="text-slate-600">
+                    Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
+                </p>
+                <div className="pt-4 flex justify-end space-x-3">
+                    <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        Cancel
+                    </button>
+                    <Button onClick={handleConfirmDelete}>Delete Task</Button>
+                </div>
+            </Modal>
         </div>
     );
-};
-
-export default AdminTasks;
+}

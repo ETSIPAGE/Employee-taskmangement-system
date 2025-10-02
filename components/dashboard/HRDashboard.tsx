@@ -44,20 +44,26 @@ const HRDashboard: React.FC = () => {
     const [recentSubmissions, setRecentSubmissions] = useState<OnboardingSubmission[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadData = useCallback(() => {
+    // FIX: Made loadData async to await fetching projects. Added try/catch/finally for robust loading and error handling.
+    const loadData = useCallback(async () => {
         setIsLoading(true);
-        const employees = AuthService.getUsers();
-        const projects = DataService.getAllProjects();
-        const submissions = DataService.getOnboardingSubmissions();
-
-        setStats({
-            totalEmployees: employees.length,
-            totalProjects: projects.length,
-            totalSubmissions: submissions.length,
-        });
-
-        setRecentSubmissions(submissions.slice(0, 5));
-        setIsLoading(false);
+        try {
+            const employees = AuthService.getUsers();
+            const projects = await DataService.getAllProjects();
+            const submissions = DataService.getOnboardingSubmissions();
+    
+            setStats({
+                totalEmployees: employees.length,
+                totalProjects: projects.length,
+                totalSubmissions: submissions.length,
+            });
+    
+            setRecentSubmissions(submissions.slice(0, 5));
+        } catch (error) {
+            console.error("Failed to load HR dashboard data:", error);
+        } finally {
+            setIsLoading(false);
+        }
     }, []);
 
     useEffect(() => {

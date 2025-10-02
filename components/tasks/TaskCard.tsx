@@ -1,17 +1,15 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Task, TaskStatus, User } from '../../types';
-import { ClockIcon, EditIcon, TrashIcon, BriefcaseIcon, LinkIcon } from '../../constants';
+import { ClockIcon, EditIcon, TrashIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
 
 const TaskCard: React.FC<{
     task: Task;
-    employees: User[];
     projectName?: string;
-    onAssigneeChange?: (taskId: string, newAssigneeId?: string) => void;
-    onStatusChange?: (taskId:string, newStatus: TaskStatus) => void;
+    assigneeName?: string;
     onDelete?: (taskId: string) => void;
     onEdit?: (task: Task) => void;
-}> = ({ task, employees, projectName, onAssigneeChange, onStatusChange, onDelete, onEdit }) => {
+}> = ({ task, projectName, assigneeName, onDelete, onEdit }) => {
 
     const statusStyles: Record<TaskStatus, string> = {
         [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800',
@@ -25,19 +23,9 @@ const TaskCard: React.FC<{
         medium: 'bg-yellow-100 text-yellow-800',
         high: 'bg-red-100 text-red-800',
     };
-
-    const handleAssigneeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        onAssigneeChange?.(task.id, e.target.value || undefined);
-    };
     
-    const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        onStatusChange?.(task.id, e.target.value as TaskStatus);
-    };
-
     const handleDelete = () => {
-        if (window.confirm(`Are you sure you want to delete the task "${task.name}"?`)) {
-            onDelete?.(task.id);
-        }
+        onDelete?.(task.id);
     };
 
     return (
@@ -64,14 +52,6 @@ const TaskCard: React.FC<{
                 </Link>
                 <p className="text-sm text-slate-600 mt-1 line-clamp-2">{task.description}</p>
             </div>
-
-             {task.dependency && (
-                <div className="p-2 bg-slate-50 rounded-md text-xs text-slate-600 flex items-center space-x-2">
-                    <LinkIcon className="w-4 h-4 text-slate-500" />
-                    <span className="font-semibold">Blocked:</span>
-                    <span>{task.dependency.reason}</span>
-                </div>
-            )}
 
             {/* Deadline & Estimated Time */}
             <div className="flex items-center space-x-4 text-sm text-slate-500">
@@ -107,26 +87,12 @@ const TaskCard: React.FC<{
 
             {/* Bottom Row */}
             <div className="flex justify-between items-center">
-                { onAssigneeChange ? (
-                    <select 
-                        value={task.assigneeId || ''}
-                        onChange={handleAssigneeChange}
-                        className="text-sm border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                        <option value="">Unassigned</option>
-                        {employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>{emp.name}</option>
-                        ))}
-                    </select>
-                ) : onStatusChange ? (
-                    <select 
-                        value={task.status}
-                        onChange={handleStatusChange}
-                        className="text-sm border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                        {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                ) : <div /> }
+                <div className="flex items-center">
+                    <UserCircleIcon className="h-5 w-5 text-slate-400" />
+                    <span className="ml-2 text-sm font-medium text-slate-700">
+                        {assigneeName || 'Unassigned'}
+                    </span>
+                </div>
                 
                 <div className="flex items-center space-x-2">
                     {onDelete && (
