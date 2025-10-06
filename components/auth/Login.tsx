@@ -1,8 +1,9 @@
- import React, {useState} from "react";
-import {Link, useNavigate} from "react-router-dom";
-import { useAuth } from "../../hooks/useAuth";
-import Input from "../shared/Input";
-import Button from "../shared/Button";
+
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
+import Input from '../shared/Input';
+import Button from '../shared/Button';
 
 const Login: React.FC = () => {
     const [email, setEmail] = useState('');

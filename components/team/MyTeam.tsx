@@ -47,18 +47,23 @@ const MyTeam: React.FC = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (user && user.role === UserRole.MANAGER) {
-            try {
-                const members = AuthService.getTeamMembers(user.id);
-                setTeamMembers(members);
-            } catch (error) {
-                console.error("Failed to fetch team members", error);
-            } finally {
+        const fetchTeamMembers = () => {
+            if (user && user.role === UserRole.MANAGER) {
+                setLoading(true);
+                try {
+                    const allUsers = AuthService.getUsers();
+                    const members = allUsers.filter(u => u.managerId === user.id);
+                    setTeamMembers(members);
+                } catch (error) {
+                    console.error("Failed to fetch team members", error);
+                } finally {
+                    setLoading(false);
+                }
+            } else {
                 setLoading(false);
             }
-        } else {
-            setLoading(false);
-        }
+        };
+        fetchTeamMembers();
     }, [user]);
 
     if (loading) {

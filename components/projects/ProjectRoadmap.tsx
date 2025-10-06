@@ -1,12 +1,9 @@
-// src/components/projects/ProjectRoadmap.tsx
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ProjectMilestone, MilestoneStatus } from '../../types';
 import { CheckCircleIcon, ArrowPathIcon, ClockIcon, CheckIcon } from '../../constants';
 
 interface ProjectRoadmapProps {
     roadmap: ProjectMilestone[];
-    // This is the correct type: MilestoneStatus
     onUpdate?: (milestoneId: string, newStatus: MilestoneStatus) => void;
 }
 
@@ -63,11 +60,9 @@ const ProjectRoadmap: React.FC<ProjectRoadmapProps> = ({ roadmap, onUpdate }) =>
         }
     };
     
-    // Only change: ensuring newStatus has the correct type annotation (MilestoneStatus)
     const handleStatusUpdate = (milestoneId: string, newStatus: MilestoneStatus) => {
         onUpdate?.(milestoneId, newStatus);
-        setActiveDropdown(null); // This closes the dropdown after an update
-        console.log(`Milestone ${milestoneId} status updated to: ${newStatus}`); // Added debugging line
+        setActiveDropdown(null);
     };
 
     return (

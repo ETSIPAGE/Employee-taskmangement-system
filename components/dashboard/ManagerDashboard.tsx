@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { ClockIcon, DocumentCheckIcon, ExclamationTriangleIcon, ArrowPathIcon } from '../../constants';
-import * as AuthService from '../../services/authService';
 import * as DataService from '../../services/dataService';
+import * as AuthService from '../../services/authService';
 import { Project, Task, TaskStatus, User } from '../../types';
 
 const StatCard = ({ icon, title, value, color }: { icon: React.ReactNode, title: string, value: string, color: string }) => (
@@ -122,8 +122,13 @@ const ManagerDashboard: React.FC = () => {
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
-        if (user) {
-            const team = AuthService.getTeamMembers(user.id);
+        if (!user) {
+            setIsLoading(false);
+            return;
+        }
+        try {
+            const allUsers = AuthService.getUsers();
+            const team = allUsers.filter(u => u.managerId === user.id);
             setTeamMembers(team);
 
             const managerProjects = await DataService.getProjectsByManager(user.id);
@@ -157,8 +162,11 @@ const ManagerDashboard: React.FC = () => {
                 .sort((a,b) => (a.dueDate && b.dueDate) ? new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime() : 0)
                 .slice(0, 5);
             setHighPriorityTasks(highPrio);
+        } catch (error) {
+            console.error("Failed to load manager dashboard:", error);
+        } finally {
+            setIsLoading(false);
         }
-        setIsLoading(false);
     }, [user]);
 
     useEffect(() => {

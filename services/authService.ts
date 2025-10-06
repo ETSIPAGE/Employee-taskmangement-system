@@ -1,14 +1,9 @@
-import { User, UserRole } from '../types'; // Ensure User and UserRole are imported
+import { User, UserRole } from '../types';
 
-// CORRECTED: RegisterCredentials interface to match what UserManagement.tsx passes
 export interface RegisterCredentials {
   name: string;
   email: string;
   password: string;
-  role: UserRole; // Added for UserManagement.tsx
-  managerId?: string; // Added for UserManagement.tsx
-  departmentIds?: string[]; // Added for UserManagement.tsx
-  companyId?: string; // Added for UserManagement.tsx
 }
 
 export interface LoginCredentials {
@@ -23,16 +18,14 @@ const ORIGINAL_USER_KEY = 'ets_original_user_id';
 
 const getInitialUsers = (): User[] => {
     return [
-        {
+        { 
             id: '1', name: 'Admin User', email: 'admin@test.com', role: UserRole.ADMIN, companyId: 'comp-1', departmentIds: ['dept-1'],
             jobTitle: 'Administrator', status: 'Active', joinedDate: '2022-01-10T00:00:00.000Z',
             skills: ['System Admin', 'Database Mgmt', 'Security'],
             stats: { completedTasks: 5, inProgressTasks: 1, efficiency: 95, totalHours: 45, workload: 'Light' },
-            rating: 9.5,
-            createdAt: '2022-01-10T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 9.5
         },
-        {
+        { 
             id: '2', name: 'Manager User', email: 'manager@test.com', role: UserRole.MANAGER, companyId: 'comp-1', departmentIds: ['dept-7', 'dept-5'],
             jobTitle: 'Project Manager', status: 'Active', joinedDate: '2022-05-20T00:00:00.000Z',
             skills: ['Agile', 'Scrum', 'JIRA', 'Leadership'],
@@ -71,11 +64,9 @@ const getInitialUsers = (): User[] => {
                 { id: 'doc-1', name: 'Passport', status: 'Verified' },
                 { id: 'doc-2', name: 'Degree Certificate', status: 'Submitted' },
                 { id: 'doc-3', name: 'Address Proof', status: 'Pending' }
-            ],
-            createdAt: '2022-05-20T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            ]
         },
-        {
+        { 
             id: '3', name: 'Drone TV', email: 'drone@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
             jobTitle: 'Developer', status: 'Active', joinedDate: '2024-01-15T00:00:00.000Z',
             skills: ['React', 'TypeScript', 'Node.js', 'Python'],
@@ -110,54 +101,42 @@ const getInitialUsers = (): User[] => {
             documents: [
                 { id: 'doc-4', name: 'Work Permit', status: 'Verified' },
                 { id: 'doc-5', name: 'Address Proof', status: 'Submitted' },
-            ],
-            createdAt: '2024-01-15T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            ]
         },
-        {
+        { 
             id: '4', name: 'Sarah Chen', email: 'sarah.chen@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-5'],
             jobTitle: 'Designer', status: 'Active', joinedDate: '2024-02-01T00:00:00.000Z',
             skills: ['UI/UX', 'Figma', 'Adobe Creative Suite', 'Prototyping'],
             stats: { completedTasks: 8, inProgressTasks: 2, efficiency: 88, totalHours: 98, workload: 'Light' },
-            rating: 8.8,
-            createdAt: '2024-02-01T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 8.8
         },
-        {
+        { 
             id: '5', name: 'Mike Rodriguez', email: 'mike.rodriguez@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
             jobTitle: 'Developer', status: 'Busy', joinedDate: '2023-11-10T00:00:00.000Z',
             skills: ['Vue.js', 'Python', 'Docker', 'AWS'],
             stats: { completedTasks: 18, inProgressTasks: 4, efficiency: 85, totalHours: 234, workload: 'Heavy' },
-            rating: 8.5,
-            createdAt: '2023-11-10T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 8.5
         },
-        {
+        { 
             id: '6', name: 'Jessica Brown', email: 'jessica.b@test.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
             jobTitle: 'QA Engineer', status: 'Offline', joinedDate: '2023-03-12T00:00:00.000Z',
             skills: ['Jest', 'Cypress', 'Automation', 'CI/CD'],
             stats: { completedTasks: 35, inProgressTasks: 1, efficiency: 98, totalHours: 180, workload: 'Light' },
-            rating: 9.8,
-            createdAt: '2023-03-12T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 9.8
         },
-        {
+        { 
             id: '7', name: 'David Miller', email: 'david.m@test.com', role: UserRole.EMPLOYEE, companyId: 'comp-1', departmentIds: ['dept-7'], // Belongs to no manager
             jobTitle: 'DevOps Engineer', status: 'Active', joinedDate: '2022-08-01T00:00:00.000Z',
             skills: ['Kubernetes', 'Terraform', 'Jenkins', 'GCP'],
             stats: { completedTasks: 22, inProgressTasks: 2, efficiency: 93, totalHours: 210, workload: 'Normal' },
-            rating: 9.3,
-            createdAt: '2022-08-01T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 9.3
         },
-        {
+        { 
             id: '8', name: 'HR User', email: 'hr@test.com', role: UserRole.HR, companyId: 'comp-1', departmentIds: ['dept-3'],
             jobTitle: 'HR Specialist', status: 'Active', joinedDate: '2023-01-10T00:00:00.000Z',
             skills: ['Recruiting', 'Onboarding', 'Employee Relations'],
             stats: { completedTasks: 10, inProgressTasks: 2, efficiency: 96, totalHours: 40, workload: 'Normal' },
-            rating: 9.6,
-            createdAt: '2023-01-10T00:00:00.000Z',
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'
+            rating: 9.6
         },
     ];
 };
@@ -176,36 +155,21 @@ const saveUsers = (users: User[]) => {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 };
 
-const nameFromEmail = (email: string): string => {
-    const [namePart] = email.split('@');
-    return namePart.split(/[\._-]/)
-                   .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                   .join(' ');
-};
-
 export const register = async (credentials: RegisterCredentials): Promise<User> => {
     // Step 1: Call the backend API to register the user.
-    // The backend API might not handle all fields like role, managerId, etc., directly on signup
-    // It's common for signup to create a basic user, and then a separate update call is made.
-    const apiResponse = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/signup', {
+    const response = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             name: credentials.name,
             email: credentials.email,
             password: credentials.password,
-            // Assuming your backend API *can* also accept these fields.
-            // If not, you'd register basic user, then update locally/via another API.
-            role: credentials.role,
-            companyId: credentials.companyId,
-            managerId: credentials.managerId,
-            departmentIds: credentials.departmentIds,
         }),
     });
 
-    const responseData = await apiResponse.json();
+    const responseData = await response.json();
 
-    if (!apiResponse.ok) {
+    if (!response.ok) {
         throw new Error(responseData.message || 'Registration failed.');
     }
 
@@ -223,20 +187,15 @@ export const register = async (credentials: RegisterCredentials): Promise<User> 
     }
 
     const newUser: User = {
-        id: responseData.userId || `user-${Date.now()}`, // Use ID from API if provided, else generate
+        id: `user-${Date.now()}`,
         name: credentials.name,
         email: credentials.email,
-        role: credentials.role, // Use the role from credentials
+        role: UserRole.EMPLOYEE, // Default role for new signups
         status: 'Active',
         joinedDate: new Date().toISOString(),
-        jobTitle: 'New Employee', // Default
-        skills: [], // Default
-        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' }, // Default
-        createdAt: new Date().toISOString(), // ADDED: createdAt
-        avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png', // Default
-        companyId: credentials.companyId, // Set from credentials
-        managerId: credentials.managerId, // Set from credentials
-        departmentIds: credentials.departmentIds, // Set from credentials
+        jobTitle: 'New Employee',
+        skills: [],
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' },
     };
     
     users.push(newUser);
@@ -251,19 +210,18 @@ export const updateUser = (userId: string, updates: Partial<User>): User | undef
     const users = getUsers();
     const userIndex = users.findIndex(u => u.id === userId);
     if (userIndex > -1) {
-        const updatedUser = { ...users[userIndex], ...updates };
-        users[userIndex] = updatedUser;
+        users[userIndex] = { ...users[userIndex], ...updates };
         saveUsers(users);
 
         const currentUserJson = localStorage.getItem(CURRENT_USER_KEY);
         if (currentUserJson) {
             const currentUser = JSON.parse(currentUserJson) as User;
             if (currentUser.id === userId) {
-                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(users[userIndex]));
             }
         }
 
-        return updatedUser;
+        return users[userIndex];
     }
     return undefined;
 };
@@ -342,8 +300,8 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         // User does not exist locally. Create a new profile with data from the API.
         console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
         
-        const name = nameFromEmail(email);
-        
+        const name = email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
         sessionUser = {
             id: apiUserId, // Use ID from API
             name: name,
@@ -351,8 +309,6 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
             role: apiRole, // Use role from API
             status: 'Active',
             joinedDate: new Date().toISOString(),
-            createdAt: new Date().toISOString(), // ADDED: createdAt
-            avatar: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png', // Default
         };
         users.push(sessionUser);
         saveUsers(users);
@@ -377,12 +333,6 @@ export const getCurrentUser = (): User | null => {
   const userJson = localStorage.getItem(CURRENT_USER_KEY);
   return userJson ? JSON.parse(userJson) : null;
 };
-
-// --- ADDED: getToken function ---
-export const getToken = (): string | null => {
-    return localStorage.getItem(TOKEN_KEY);
-};
-// --- END ADDED ---
 
 export const getUserById = (userId: string): User | undefined => {
     const users = getUsers();

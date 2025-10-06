@@ -3,7 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Department, User, UserRole, Project, TaskStatus, Company } from '../../types';
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
@@ -39,12 +39,12 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                 
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Team</h4>
-                    <div className="flex items-center space-x-4">
-                        <div className="flex items-center space-x-2 text-slate-700">
+                    <div className="flex items-center space-x-4 text-slate-700">
+                        <div className="flex items-center space-x-2">
                              <UsersIcon className="h-5 w-5" />
                              <span className="font-medium">{department.employeeCount} Employees</span>
                         </div>
-                        <div className="flex items-center space-x-2 text-slate-700">
+                        <div className="flex items-center space-x-2">
                             <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{department.managerCount} Managers</span>
                         </div>
@@ -87,7 +87,7 @@ const Departments: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [companyFilter, setCompanyFilter] = useState('all');
 
-    const loadData = useCallback(async () => { 
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
             const [departments, users, projects, allCompanies] = await Promise.all([
@@ -140,26 +140,13 @@ const Departments: React.FC = () => {
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);
-            setDepartmentsWithStats([]); 
-            setCompanies([]); 
         } finally {
             setIsLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        let isMounted = true; 
-        const fetchData = async () => {
-            if (isMounted) {
-                await loadData();
-            }
-        };
-
-        fetchData();
-
-        return () => {
-            isMounted = false; 
-        };
+        loadData();
     }, [loadData]);
 
     const filteredDepartments = useMemo(() => {
@@ -195,7 +182,7 @@ const Departments: React.FC = () => {
     }
 
     if (isLoading) {
-        return <div className="text-center py-8 text-lg text-slate-600">Loading departments...</div>;
+        return <div>Loading departments...</div>;
     }
 
     return (

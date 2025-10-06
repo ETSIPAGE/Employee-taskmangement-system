@@ -39,10 +39,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
         [UserRole.MANAGER]: { border: 'border-sky-500', bg: 'bg-sky-100', text: 'text-sky-800' },
         [UserRole.EMPLOYEE]: { border: 'border-emerald-500', bg: 'bg-emerald-100', text: 'text-emerald-800' },
         [UserRole.HR]: { border: 'border-rose-500', bg: 'bg-rose-100', text: 'text-rose-800' },
-        default: { border: 'border-slate-300', bg: 'bg-slate-100', text: 'text-slate-800' }
     };
-
-    const currentRoleStyle = roleStyles[user.role as UserRole] || roleStyles.default;
 
     const workloadStyles = {
         Light: { bg: 'bg-green-500', label: 'Light' },
@@ -57,18 +54,18 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
-        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${currentRoleStyle.border}`}>
+        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${roleStyles[user.role].border}`}>
             {/* Header */}
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-4">
                     <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-2xl font-bold flex-shrink-0">
-                        {user.avatar ? <img src={user.avatar} alt={user.name} className="w-full h-full rounded-full object-cover" /> : getInitials(user.name)}
+                        {getInitials(user.name)}
                     </div>
                     <div>
                          <div className="flex items-center gap-x-2">
                             <h3 className="text-xl font-bold text-slate-800">{user.name}</h3>
-                             <span className={`${currentRoleStyle.bg} ${currentRoleStyle.text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
-                                {user.role || 'Unknown'} 
+                             <span className={`${roleStyles[user.role].bg} ${roleStyles[user.role].text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
+                                {user.role}
                             </span>
                         </div>
                         <div className="flex items-center space-x-2 text-sm text-slate-500 mt-1">
@@ -176,35 +173,38 @@ const UserManagement: React.FC = () => {
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
     const [managerId, setManagerId] = useState<string | undefined>(undefined);
-    const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+    const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [rating, setRating] = useState(0);
 
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(() => {
         setIsLoading(true);
         try {
-            const fetchedUsers = await AuthService.getUsers();
-            // Assuming AuthService.getManagers exists for fetching managers specifically
-            const fetchedManagers = fetchedUsers.filter(u => u.role === UserRole.MANAGER); 
-            const fetchedDepartments = await DataService.getDepartments();
-            const fetchedCompanies = await DataService.getCompanies();
-
-            setUsers(fetchedUsers);
-            setManagers(fetchedManagers);
-            setDepartments(fetchedDepartments);
-            setCompanies(fetchedCompanies);
-
+            setUsers(AuthService.getUsers());
+            setManagers(AuthService.getManagers());
+            setCompanies(DataService.getCompanies());
         } catch (error) {
             console.error("Failed to load user data", error);
-            // Optionally, show a toast/notification to the user
         } finally {
             setIsLoading(false);
         }
-    }, []); 
+    }, []);
 
     useEffect(() => {
         loadData();
-    }, [loadData]); 
+    }, [loadData]);
+
+    useEffect(() => {
+        const fetchDepartments = async () => {
+            try {
+                const apiDepartments = await DataService.getDepartments();
+                setDepartments(apiDepartments);
+            } catch (error) {
+                console.error("Failed to fetch departments for user management:", error);
+            }
+        };
+        fetchDepartments();
+    }, []);
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -220,14 +220,14 @@ const UserManagement: React.FC = () => {
         setPassword('');
         setRole(UserRole.EMPLOYEE);
         setManagerId(managers.length > 0 ? managers[0].id : undefined);
-        setCompanyId(companies.length > 0 ? companies[0].id : undefined);
         setEditingUser(null);
         setDepartmentIds([]);
+        setCompanyId(companies.length > 0 ? companies[0].id : undefined);
         setRating(0);
-    }, [managers, companies]); 
+    }, [managers, companies]);
 
     const handleOpenCreateModal = () => {
-        resetForm(); 
+        resetForm();
         setIsModalOpen(true);
     };
 
@@ -235,7 +235,7 @@ const UserManagement: React.FC = () => {
         setEditingUser(userToEdit);
         setName(userToEdit.name);
         setEmail(userToEdit.email);
-        setPassword(''); 
+        setPassword(''); // Don't show password
         setRole(userToEdit.role);
         setManagerId(userToEdit.managerId);
         setDepartmentIds(userToEdit.departmentIds || []);
@@ -249,12 +249,12 @@ const UserManagement: React.FC = () => {
         resetForm();
     };
     
-    const handleDeleteUser = useCallback(async (userId: string) => {
+    const handleDeleteUser = (userId: string) => {
         if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            await AuthService.deleteUser(userId); 
-            loadData(); 
+            AuthService.deleteUser(userId);
+            loadData();
         }
-    }, [loadData]);
+    };
 
     const handleImpersonate = async (userId: string) => {
         try {
@@ -290,44 +290,45 @@ const UserManagement: React.FC = () => {
                     managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
                     rating: rating,
                 };
-                await AuthService.updateUser(editingUser.id, updates); 
+                AuthService.updateUser(editingUser.id, updates);
             } else {
                 if (!password) {
                     alert("Password is required for new users.");
                     return;
                 }
-                await AuthService.register({ 
-                    name, 
-                    email, 
-                    password,
-                    role,
-                    departmentIds,
-                    companyId,
-                    managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
-                });
+                // Register first, which creates a default user
+                await AuthService.register({ name, email, password });
+                // Then, find that user and update them with the details from the form
+                const newUser = AuthService.getUsers().find(u => u.email === email);
+                if (newUser) {
+                    AuthService.updateUser(newUser.id, {
+                        role,
+                        departmentIds,
+                        companyId,
+                        managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                    });
+                }
             }
-            loadData(); 
+            loadData();
             handleCloseModal();
         } catch(err) {
-            alert(err instanceof Error ? err.message : 'An error occurred during save.'); 
+            alert(err instanceof Error ? err.message : 'An error occurred');
         }
     };
 
     if (!currentUser || ![UserRole.ADMIN, UserRole.HR].includes(currentUser.role)) {
-        return <Navigate to="/" />; 
+        return <Navigate to="/" />;
     }
-    
-    if (isLoading) return <div className="text-center py-8 text-lg text-slate-600">Loading employees...</div>;
+    if (isLoading) return <div>Loading...</div>;
 
     return (
-        <div className="p-4 sm:p-6 lg:p-8">
+        <div>
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-slate-800">Employees</h1>
                 <Button onClick={handleOpenCreateModal}>Add Employee</Button>
             </div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                <div className="w-full md:w-auto md:flex-1">
-                </div>
+                <div className="w-full md:w-auto md:flex-1"></div>
                 <div className="w-full md:w-64">
                     <ViewSwitcher view={view} setView={setView} />
                 </div>
@@ -335,21 +336,16 @@ const UserManagement: React.FC = () => {
 
             <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <input type="text" placeholder="Search by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" />
-                    <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    <input type="text" placeholder="Search by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md" />
+                    <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md">
                         <option value="all">All Roles</option>
                         {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
                 </div>
             </div>
 
-            {filteredUsers.length === 0 ? (
-                <div className="col-span-full text-center py-12 bg-white rounded-lg shadow">
-                    <h3 className="text-xl font-semibold text-slate-700">No Employees Found</h3>
-                    <p className="text-slate-500 mt-2">No users match the current search or filter criteria.</p>
-                </div>
-            ) : view === 'card' ? (
-                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"> 
+            {view === 'card' ? (
+                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {filteredUsers.map(user => {
                         const company = companies.find(c => c.id === user.companyId);
                         return (<UserCard 
@@ -398,15 +394,15 @@ const UserManagement: React.FC = () => {
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <div className="flex items-center space-x-3">
-                                            <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon className="w-5 h-5" /></button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon className="w-5 h-5" /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
                                             {currentUser?.role === UserRole.ADMIN && currentUser.id !== user.id && (
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); handleImpersonate(user.id); }}
                                                     className="text-slate-500 hover:text-green-600"
                                                     title={`Log in as ${user.name}`}
                                                 >
-                                                    <LoginIcon className="w-5 h-5" />
+                                                    <LoginIcon />
                                                 </button>
                                             )}
                                         </div>
@@ -415,6 +411,13 @@ const UserManagement: React.FC = () => {
                             )})}
                         </tbody>
                     </table>
+                </div>
+            )}
+
+            {filteredUsers.length === 0 && (
+                <div className="col-span-full text-center py-12 bg-white rounded-lg shadow">
+                    <h3 className="text-xl font-semibold text-slate-700">No Employees Found</h3>
+                    <p className="text-slate-500 mt-2">No users match the current search or filter criteria.</p>
                 </div>
             )}
 

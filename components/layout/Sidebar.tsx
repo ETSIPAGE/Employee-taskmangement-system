@@ -37,31 +37,35 @@ const Sidebar: React.FC<SidebarProps> = ({ isCollapsed, toggleCollapse }) => {
         </button>
       </div>
       <nav className="flex-1 px-2 py-4 space-y-2 overflow-y-auto overflow-x-hidden">
-        {navItems.map((item) => (
-          <div key={item.name} className="relative group">
-            <NavLink
-              to={item.href}
-              className={({ isActive }) =>
-                `flex items-center px-4 py-2.5 text-sm font-medium rounded-md transition-colors ${
-                  isCollapsed ? 'justify-center' : ''
-                } ${
-                  isActive || (item.href !== '/' && location.pathname.startsWith(item.href))
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-300 hover:bg-slate-700 hover:text-white'
-                }`
-              }
-              aria-label={item.name}
-            >
-              <item.icon />
-              {!isCollapsed && <span className="ml-3 whitespace-nowrap">{item.name}</span>}
-            </NavLink>
-            {isCollapsed && (
-              <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-xs rounded-md invisible group-hover:visible whitespace-nowrap z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                {item.name}
-              </div>
-            )}
-          </div>
-        ))}
+        {navItems.map((item) => {
+          const isLinkActive = location.pathname === item.href || (item.href !== '/' && location.pathname.startsWith(item.href + '/'));
+          
+          return (
+            <div key={item.name} className="relative group">
+              <NavLink
+                to={item.href}
+                className={
+                  `flex items-center px-4 py-2.5 text-sm font-medium rounded-md transition-colors ${
+                    isCollapsed ? 'justify-center' : ''
+                  } ${
+                    isLinkActive
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+                  }`
+                }
+                aria-label={item.name}
+              >
+                <item.icon />
+                {!isCollapsed && <span className="ml-3 whitespace-nowrap">{item.name}</span>}
+              </NavLink>
+              {isCollapsed && (
+                <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-xs rounded-md invisible group-hover:visible whitespace-nowrap z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {item.name}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
     </div>
   );
