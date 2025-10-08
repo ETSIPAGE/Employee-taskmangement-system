@@ -55,18 +55,18 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const [tasks, projects, allUsersFromApi] = await Promise.all([
+            const [tasks, projects, allUsers] = await Promise.all([ // Renamed to allUsers here
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
-                DataService.getAllUsersFromApi(),
+                DataService.getUsers(), // Corrected: Use DataService.getUsers()
             ]);
             
             setAllProjects(projects);
-            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
+            const employees = allUsers.filter(u => u.role === UserRole.EMPLOYEE);
             setAllEmployees(employees);
             
             const projectsMap = new Map(projects.map(p => [p.id, p]));
-            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
+            const usersMap = new Map(allUsers.map(u => [u.id, u]));
     
             const newHydratedTasks = tasks.map(task => ({
                 ...task,
@@ -220,7 +220,7 @@ export default function AdminTasks() {
                     </select>
                     <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Assignees</option>
-                        {allEmployees.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        {allEmployees.map((m: User) => <option key={m.id} value={m.id}>{m.name}</option>)} {/* Explicitly cast to User */}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Statuses</option>
@@ -346,7 +346,7 @@ export default function AdminTasks() {
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
                         <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                            {allEmployees.map(employee => (
+                            {allEmployees.map((employee: User) => ( // Explicitly cast to User
                                 <option key={employee.id} value={employee.id}>{employee.name}</option>
                             ))}
                         </select>

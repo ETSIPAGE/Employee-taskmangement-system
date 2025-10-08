@@ -1,12 +1,12 @@
-
-
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
+import { getToken } from './authService'; // Import getToken from authService
+
+// --- API URLs ---
+const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com'; // <--- ADDED THIS LINE
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
-// Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
-let COMPANIES: Company[] = [
-    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
-];
+// Companies is now handled by API, so this 'let COMPANIES' mock is removed.
+// Chat, and Onboarding data remains mocked as no APIs were specified for them.
 
 let CONVERSATIONS: ChatConversation[] = [
     { id: 'conv-1', type: 'group', name: 'Project Marketing', participantIds: ['2', '3', '4', '5'], adminIds: ['2'] },
@@ -45,14 +45,14 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
 
 // Helper to add auth token to requests
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-    const token = localStorage.getItem('ets_token');
+    const token = getToken(); // Use the imported getToken
     const headers = new Headers(options.headers || {});
     if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
     }
     if (token) {
         // AWS API Gateway custom authorizers often look for a token in the 'Authorization' header.
-        headers.set('Authorization', token);
+        headers.set('Authorization', `Bearer ${token}`); // Add "Bearer" prefix
     }
     return fetch(url, { ...options, headers });
 };
@@ -104,6 +104,8 @@ let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
 let cachedAllUsers: User[] | null = null;
+let cachedManagers: User[] | null = null; // New cache for managers
+let cachedCompanies: Company[] | null = null; // Added cache for companies
 
 // Helper to map API user to frontend User
 const mapApiUserToUser = (apiUser: any): User => {
@@ -144,28 +146,39 @@ const mapApiUserToUser = (apiUser: any): User => {
     };
 };
 
-export const getAllUsersFromApi = async (): Promise<User[]> => {
+export const getUsers = async (): Promise<User[]> => {
     if (cachedAllUsers) return cachedAllUsers;
 
-    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
-    const data = await parseApiResponse(response);
-    const usersFromApi = extractArrayFromApiResponse(data, 'users');
-    
-    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
-    return cachedAllUsers;
+    try {
+        const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+        const data = await parseApiResponse(response);
+        const usersFromApi = extractArrayFromApiResponse(data, 'users');
+        
+        cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+        return cachedAllUsers;
+    } catch (error) {
+        console.error("Failed to fetch all users:", error);
+        return []; // Return empty array on error
+    }
 };
 
-export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
-    const allUsers = await getAllUsersFromApi();
+export const getUserById = async (userId: string): Promise<User | undefined> => {
+    const allUsers = await getUsers(); // Use getUsers for caching
     return allUsers.find(u => u.id === userId);
 };
 
-// --- EMPLOYEES from API ---
-export const getEmployeesFromApi = async (): Promise<User[]> => {
-    const allUsers = await getAllUsersFromApi();
+export const getEmployees = async (): Promise<User[]> => {
+    const allUsers = await getUsers(); // Use getUsers for caching
     return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
 };
 
+export const getManagers = async (): Promise<User[]> => { // Renamed from getManagersFromApi to just getManagers for consistency
+    if (cachedManagers) return cachedManagers;
+
+    const allUsers = await getUsers(); // Get all users first
+    cachedManagers = allUsers.filter(user => user.role === UserRole.MANAGER);
+    return cachedManagers;
+};
 
 // --- TASKS ---
 /**
@@ -199,7 +212,7 @@ export const getAllTasks = async (): Promise<Task[]> => {
 
     try {
         // Use a standard fetch for this public endpoint to avoid potential header issues.
-        const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
+        const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -380,7 +393,7 @@ export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task 
 
 export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
     const response = await authenticatedFetch(`https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task/${taskId}`, {
-        method: 'POST',
+        method: 'POST', // or 'DELETE' if the backend expects DELETE for deletion
         body: JSON.stringify({ currentUserId: currentUserId })
     });
 
@@ -404,22 +417,28 @@ export const deleteTask = async (taskId: string, currentUserId: string): Promise
 // --- PROJECTS ---
 export const getAllProjects = async (): Promise<Project[]> => {
     if (cachedProjects) return cachedProjects;
-    const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
-    const data = await parseApiResponse(response);
-    const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
-    cachedProjects = projectsFromApi.map((proj: any): Project => ({
-        id: proj.id,
-        name: proj.name,
-        description: proj.description,
-        managerId: proj.manager_id,
-        departmentIds: Array.isArray(proj.department_ids) ? proj.department_ids : [],
-        deadline: proj.deadline,
-        priority: proj.priority,
-        estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
-        companyId: proj.company_id || 'comp-1',
-        roadmap: proj.roadmap || [],
-    }));
-    return cachedProjects;
+    try {
+        const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
+        const data = await parseApiResponse(response);
+        const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
+        cachedProjects = projectsFromApi.map((proj: any): Project => ({
+            id: proj.id,
+            name: proj.name,
+            description: proj.description,
+            managerId: proj.manager_id,
+            departmentIds: Array.isArray(proj.department_ids) ? proj.department_ids : [],
+            deadline: proj.deadline,
+            priority: proj.priority,
+            estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
+            companyId: proj.company_id || 'comp-1',
+            roadmap: proj.roadmap || [],
+            timestamp: proj.timestamp || new Date().toISOString(), // Use 'timestamp' to match the Project type
+        }));
+        return cachedProjects;
+    } catch (error) {
+        console.error("Failed to fetch all projects:", error);
+        return [];
+    }
 };
 
 export const getProjectById = async (id: string): Promise<Project | undefined> => {
@@ -442,19 +461,53 @@ export const getProjectsByDepartment = async (departmentId: string): Promise<Pro
     return projects.filter(p => p.departmentIds.includes(departmentId));
 };
 
-export const createProject = (projectData: Omit<Project, 'id'>): Project => {
-    // Optimistic update as no API provided
-    const newProject: Project = { ...projectData, id: `proj-${Date.now()}`};
-    if (cachedProjects) {
-        cachedProjects.unshift(newProject);
-    } else {
-        cachedProjects = [newProject];
+export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp'>): Promise<Project> => {
+    const payload = {
+        ...projectData,
+        manager_id: projectData.managerId,
+        department_ids: projectData.departmentIds,
+        company_id: projectData.companyId,
+        // The backend should ideally generate ID and timestamp, but if not, include them
+        id: `proj-${Date.now()}`, 
+        timestamp: new Date().toISOString(), // Use 'timestamp' to match the Project type
+    };
+    
+    const response = await authenticatedFetch('https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create project.');
     }
+
+    cachedProjects = null; // Invalidate cache
+    const responseData = await response.json();
+    const createdProjectData = responseData.Project.Item; // Assuming this structure
+
+    const newProject: Project = {
+        id: createdProjectData.id,
+        name: createdProjectData.name,
+        description: createdProjectData.description,
+        managerId: createdProjectData.manager_id,
+        departmentIds: createdProjectData.department_ids || [],
+        deadline: createdProjectData.deadline,
+        priority: createdProjectData.priority,
+        estimatedTime: createdProjectData.estimated_time ? parseInt(createdProjectData.estimated_time, 10) : undefined,
+        companyId: createdProjectData.company_id,
+        roadmap: createdProjectData.roadmap || [],
+        timestamp: createdProjectData.timestamp, // Use 'timestamp' to match the Project type
+    };
+    
     return newProject;
 };
 
-export const updateProject = (projectId: string, updates: Partial<Project>): Project | undefined => {
-    // Optimistic update
+
+export const updateProject = async (projectId: string, updates: Partial<Project>): Promise<Project | undefined> => {
+    // This function assumes the ProjectDetail component handles the actual API call for updates,
+    // which seems to be the case based on your ProjectDetail code.
+    // This local mock update is kept for consistency but might not be used directly.
     if (cachedProjects) {
         const projectIndex = cachedProjects.findIndex(p => p.id === projectId);
         if (projectIndex > -1) {
@@ -469,15 +522,20 @@ export const updateProject = (projectId: string, updates: Partial<Project>): Pro
 // --- DEPARTMENTS ---
 export const getDepartments = async (): Promise<Department[]> => {
     if (cachedDepartments) return cachedDepartments;
-    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
-    const data = await parseApiResponse(response);
-    const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
-    cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
-        id: dept.id,
-        name: dept.name,
-        companyId: dept.company_id || 'comp-1',
-    }));
-    return cachedDepartments;
+    try {
+        const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
+        const data = await parseApiResponse(response);
+        const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
+        cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
+            id: dept.id,
+            name: dept.name,
+            companyId: dept.company_id || 'comp-1',
+        }));
+        return cachedDepartments;
+    } catch (error) {
+        console.error("Failed to fetch all departments:", error);
+        return [];
+    }
 };
 
 export const getDepartmentById = async (id: string): Promise<Department | undefined> => {
@@ -485,23 +543,73 @@ export const getDepartmentById = async (id: string): Promise<Department | undefi
     return depts.find(d => d.id === id);
 };
 
-export const createDepartment = (name: string, companyId: string): Department => {
-    // Optimistic update
-    const newDepartment: Department = { id: `dept-${Date.now()}`, name, companyId };
-    if (cachedDepartments) {
-        cachedDepartments.unshift(newDepartment);
-    } else {
-        cachedDepartments = [newDepartment];
+export const createDepartment = async (name: string, companyId: string): Promise<Department> => {
+    const payload = {
+        name,
+        company_id: companyId,
+        id: `dept-${Date.now()}` // Backend might generate, but safe to include for mock/consistency
+    };
+    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/', { // Assuming this is the create endpoint
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create department.');
     }
+
+    cachedDepartments = null; // Invalidate cache
+    const responseData = await response.json();
+    const createdDepartmentData = responseData.Department.Item; // Adjust based on actual API response
+
+    const newDepartment: Department = { 
+        id: createdDepartmentData.id, 
+        name: createdDepartmentData.name, 
+        companyId: createdDepartmentData.company_id 
+    };
     return newDepartment;
 };
 
-// --- MOCKED FUNCTIONS ---
-export const getCompanies = (): Company[] => [...COMPANIES];
-export const getCompanyById = (id: string): Company | undefined => COMPANIES.find(c => c.id === id);
+// --- API-BACKED FUNCTIONS (previously in MOCKED FUNCTIONS) ---
+export const getCompanies = async (): Promise<Company[]> => {
+    if (cachedCompanies) return cachedCompanies;
+
+    try {
+        const response = await authenticatedFetch(COMPANIES_API_URL);
+        const data = await parseApiResponse(response);
+        const companiesFromApi = extractArrayFromApiResponse(data, 'companies'); // Adjust 'companies' if your API uses a different key
+
+        cachedCompanies = companiesFromApi.map((company: any): Company => ({
+            id: company.id,
+            name: company.name,
+            ownerId: company.ownerId, 
+            createdAt: company.createdAt || new Date().toISOString(), 
+        }));
+        return cachedCompanies;
+    } catch (error) {
+        console.error("Failed to fetch all companies:", error);
+        return []; 
+    }
+};
+
+export const getCompanyById = async (id: string): Promise<Company | undefined> => {
+    const allCompanies = await getCompanies();
+    return allCompanies.find(c => c.id === id);
+};
+
+// --- MOCKED FUNCTIONS (only truly mocked ones remain) ---
 export const createCompany = (name: string, ownerId: string): Company => {
     const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
-    COMPANIES.unshift(newCompany);
+    // COMPANIES is no longer a 'let' variable at the top, so we can't directly push to it.
+    // If you need to simulate adding a company locally, you'd need to update `cachedCompanies`.
+    // For now, it will just return the new company without affecting the cached list.
+    // If you want it to affect the cached list:
+    if (cachedCompanies) {
+        cachedCompanies.unshift(newCompany);
+    } else {
+        cachedCompanies = [newCompany];
+    }
     return newCompany;
 };
 export const getAttendanceByDate = (date: string): string[] => ATTENDANCE_DATA[date] || [];

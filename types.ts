@@ -15,7 +15,7 @@ export interface Company {
 export interface Department {
   id: string;
   name: string;
-  companyId: string;
+  companyId: string; // Assuming Department has a single companyId
 }
 
 export interface UserStats {
@@ -109,6 +109,7 @@ export enum TaskStatus {
 export enum MilestoneStatus {
     PENDING = 'Pending',
     IN_PROGRESS = 'In Progress',
+    ON_HOLD = 'On Hold',
     COMPLETED = 'Completed',
 }
 
@@ -132,6 +133,8 @@ export interface Project {
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
+  // Renamed from 'createdAt' to 'timestamp' to match DynamoDB sort key as per previous discussion
+  timestamp: string; 
 }
 
 export interface TaskDependency {
