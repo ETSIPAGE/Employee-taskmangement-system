@@ -205,3 +205,8 @@ export const getTeamMembers = async (managerId: string): Promise<User[]> => {
   const users = await getUsers();
   return users.filter((u) => u.role === UserRole.EMPLOYEE && u.managerId === managerId);
 };
+
+export const getToken = (): string | null => {
+  // Example implementation: Retrieve token from localStorage
+  return localStorage.getItem('auth_token');
+};

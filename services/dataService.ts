@@ -1,5 +1,5 @@
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
-import { getToken } from './authService'; // Import getToken from authService
+import { getToken } from './authService'; // Import getToken as a named export from authService
 
 // --- API URLs ---
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com'; // <--- ADDED THIS LINE
@@ -54,7 +54,19 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
         // AWS API Gateway custom authorizers often look for a token in the 'Authorization' header.
         headers.set('Authorization', `Bearer ${token}`); // Add "Bearer" prefix
     }
-    return fetch(url, { ...options, headers });
+
+    try {
+        const response = await fetch(url, { ...options, headers });
+        return response;
+    } catch (error) {
+        console.error("Fetch failed:", {
+            url,
+            options,
+            error,
+            headers: Object.fromEntries(headers.entries()),
+        });
+        throw new Error(`Failed to fetch: ${error.message}`);
+    }
 };
 
 
@@ -127,7 +139,7 @@ const mapApiUserToUser = (apiUser: any): User => {
         name: apiUser.name,
         email: apiUser.email,
         role: role,
-        companyId: apiUser.companyId,
+        companyIds: apiUser.companyId ? [apiUser.companyId] : [],
         managerId: apiUser.managerId,
         departmentIds: apiUser.departmentIds || [],
         jobTitle: apiUser.jobTitle,
@@ -255,7 +267,6 @@ export const getAllTasks = async (): Promise<Task[]> => {
             dueDate: task.due_date,
             projectId: task.project,
             assigneeId: task.assign_to,
-            assign_by: task.assign_by,
             status: mapApiStatusToTaskStatus(task.status),
             priority: task.priority,
             estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
@@ -292,7 +303,6 @@ export const createTask = async (taskData: any): Promise<Task> => {
         dueDate: createdTaskData.due_date,
         projectId: createdTaskData.project,
         assigneeId: createdTaskData.assign_to,
-        assign_by: createdTaskData.assign_by,
         status: createdTaskData.status,
         priority: createdTaskData.priority,
         estimatedTime: createdTaskData.est_time ? parseInt(createdTaskData.est_time, 10) : undefined,
@@ -364,7 +374,6 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         dueDate: updatedTaskData.due_date,
         projectId: updatedTaskData.project,
         assigneeId: updatedTaskData.assign_to,
-        assign_by: updatedTaskData.assign_by,
         status: updatedTaskData.status,
         priority: updatedTaskData.priority,
         estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
@@ -525,12 +534,20 @@ export const getDepartments = async (): Promise<Department[]> => {
     try {
         const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
         const data = await parseApiResponse(response);
+
+        // Ensure the response contains the expected structure
         const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
+        if (!Array.isArray(departmentsFromApi)) {
+            console.error("Unexpected API response structure for departments:", data);
+            return [];
+        }
+
         cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
-            id: dept.id,
-            name: dept.name,
+            id: dept.id || `dept-${Math.random().toString(36).substr(2, 9)}`,
+            name: dept.name || 'Unnamed Department',
             companyId: dept.company_id || 'comp-1',
         }));
+
         return cachedDepartments;
     } catch (error) {
         console.error("Failed to fetch all departments:", error);
@@ -543,32 +560,86 @@ export const getDepartmentById = async (id: string): Promise<Department | undefi
     return depts.find(d => d.id === id);
 };
 
-export const createDepartment = async (name: string, companyId: string): Promise<Department> => {
-    const payload = {
-        name,
-        company_id: companyId,
-        id: `dept-${Date.now()}` // Backend might generate, but safe to include for mock/consistency
-    };
-    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/', { // Assuming this is the create endpoint
-        method: 'POST',
-        body: JSON.stringify(payload)
-    });
+export const createDepartment = async (departmentData: any): Promise<Department> => {
+    const { name, companyIds } = departmentData;
 
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create department.');
+    if (!name || typeof name !== 'string' || !name.trim()) {
+        throw new Error('The department name is required and must be a non-empty string.');
     }
 
-    cachedDepartments = null; // Invalidate cache
-    const responseData = await response.json();
-    const createdDepartmentData = responseData.Department.Item; // Adjust based on actual API response
+    if (!Array.isArray(companyIds) || companyIds.length === 0) {
+        throw new Error('The companyIds field is required and must be a non-empty array.');
+    }
 
-    const newDepartment: Department = { 
-        id: createdDepartmentData.id, 
-        name: createdDepartmentData.name, 
-        companyId: createdDepartmentData.company_id 
-    };
-    return newDepartment;
+    const normalizedCompanyIds = [...new Set(companyIds.map((id: any) => (id ?? '').toString().trim()).filter(Boolean))];
+
+    if (normalizedCompanyIds.length === 0) {
+        throw new Error('The companyIds array must contain at least one valid ID.');
+    }
+
+    try {
+        const response = await authenticatedFetch('https://evnlmv27o2.execute-api.ap-south-1.amazonaws.com/prod/postdepartment', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: name.trim(),
+                companyIds: normalizedCompanyIds,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to create department.');
+        }
+
+        const responseData = await response.json();
+        const createdDepartmentData = responseData.department;
+
+        const newDepartment: Department = {
+            id: createdDepartmentData.id,
+            name: createdDepartmentData.name,
+            description: createdDepartmentData.description,
+            managerId: createdDepartmentData.managerId,
+            employeeIds: createdDepartmentData.employeeIds || [],
+        };
+
+        return newDepartment;
+    } catch (error) {
+        console.error('Error creating department:', error);
+        throw error;
+    }
+};
+
+export const deleteDepartment = async (departmentId: string): Promise<void> => {
+    try {
+        const response = await authenticatedFetch(`https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/${departmentId}`, {
+            method: 'DELETE',
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to delete department.');
+        }
+    } catch (error) {
+        console.error('Error deleting department:', error);
+        throw error;
+    }
+};
+
+export const updateDepartment = async (departmentId: string, updatedData: any): Promise<void> => {
+    try {
+        const response = await authenticatedFetch(`https://59shqubycb.execute-api.ap-south-1.amazonaws.com/prod/Edit-Department/${departmentId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updatedData),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to update department.');
+        }
+    } catch (error) {
+        console.error('Error updating department:', error);
+        throw error;
+    }
 };
 
 // --- API-BACKED FUNCTIONS (previously in MOCKED FUNCTIONS) ---
@@ -583,8 +654,18 @@ export const getCompanies = async (): Promise<Company[]> => {
         cachedCompanies = companiesFromApi.map((company: any): Company => ({
             id: company.id,
             name: company.name,
-            ownerId: company.ownerId, 
-            createdAt: company.createdAt || new Date().toISOString(), 
+            ownerId: company.ownerId,
+            createdAt: company.createdAt || new Date().toISOString(),
+            entityType: "COMPANY",
+            createdBy: company.createdBy || "unknown",
+            timestamp: company.timestamp || new Date().toISOString(),
+            projectCount: company.projectCount || 0,
+            projectsCompleted: company.projectsCompleted || 0,
+            projectsInProgress: company.projectsInProgress || 0,
+            projectsPending: company.projectsPending || 0,
+            managerCount: company.managerCount || 0,
+            employeeCount: company.employeeCount || 0,
+            departmentCount: company.departmentCount || 0,
         }));
         return cachedCompanies;
     } catch (error) {
@@ -600,7 +681,22 @@ export const getCompanyById = async (id: string): Promise<Company | undefined> =
 
 // --- MOCKED FUNCTIONS (only truly mocked ones remain) ---
 export const createCompany = (name: string, ownerId: string): Company => {
-    const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
+    const newCompany: Company = {
+        id: `comp-${Date.now()}`,
+        name,
+        ownerId,
+        createdAt: new Date().toISOString(),
+        entityType: "COMPANY",
+        createdBy: "system", // Default value
+        timestamp: new Date().toISOString(),
+        projectCount: 0,
+        projectsCompleted: 0,
+        projectsInProgress: 0,
+        projectsPending: 0,
+        managerCount: 0,
+        employeeCount: 0,
+        departmentCount: 0,
+    };
     // COMPANIES is no longer a 'let' variable at the top, so we can't directly push to it.
     // If you need to simulate adding a company locally, you'd need to update `cachedCompanies`.
     // For now, it will just return the new company without affecting the cached list.

@@ -72,11 +72,26 @@ const BarChart = ({ data, title }: { data: { label: string, value: number }[], t
 };
 
 const OverdueTaskItem = ({ task }: { task: Task }) => {
-    const assignee = AuthService.getUserById(task.assigneeId || '');
-    const project = DataService.getProjectById(task.projectId);
-    
+    const [assignee, setAssignee] = useState<User | null>(null);
+    const [project, setProject] = useState<Project | null>(null);
+
+    useEffect(() => {
+        let isMounted = true;
+        DataService.getProjectById(task.projectId).then(proj => {
+            if (isMounted) setProject(proj);
+        });
+        if (task.assigneeId) {
+            AuthService.getUserById(task.assigneeId).then(user => {
+                if (isMounted) setAssignee(user);
+            });
+        } else {
+            setAssignee(null);
+        }
+        return () => { isMounted = false; };
+    }, [task.projectId, task.assigneeId]);
+
     return (
-        <li className="py-3 border-b border-slate-100 last:border-b-0">
+        <li className="py-3 border-b border-slate-100 last:border-b-0" key={task.id}>
             <div className="flex items-center justify-between">
                 <div>
                     <Link to={`/tasks/${task.id}`} className="font-semibold text-slate-700 hover:text-indigo-600 transition-colors">
@@ -120,40 +135,48 @@ const AdminDashboard: React.FC = () => {
         getUsers();
      }, []);
     useEffect(() => {
-       
-        const projects = DataService.getAllProjects();
-        const tasks = DataService.getTasksByTeam(users.map(u => u.id)); // All tasks
-        
-        const projectProgress = projects.map(p => {
-            const projectTasks = DataService.getTasksByProject(p.id);
-            const completed = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-            return {
-                label: p.name,
-                value: projectTasks.length > 0 ? Math.round((completed / projectTasks.length) * 100) : 0,
-            };
-        });
-        
-        const overdueTasks = tasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TaskStatus.COMPLETED)
-            .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
-        setOverdueTasksList(overdueTasks.slice(0, 5));
+        const fetchData = async () => {
+            try {
+                const projects = await DataService.getAllProjects();
+                const tasks = await DataService.getTasksByTeam(users.map(u => u.id)); // All tasks
 
-        setStats({
-            totalUsers: users.length,
-            totalProjects: projects.length,
-            completedProjects: projectProgress.filter(p => p.value === 100).length,
-            overdueTasks: overdueTasks.length,
-        });
+                const validProjects = Array.isArray(projects) ? projects : [];
 
-        setTaskStatusData([
-            { label: TaskStatus.TODO, value: tasks.filter(t => t.status === TaskStatus.TODO).length, color: '#f59e0b' },
-            { label: TaskStatus.IN_PROGRESS, value: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length, color: '#3b82f6' },
-            { label: TaskStatus.ON_HOLD, value: tasks.filter(t => t.status === TaskStatus.ON_HOLD).length, color: '#94a3b8' },
-            { label: TaskStatus.COMPLETED, value: tasks.filter(t => t.status === TaskStatus.COMPLETED).length, color: '#22c55e' },
-        ]);
+                const projectProgress = await Promise.all(validProjects.map(async p => {
+                    const projectTasks = await DataService.getTasksByProject(p.id);
+                    const completed = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
+                    return {
+                        label: p.name,
+                        value: projectTasks.length > 0 ? Math.round((completed / projectTasks.length) * 100) : 0,
+                    };
+                }));
 
-        setProjectProgressData(projectProgress.sort((a,b) => b.value - a.value).slice(0, 5)); // Top 5 projects by progress
+                const overdueTasks = tasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TaskStatus.COMPLETED)
+                    .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
+                setOverdueTasksList(overdueTasks.slice(0, 5));
 
-    }, []);
+                setStats({
+                    totalUsers: users.length,
+                    totalProjects: validProjects.length,
+                    completedProjects: projectProgress.filter(p => p.value === 100).length,
+                    overdueTasks: overdueTasks.length,
+                });
+
+                setTaskStatusData([
+                    { label: TaskStatus.TODO, value: tasks.filter(t => t.status === TaskStatus.TODO).length, color: '#f59e0b' },
+                    { label: TaskStatus.IN_PROGRESS, value: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length, color: '#3b82f6' },
+                    { label: TaskStatus.ON_HOLD, value: tasks.filter(t => t.status === TaskStatus.ON_HOLD).length, color: '#94a3b8' },
+                    { label: TaskStatus.COMPLETED, value: tasks.filter(t => t.status === TaskStatus.COMPLETED).length, color: '#22c55e' },
+                ]);
+
+                setProjectProgressData(projectProgress.sort((a, b) => b.value - a.value).slice(0, 5)); // Top 5 projects by progress
+            } catch (error) {
+                console.error('Error fetching data for AdminDashboard:', error);
+            }
+        };
+
+        fetchData();
+    }, [users]);
     
     return (
         <div>
@@ -203,7 +226,7 @@ const AdminDashboard: React.FC = () => {
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Overdue Tasks</h2>
                     {overdueTasksList.length > 0 ? (
                         <ul className="divide-y divide-slate-100">
-                           {overdueTasksList.map(task => <OverdueTaskItem key={task.id} task={task} />)}
+                           {overdueTasksList.map(task => <OverdueTaskItem task={task} />)}
                         </ul>
                     ) : (
                         <p className="text-center py-4 text-slate-500">No overdue tasks. Great job!</p>

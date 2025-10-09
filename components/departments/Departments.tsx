@@ -8,6 +8,7 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import { UsersIcon, BuildingOfficeIcon } from '../../constants';
+import { useToast } from '../../context/ToastContext';
 
 interface DepartmentStats {
     employeeCount: number;
@@ -20,14 +21,11 @@ interface DepartmentStats {
 
 interface DepartmentWithStats extends Department, DepartmentStats {}
 
-const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ department }) => {
+const DepartmentCard: React.FC<{ department: DepartmentWithStats; onEdit: (id: string) => void; onDelete: (id: string) => void }> = ({ department, onEdit, onDelete }) => {
     const navigate = useNavigate();
-    
+
     return (
-        <div 
-            onClick={() => navigate(`/departments/${department.id}`)}
-            className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1 cursor-pointer"
-        >
+        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1">
             <div>
                 <div className="mb-4 border-b pb-3">
                     <h3 className="text-xl font-bold text-slate-800">{department.name}</h3>
@@ -36,13 +34,13 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                         <span>{department.companyName}</span>
                     </div>
                 </div>
-                
+
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Team</h4>
                     <div className="flex items-center space-x-4 text-slate-700">
                         <div className="flex items-center space-x-2">
-                             <UsersIcon className="h-5 w-5" />
-                             <span className="font-medium">{department.employeeCount} Employees</span>
+                            <UsersIcon className="h-5 w-5" />
+                            <span className="font-medium">{department.employeeCount} Employees</span>
                         </div>
                         <div className="flex items-center space-x-2">
                             <UsersIcon className="h-5 w-5" />
@@ -51,7 +49,7 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                     </div>
                 </div>
 
-                 <div>
+                <div>
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Projects</h4>
                     <div className="space-y-2">
                         <div className="flex justify-between items-center text-sm">
@@ -69,6 +67,21 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats }> = ({ departm
                     </div>
                 </div>
             </div>
+
+            <div className="flex justify-end space-x-2 mt-4">
+                <button
+                    onClick={() => onEdit(department.id)}
+                    className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+                >
+                    Edit
+                </button>
+                <button
+                    onClick={() => onDelete(department.id)}
+                    className="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600"
+                >
+                    Delete
+                </button>
+            </div>
         </div>
     );
 };
@@ -82,6 +95,10 @@ const Departments: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newDepartmentName, setNewDepartmentName] = useState('');
     const [newDepartmentCompanyId, setNewDepartmentCompanyId] = useState('');
+
+    // Edit modal states
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingDepartment, setEditingDepartment] = useState<DepartmentWithStats | null>(null);
 
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
@@ -166,15 +183,68 @@ const Departments: React.FC = () => {
         }
     };
 
-    const handleCreateDepartment = (e: React.FormEvent) => {
+    const handleOpenEditModal = (department: DepartmentWithStats) => {
+        setEditingDepartment(department);
+        setIsEditModalOpen(true);
+    };
+
+    const handleCloseEditModal = () => {
+        setEditingDepartment(null);
+        setIsEditModalOpen(false);
+    };
+
+    const { addToast } = useToast();
+
+    const handleCreateDepartment = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newDepartmentName.trim() || !newDepartmentCompanyId) {
             alert('Department name and company are required.');
             return;
         }
-        DataService.createDepartment(newDepartmentName, newDepartmentCompanyId);
-        loadData();
-        handleCloseModal();
+        try {
+            await DataService.createDepartment({
+                name: newDepartmentName.trim(),
+                companyIds: [newDepartmentCompanyId],
+            });
+            addToast('Department successfully created!', 'success');
+            await loadData(); // Ensure the latest data is fetched after creation
+            handleCloseModal();
+        } catch (error) {
+            console.error('Error creating department:', error);
+            addToast('Failed to create department. Please try again.', 'error');
+        }
+    };
+
+    const handleDeleteDepartment = async (departmentId: string) => {
+        try {
+            await DataService.deleteDepartment(departmentId);
+            addToast('Department successfully deleted!', 'success');
+            await loadData(); // Refresh the data after deletion
+        } catch (error) {
+            console.error('Error deleting department:', error);
+            addToast('Failed to delete department. Please try again.', 'error');
+        }
+    };
+
+    const handleEditDepartment = async (departmentId: string, updatedData: any) => {
+        try {
+            await DataService.updateDepartment(departmentId, updatedData);
+            addToast('Department successfully updated!', 'success');
+            await loadData(); // Refresh the data after editing
+        } catch (error) {
+            console.error('Error updating department:', error);
+            addToast('Failed to update department. Please try again.', 'error');
+        }
+    };
+
+    const handleEditSubmit = async (updatedData: any) => {
+        if (!editingDepartment) return;
+        try {
+            await handleEditDepartment(editingDepartment.id, updatedData);
+            handleCloseEditModal();
+        } catch (error) {
+            console.error('Error submitting edit:', error);
+        }
     };
 
     if (user?.role !== UserRole.ADMIN) {
@@ -216,7 +286,12 @@ const Departments: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredDepartments.map(dept => (
-                    <DepartmentCard key={dept.id} department={dept} />
+                    <DepartmentCard
+                        key={dept.id}
+                        department={dept}
+                        onEdit={() => handleOpenEditModal(dept)}
+                        onDelete={handleDeleteDepartment}
+                    />
                 ))}
             </div>
             
@@ -258,6 +333,42 @@ const Departments: React.FC = () => {
                         <Button type="submit">Create Department</Button>
                     </div>
                 </form>
+            </Modal>
+
+            <Modal title="Edit Department" isOpen={isEditModalOpen} onClose={handleCloseEditModal}>
+                {editingDepartment && (
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            handleEditSubmit({
+                                name: e.target.elements.name.value,
+                                companyIds: [e.target.elements.companyId.value],
+                            });
+                        }}
+                        className="space-y-6"
+                    >
+                        <Input
+                            id="name"
+                            label="Department Name"
+                            type="text"
+                            defaultValue={editingDepartment.name}
+                            required
+                        />
+                        <div>
+                            <label htmlFor="companyId" className="block text-sm font-medium text-slate-700">Company</label>
+                            <select
+                                id="companyId"
+                                defaultValue={editingDepartment.companyId}
+                                className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                            >
+                                {companies.map(c => (
+                                    <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <Button type="submit">Save Changes</Button>
+                    </form>
+                )}
             </Modal>
         </div>
     );
