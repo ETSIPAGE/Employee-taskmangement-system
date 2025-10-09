@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { data, Link, Navigate, useNavigate } from 'react-router-dom';
 import * as AuthService from '../../services/authService';
 import * as DataService from '../../services/dataService';
 import { User, UserRole, Department, Company } from '../../types';
@@ -8,8 +8,9 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import ViewSwitcher from '../shared/ViewSwitcher';
-import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
+import { BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
+import { useToast } from '../../context/ToastContext';
 
 const getInitials = (name: string) => {
     const names = name.split(' ');
@@ -27,7 +28,7 @@ const StatItem: React.FC<{ icon: React.ReactNode; value: React.ReactNode; label:
     </div>
 );
 
-const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User) => void; onDelete: (userId: string) => void; onImpersonate: (userId: string) => void; currentUser: User; }> = ({ user, companyName, onEdit, onDelete, onImpersonate, currentUser }) => {
+const UserCard: React.FC<{ user: User; onEdit: (user: User) => void; onDelete: (userId: string) => void }> = ({ user, onEdit, onDelete }) => {
     const statusStyles = {
         Active: { dot: 'bg-green-500' },
         Busy: { dot: 'bg-orange-500' },
@@ -40,7 +41,8 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
         [UserRole.EMPLOYEE]: { border: 'border-emerald-500', bg: 'bg-emerald-100', text: 'text-emerald-800' },
         [UserRole.HR]: { border: 'border-rose-500', bg: 'bg-rose-100', text: 'text-rose-800' },
     };
-
+    const validRoles = Object.values(UserRole);
+    const userRole = validRoles.includes(user.role as UserRole) ? user.role as UserRole : UserRole.EMPLOYEE; 
     const workloadStyles = {
         Light: { bg: 'bg-green-500', label: 'Light' },
         Normal: { bg: 'bg-blue-500', label: 'Normal' },
@@ -54,7 +56,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
-        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${roleStyles[user.role].border}`}>
+        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${roleStyles[userRole].border}`}>
             {/* Header */}
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-4">
@@ -64,8 +66,8 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     <div>
                          <div className="flex items-center gap-x-2">
                             <h3 className="text-xl font-bold text-slate-800">{user.name}</h3>
-                             <span className={`${roleStyles[user.role].bg} ${roleStyles[user.role].text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
-                                {user.role}
+                             <span className={`${roleStyles[userRole].bg} ${roleStyles[userRole].text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
+                             {user.role || 'N/A'} 
                             </span>
                         </div>
                         <div className="flex items-center space-x-2 text-sm text-slate-500 mt-1">
@@ -83,11 +85,6 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     {isMenuOpen && (
                         <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg z-10 border">
                             <a href="#" onClick={(e) => { e.preventDefault(); onEdit(user); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">Edit User</a>
-                            {currentUser.role === UserRole.ADMIN && currentUser.id !== user.id && (
-                                <a href="#" onClick={(e) => { e.preventDefault(); onImpersonate(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
-                                    Impersonate
-                                </a>
-                            )}
                             <a href="#" onClick={(e) => { e.preventDefault(); onDelete(user.id); setIsMenuOpen(false); }} className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50">Delete User</a>
                         </div>
                     )}
@@ -95,10 +92,9 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
             </div>
 
             {/* Info */}
-             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-slate-600">
-                <div className="flex items-center space-x-2 truncate"><MailIcon className="h-4 w-4 flex-shrink-0" /> <span className="truncate">{user.email}</span></div>
-                <div className="flex items-center space-x-2 truncate"><BuildingOfficeIcon className="h-4 w-4 flex-shrink-0" /> <span className="truncate">{companyName || 'N/A'}</span></div>
-                <div className="col-span-2 flex items-center space-x-2 truncate"><CalendarIcon className="h-4 w-4 flex-shrink-0" /> <span>Joined {user.joinedDate ? new Date(user.joinedDate).toLocaleDateString() : 'N/A'}</span></div>
+            <div className="flex items-center space-x-6 text-sm text-slate-600">
+                <div className="flex items-center space-x-2"><MailIcon className="h-4 w-4" /> <span>{user.email}</span></div>
+                <div className="flex items-center space-x-2"><CalendarIcon className="h-4 w-4" /> <span>Joined {user.joinedDate ? new Date(user.joinedDate).toLocaleDateString() : 'N/A'}</span></div>
             </div>
 
             {/* Skills */}
@@ -135,6 +131,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     <Link to={`/users/${user.id}`}>
                          <button className="px-4 py-2 text-sm font-semibold rounded-lg bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-shadow shadow-sm hover:shadow-md">View Profile</button>
                     </Link>
+                    
                 </div>
                 <div className="w-40 flex-shrink-0">
                     <div className="flex justify-between items-center mb-1">
@@ -146,14 +143,33 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     </div>
                 </div>
             </div>
+            
+            <div className="flex space-x-2">
+                    <button 
+                        onClick={() => onEdit(user)}
+                        className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-shadow shadow-sm hover:shadow-md flex items-center gap-2"
+                    >
+                        <EditIcon className="h-4 w-4" />
+                        Edit
+                    </button>
+                    <button 
+                        onClick={() => onDelete(user.id)}
+                        className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 transition-shadow shadow-sm hover:shadow-md flex items-center gap-2"
+                    >
+                        <TrashIcon className="h-4 w-4" />
+                        Delete
+                    </button>
+            </div>  
         </div>
     );
 };
 
 
 const UserManagement: React.FC = () => {
-    const { user: currentUser, impersonateUser } = useAuth();
+    const { user: currentUser } = useAuth();
+    console.log("current usr",currentUser)
     const navigate = useNavigate();
+    const { addToast } = useToast();
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
@@ -173,38 +189,56 @@ const UserManagement: React.FC = () => {
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
     const [managerId, setManagerId] = useState<string | undefined>(undefined);
+    const [managerIds, setManagerIds] = useState<string[]>([]);
+    const [id, setId] = useState('');
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
-    const [companyId, setCompanyId] = useState<string | undefined>(undefined);
+    const [companyIds, setCompanyIds] = useState<string[]>([]);
     const [rating, setRating] = useState(0);
+    console.log(companyIds,"companies");
+    console.log("compnies",companies);
+    console.log('departments',departments);
+    // const loadData = useCallback(() => {
+    //     setIsLoading(true);
+    //     try {
+    //         setUsers(AuthService.getUsers());
+    //         setManagers(AuthService.getManagers());
+    //         setDepartments(DataService.getDepartments());
+    //     } catch (error) {
+    //         console.error("Failed to load user data", error);
+    //     } finally {
+    //         setIsLoading(false);
+    //     }
+    // }, []);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            setUsers(AuthService.getUsers());
-            setManagers(AuthService.getManagers());
-            setCompanies(DataService.getCompanies());
-        } catch (error) {
-            console.error("Failed to load user data", error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+          const usersData = await AuthService.getUsers();
+          const managersData = usersData.filter((u: User) => u.role === UserRole.MANAGER);
+        console.log(managersData,"managersData");
+          setUsers(usersData);
+          setManagers(managersData);
+      
+          const companies = await AuthService.getCompanies();
+          console.log("companies",companies);
+          setCompanies(companies);
 
+          // keep departments local for now
+        //   setDepartments(DataService.getDepartments());
+          const departments = await AuthService.getDepartments();
+          console.log("departments",departments);
+          setDepartments(departments.items);
+          console.log("departments",departments.items);
+        } catch (error) {
+          console.error("Failed to load user data", error);
+        } finally {
+          setIsLoading(false);
+        }
+      }, []);
+      
     useEffect(() => {
         loadData();
     }, [loadData]);
-
-    useEffect(() => {
-        const fetchDepartments = async () => {
-            try {
-                const apiDepartments = await DataService.getDepartments();
-                setDepartments(apiDepartments);
-            } catch (error) {
-                console.error("Failed to fetch departments for user management:", error);
-            }
-        };
-        fetchDepartments();
-    }, []);
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -213,6 +247,29 @@ const UserManagement: React.FC = () => {
             return searchMatch && roleMatch;
         });
     }, [users, searchTerm, roleFilter]);
+    
+   
+  const filteredDepartments = useMemo(()=>{
+   // Filter departments based on selected companyIds
+     // 🔹 For testing: inject test company IDs into each department
+     const data = departments.map((dept) => ({
+        ...dept,
+        companyIds: [...new Set([...dept.companyIds, ...companyIds])],
+      }));
+//    console.log("modi",modidepartments);
+   const filteredDepartments = companyIds.length > 0
+   ?departments.filter((dept) => dept.companyIds.some(cId => companyIds.includes(cId)))
+   : [];
+
+   return filteredDepartments;
+  },[companyIds]);
+
+  const filteredManagers = useMemo(() => {
+    return managers.filter((m) =>
+      m.departmentIds?.some((dId) => departmentIds.includes(dId))
+    );
+  }, [managers, departmentIds]);
+  
 
     const resetForm = useCallback(() => {
         setName('');
@@ -222,9 +279,9 @@ const UserManagement: React.FC = () => {
         setManagerId(managers.length > 0 ? managers[0].id : undefined);
         setEditingUser(null);
         setDepartmentIds([]);
-        setCompanyId(companies.length > 0 ? companies[0].id : undefined);
+        setCompanyIds([]);
         setRating(0);
-    }, [managers, companies]);
+    }, [managers]);
 
     const handleOpenCreateModal = () => {
         resetForm();
@@ -232,14 +289,16 @@ const UserManagement: React.FC = () => {
     };
 
     const handleOpenEditModal = (userToEdit: User) => {
+        console.log("edit user",userToEdit)
         setEditingUser(userToEdit);
         setName(userToEdit.name);
         setEmail(userToEdit.email);
+        setId(userToEdit.id);
         setPassword(''); // Don't show password
         setRole(userToEdit.role);
         setManagerId(userToEdit.managerId);
         setDepartmentIds(userToEdit.departmentIds || []);
-        setCompanyId(userToEdit.companyId);
+        setCompanyIds(userToEdit.companyIds || []);
         setRating(userToEdit.rating || 0);
         setIsModalOpen(true);
     };
@@ -249,35 +308,39 @@ const UserManagement: React.FC = () => {
         resetForm();
     };
     
-    const handleDeleteUser = (userId: string) => {
+    const handleDeleteUser = async (userId: string) => {  
         if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            AuthService.deleteUser(userId);
-            loadData();
-        }
-    };
-
-    const handleImpersonate = async (userId: string) => {
-        try {
-            await impersonateUser(userId);
-            navigate('/');
-        } catch (error) {
-            console.error("Impersonation failed", error);
-            alert("Could not log in as this user.");
-        }
-    };
-
-    const handleDepartmentToggle = (deptId: string) => {
-        setDepartmentIds(prev => {
-            const newIds = new Set(prev);
-            if (newIds.has(deptId)) {
-                newIds.delete(deptId);
-            } else {
-                newIds.add(deptId);
+            try {
+                await AuthService.deleteUser(userId);
+                addToast('Employee deleted successfully!', 'success');
+                loadData();
+            } catch (error) {
+                addToast('Failed to delete employee. Please try again.', 'error');
             }
-            return Array.from(newIds);
-        });
+        }
     };
-    
+
+ 
+// Toggle for managers
+const handleManagerToggle = (id: string) => {
+    setManagerIds((prev) =>
+      prev.includes(id) ? prev.filter((mid) => mid !== id) : [...prev, id]
+    );
+  };
+  
+  // Toggle for departments
+  const handleDepartmentToggle = (id: string) => {
+    setDepartmentIds((prev) =>
+      prev.includes(id) ? prev.filter((did) => did !== id) : [...prev, id]
+    );
+  };
+
+  // Toggle for companies
+  const handleCompanyToggle = (id: string) => {
+    setCompanyIds((prev) =>
+      prev.includes(id) ? prev.filter((cid) => cid !== id) : [...prev, id]
+    );
+  };
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
@@ -286,33 +349,33 @@ const UserManagement: React.FC = () => {
                     name, 
                     role, 
                     departmentIds,
-                    companyId,
-                    managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                    companyIds,
+                    managerIds: role === UserRole.EMPLOYEE ?managerIds : undefined,
                     rating: rating,
                 };
-                AuthService.updateUser(editingUser.id, updates);
+               await AuthService.updateUser(editingUser.id, updates);
+               addToast('Employee updated successfully!', 'success');
             } else {
                 if (!password) {
-                    alert("Password is required for new users.");
+                    addToast('Password is required for new users.', 'error');
                     return;
                 }
-                // Register first, which creates a default user
-                await AuthService.register({ name, email, password });
-                // Then, find that user and update them with the details from the form
-                const newUser = AuthService.getUsers().find(u => u.email === email);
-                if (newUser) {
-                    AuthService.updateUser(newUser.id, {
-                        role,
-                        departmentIds,
-                        companyId,
-                        managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
-                    });
-                }
+               await AuthService.register({ 
+                    name, 
+                    email, 
+                    password, 
+                    role, 
+                    departmentIds,
+                    companyIds,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined 
+                });
+               addToast('Employee added successfully!', 'success');
             }
             loadData();
             handleCloseModal();
         } catch(err) {
-            alert(err instanceof Error ? err.message : 'An error occurred');
+            const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+            addToast(errorMessage, 'error');
         }
     };
 
@@ -346,18 +409,19 @@ const UserManagement: React.FC = () => {
 
             {view === 'card' ? (
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {filteredUsers.map(user => {
-                        const company = companies.find(c => c.id === user.companyId);
-                        return (<UserCard 
-                            key={user.id} 
-                            user={user} 
-                            companyName={company?.name} 
-                            onEdit={handleOpenEditModal} 
-                            onDelete={handleDeleteUser}
-                            onImpersonate={handleImpersonate}
-                            currentUser={currentUser}
-                        />);
-                    })}
+                    {/* {filteredUsers.map(user => (
+                        console.log("user",user.role),
+                        <UserCard key={user.id} user={user} onEdit={handleOpenEditModal} onDelete={handleDeleteUser} />
+                    ))} */}
+                     {filteredUsers.map(user => {
+            // Add a check to ensure both user and user.role are defined before rendering
+            if (!user || !user.role) {
+                console.error("Skipping rendering for an invalid user object:", user);
+                return null; // Don't render anything for this user
+            }
+            console.log("user", user.role); // This will now only log valid roles
+            return <UserCard key={user.id} user={user} onEdit={handleOpenEditModal} onDelete={handleDeleteUser} />;
+        })}
                 </div>
             ) : (
                 <div className="bg-white shadow-md rounded-lg overflow-x-auto">
@@ -366,16 +430,13 @@ const UserManagement: React.FC = () => {
                             <tr>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Employee</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Job Title</th>
-                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Role</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Rating</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredUsers.map(user => {
-                                const company = companies.find(c => c.id === user.companyId);
-                                return (
+                            {filteredUsers.map(user => (
                                 <tr key={user.id} onClick={() => navigate(`/users/${user.id}`)} className="cursor-pointer hover:bg-slate-50 transition-colors">
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 font-semibold whitespace-no-wrap">{user.name}</p>
@@ -385,9 +446,6 @@ const UserManagement: React.FC = () => {
                                         <p className="text-slate-900 whitespace-no-wrap">{user.jobTitle}</p>
                                         <p className="text-slate-600 whitespace-no-wrap text-xs">{user.departmentIds?.map(id => departments.find(d => d.id === id)?.name).join(', ')}</p>
                                     </td>
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
-                                        <p className="text-slate-900 whitespace-no-wrap">{company?.name || 'N/A'}</p>
-                                    </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm"><span className="capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-slate-100 text-slate-800">{user.role}</span></td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         {user.rating !== undefined ? <StarRating rating={user.rating} /> : <span className="text-slate-400">Not Rated</span>}
@@ -396,19 +454,10 @@ const UserManagement: React.FC = () => {
                                         <div className="flex items-center space-x-3">
                                             <button onClick={(e) => { e.stopPropagation(); handleOpenEditModal(user); }} className="text-slate-500 hover:text-indigo-600"><EditIcon /></button>
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteUser(user.id); }} className="text-slate-500 hover:text-red-600"><TrashIcon /></button>
-                                            {currentUser?.role === UserRole.ADMIN && currentUser.id !== user.id && (
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleImpersonate(user.id); }}
-                                                    className="text-slate-500 hover:text-green-600"
-                                                    title={`Log in as ${user.name}`}
-                                                >
-                                                    <LoginIcon />
-                                                </button>
-                                            )}
                                         </div>
                                     </td>
                                 </tr>
-                            )})}
+                            ))}
                         </tbody>
                     </table>
                 </div>
@@ -432,19 +481,29 @@ const UserManagement: React.FC = () => {
                              {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
                         </select>
                     </div>
-
                     <div>
-                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
-                        <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                            <option value="">No Company</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Companies</label>
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
+                            {companies?.map(comp => (
+                                <div key={comp.id} className="flex items-center">
+                                    <input
+                                        id={`comp-${comp.id}`}
+                                        type="checkbox"
+                                        checked={companyIds.includes(comp.id)}
+                                        onChange={() => handleCompanyToggle(comp.id)}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`comp-${comp.id}`} className="ml-2 block text-sm text-slate-800">
+                                        {comp.name}
+                                    </label>
+                                </div>
+                            ))}
+                        </div>
                     </div>
-
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
-                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
-                            {departments.length > 0 ? departments.map(dept => (
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
+                            {filteredDepartments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -457,19 +516,49 @@ const UserManagement: React.FC = () => {
                                         {dept.name}
                                     </label>
                                 </div>
-                            )) : <p className="text-sm text-slate-500">Loading departments...</p>}
+                            ))}
                         </div>
                     </div>
 
                     {role === UserRole.EMPLOYEE && (
-                        <div>
-                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                            <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                <option value="">No Manager</option>
-                                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
-                        </div>
-                    )}
+  <div>
+    <label className="block text-sm font-medium text-slate-700 mb-2">Assign Managers</label>
+    <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2">
+      {/* {managers.map(m => (
+        <div key={m.id} className="flex items-center">
+          <input
+            id={`manager-${m.id}`}
+            type="checkbox"
+            checked={managerIds.includes(m.id)}
+            onChange={() => handleManagerToggle(m.id)}
+            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+          />
+          <label htmlFor={`manager-${m.id}`} className="ml-2 text-sm text-slate-800">
+            {m.name}
+          </label>
+        </div>
+      ))} */}
+      {filteredManagers
+  .filter(m => m.id !== id) // only managers whose id is NOT the one to skip
+  .map(m => (
+    <div key={m.id} className="flex items-center">
+      <input
+        id={`manager-${m.id}`}
+        type="checkbox"
+        checked={managerIds.includes(m.id)}
+        onChange={() => handleManagerToggle(m.id)}
+        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+      />
+      <label htmlFor={`manager-${m.id}`} className="ml-2 text-sm text-slate-800">
+        {m.name}
+      </label>
+    </div>
+))}
+
+    </div>
+  </div>
+)}
+
                     
                     {editingUser && (
                         <Input
