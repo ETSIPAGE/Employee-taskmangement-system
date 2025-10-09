@@ -280,6 +280,7 @@ const UserManagement: React.FC = () => {
         setEditingUser(null);
         setDepartmentIds([]);
         setCompanyIds([]);
+        setManagerIds([]);
         setRating(0);
     }, [managers]);
 
