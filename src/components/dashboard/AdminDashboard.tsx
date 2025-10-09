@@ -73,7 +73,7 @@ const BarChart = ({ data, title }: { data: { label: string, value: number }[], t
 
 const OverdueTaskItem = ({ task, project, assignee }: { task: Task, project?: Project, assignee?: User }) => {
     return (
-        <li className="py-3 border-b border-slate-100 last:border-b-0">
+        <div className="py-3 border-b border-slate-100 last:border-b-0">
             <div className="flex items-center justify-between">
                 <div>
                     <Link to={`/tasks/${task.id}`} className="font-semibold text-slate-700 hover:text-indigo-600 transition-colors">
@@ -91,7 +91,7 @@ const OverdueTaskItem = ({ task, project, assignee }: { task: Task, project?: Pr
                     <p className="text-xs text-red-500">Overdue</p>
                 </div>
             </div>
-        </li>
+        </div>
     );
 };
 
@@ -222,8 +222,12 @@ const AdminDashboard: React.FC = () => {
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Overdue Tasks</h2>
                     {overdueTasksList.length > 0 ? (
                         <ul className="divide-y divide-slate-100">
-                           {overdueTasksList.map(task => <OverdueTaskItem key={task.id} task={task} project={projectsMap.get(task.projectId)} assignee={usersMap.get(task.assigneeId || '')} />)}
-                        </ul>
+                                                   {overdueTasksList.map(task => (
+                                                       <li key={task.id}>
+                                                           <OverdueTaskItem task={task} project={projectsMap.get(task.projectId)} assignee={usersMap.get(task.assigneeId || '')} />
+                                                       </li>
+                                                   ))}
+                                                </ul>
                     ) : (
                         <p className="text-center py-4 text-slate-500">No overdue tasks. Great job!</p>
                     )}
