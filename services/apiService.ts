@@ -488,36 +488,45 @@ async updateDepartment(payload: {
 
 
 
-  async deleteDepartment(id: string, timestamp: string) {
-    const endpoint = `https://8eir95tylc.execute-api.ap-south-1.amazonaws.com/prod/delete-department/${encodeURIComponent(
-      id
-    )}?timestamp=${encodeURIComponent(timestamp)}`;
-  
-    try {
-      const response = await fetch(endpoint, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          // Add Authorization header if your API requires it
-        },
-      });
-  
-      if (!response.ok) {
-        throw new Error(`DELETE failed: ${response.status}`);
-      }
-  
-      // Some APIs return 204 No Content on delete
-      if (response.status === 204) {
-        return { message: "Department deleted successfully", id };
-      }
-  
-      const json = await response.json();
-      return json;
-    } catch (error) {
-      console.error("Error deleting department:", error);
-      throw error;
+/**
+ * Deletes a department record using your working Lambda endpoint.
+ * Uses the same logic verified via Postman.
+ */
+async deleteDepartment(id: string, timestamp: string) {
+  const endpoint = `https://hqcfapxuu4.execute-api.ap-south-1.amazonaws.com/production/departments/${encodeURIComponent(
+    id
+  )}?timestamp=${encodeURIComponent(timestamp)}`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("❌ Delete failed:", text);
+      throw new Error(`Delete failed: ${response.status} ${response.statusText}`);
     }
+
+    // API might return 204 No Content or JSON
+    if (response.status === 204) {
+      return { message: "Department deleted successfully", id };
+    }
+
+    const data = await response.json();
+    console.log("✅ Department deleted:", data);
+    return data;
+  } catch (error) {
+    console.error("💥 Error deleting department:", error);
+    throw new Error(
+      error instanceof Error ? error.message : "Unknown error during delete"
+    );
   }
+}
+
   
   
 }
