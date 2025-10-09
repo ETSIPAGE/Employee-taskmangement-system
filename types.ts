@@ -8,6 +8,10 @@ export enum UserRole {
 export interface Department {
   id: string;
   name: string;
+  companyId?: string; // Added companyId property
+  description?: string; // Added description property
+  managerId?: string; // Added managerId property
+  employeeIds?: string[]; // Added employeeIds property
 }
 export interface Company {
   id: string;                // UUID
@@ -15,6 +19,8 @@ export interface Company {
   entityType: "COMPANY";     // Entity type fixed as COMPANY
   createdBy: string;         // User/system who created it
   timestamp: string;         // ISO date string
+  ownerId?: string;          // Added ownerId property
+  createdAt?: string;        // Added createdAt property
 
   // Metrics
   projectCount: number;
@@ -139,8 +145,9 @@ export interface Project {
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
-  companyName?: string;
+  companyId?: string; // Added companyId property
   roadmap?: ProjectMilestone[];
+  timestamp?: string; // Added timestamp property
 }
 
 export interface TaskDependency {

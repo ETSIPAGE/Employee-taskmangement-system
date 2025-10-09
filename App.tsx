@@ -24,6 +24,7 @@ import OnboardingForm from './components/onboarding/OnboardingForm';
 import OnboardingSubmissions from './components/onboarding/OnboardingSubmissions';
 import SubmissionDetail from './components/onboarding/SubmissionDetail';
 import OnboardingFormView from './components/onboarding/OnboardingFormView';
+import Companies from './components/companies/Companies';
 
 const App: React.FC = () => {
   const { user, loading } = useAuth();
@@ -65,6 +66,7 @@ const App: React.FC = () => {
                   <Route path="/onboarding" element={<OnboardingSubmissions />} />
                   <Route path="/onboarding/form" element={<OnboardingFormView />} />
                   <Route path="/onboarding/:submissionId" element={<SubmissionDetail />} />
+                  <Route path="/companies" element={<Companies />} />
                   <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
               </MainLayout>
