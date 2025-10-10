@@ -5,31 +5,17 @@ export enum UserRole {
   HR = 'HR',
 }
 
+export interface Company {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+}
+
 export interface Department {
   id: string;
   name: string;
-  companyId?: string; // Added companyId property
-  description?: string; // Added description property
-  managerId?: string; // Added managerId property
-  employeeIds?: string[]; // Added employeeIds property
-}
-export interface Company {
-  id: string;                // UUID
-  name: string;              // Company name
-  entityType: "COMPANY";     // Entity type fixed as COMPANY
-  createdBy: string;         // User/system who created it
-  timestamp: string;         // ISO date string
-  ownerId?: string;          // Added ownerId property
-  createdAt?: string;        // Added createdAt property
-
-  // Metrics
-  projectCount: number;
-  projectsCompleted: number;
-  projectsInProgress: number;
-  projectsPending: number;
-  managerCount: number;
-  employeeCount: number;
-  departmentCount: number;
+  companyId: string;
 }
 
 export interface UserStats {
@@ -93,10 +79,9 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  companyId?: string;
   managerId?: string;
-  managerIds?: string[];
   departmentIds?: string[];
-  companyIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';
   joinedDate?: string; // ISO string
@@ -145,9 +130,8 @@ export interface Project {
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
-  companyId?: string; // Added companyId property
+  companyId: string;
   roadmap?: ProjectMilestone[];
-  timestamp?: string; // Added timestamp property
 }
 
 export interface TaskDependency {
@@ -177,6 +161,7 @@ export interface Task {
   dueDate?: string;
   projectId: string;
   assigneeId?: string;
+  assign_by?: string;
   status: TaskStatus;
   category?: string;
   priority?: 'low' | 'medium' | 'high';
@@ -251,16 +236,3 @@ export interface OnboardingSubmission {
     status: OnboardingStatus;
     steps?: OnboardingStep[];
 }
-// Define the success response shape
-export type SuccessResponse = {
-  message: string;
-};
-
-// Define the error response shape
-export type ErrorResponse = {
-  error: string;
-  message?: string; // The error object might also contain a 'message'
-};
-
-// Create a union type to handle both outcomes
-export type ApiResponse = SuccessResponse | ErrorResponse;

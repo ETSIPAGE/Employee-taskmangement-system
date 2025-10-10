@@ -1,14 +1,9 @@
-import { ApiResponse, ErrorResponse, User, UserRole } from '../types';
-const API_URL = "https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev";
+import { User, UserRole } from '../types';
+
 export interface RegisterCredentials {
   name: string;
   email: string;
   password: string;
-  role: UserRole;
-  managerId?: string;
-  departmentIds?: string[];
-  companyIds?: string[];
-  managerIds?: string[];
 }
 
 export interface LoginCredentials {
@@ -18,195 +13,377 @@ export interface LoginCredentials {
 
 const USERS_KEY = 'ets_users';
 const CURRENT_USER_KEY = 'ets_current_user';
-const PASSWORDS_KEY = 'ets_passwords';
+const TOKEN_KEY = 'ets_token';
+const ORIGINAL_USER_KEY = 'ets_original_user_id';
 
-const getInitialPasswords = (): Record<string, string> => {
-    return {
-        'admin@test.com': 'password123',
-        'manager@test.com': 'password123',
-        'drone@example.com': 'password123',
-        'sarah.chen@example.com': 'password123',
-        'mike.rodriguez@example.com': 'password123',
-        'jessica.b@test.com': 'password123',
-        'david.m@test.com': 'password123',
-        'employee@test.com': 'password123',
-        'hr@test.com': 'password123',
-    };
+const getInitialUsers = (): User[] => {
+    return [
+        { 
+            id: '1', name: 'Admin User', email: 'admin@test.com', role: UserRole.ADMIN, companyId: 'comp-1', departmentIds: ['dept-1'],
+            jobTitle: 'Administrator', status: 'Active', joinedDate: '2022-01-10T00:00:00.000Z',
+            skills: ['System Admin', 'Database Mgmt', 'Security'],
+            stats: { completedTasks: 5, inProgressTasks: 1, efficiency: 95, totalHours: 45, workload: 'Light' },
+            rating: 9.5
+        },
+        { 
+            id: '2', name: 'Manager User', email: 'manager@test.com', role: UserRole.MANAGER, companyId: 'comp-1', departmentIds: ['dept-7', 'dept-5'],
+            jobTitle: 'Project Manager', status: 'Active', joinedDate: '2022-05-20T00:00:00.000Z',
+            skills: ['Agile', 'Scrum', 'JIRA', 'Leadership'],
+            stats: { completedTasks: 25, inProgressTasks: 5, efficiency: 91, totalHours: 350, workload: 'Normal' },
+            rating: 9.1,
+            personalDetails: {
+                dateOfBirth: '1985-08-15T00:00:00.000Z',
+                nationality: 'American',
+                maritalStatus: 'Married',
+                gender: 'Female',
+            },
+            contactNumber: '+1 123-456-7890',
+            address: {
+                street: '456 Oak Avenue',
+                city: 'Metropolis',
+                state: 'CA',
+                zipCode: '90210',
+                country: 'USA'
+            },
+            familyMembers: [
+                { id: 'fm-1', name: 'John Doe', relationship: 'Spouse', dateOfBirth: '1984-07-20T00:00:00.000Z' }
+            ],
+            education: [
+                { id: 'edu-1', degree: 'MBA', institution: 'State University', yearOfCompletion: 2010 }
+            ],
+            compensation: {
+                salary: 120000,
+                payFrequency: 'Monthly',
+                bankDetails: {
+                    bankName: 'Metropolis Bank',
+                    accountNumber: '**** **** **** 1234',
+                    ifscCode: 'METB00001'
+                }
+            },
+            documents: [
+                { id: 'doc-1', name: 'Passport', status: 'Verified' },
+                { id: 'doc-2', name: 'Degree Certificate', status: 'Submitted' },
+                { id: 'doc-3', name: 'Address Proof', status: 'Pending' }
+            ]
+        },
+        { 
+            id: '3', name: 'Drone TV', email: 'drone@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
+            jobTitle: 'Developer', status: 'Active', joinedDate: '2024-01-15T00:00:00.000Z',
+            skills: ['React', 'TypeScript', 'Node.js', 'Python'],
+            stats: { completedTasks: 12, inProgressTasks: 3, efficiency: 92, totalHours: 156, workload: 'Normal' },
+            rating: 9.2,
+            personalDetails: {
+                dateOfBirth: '1992-03-22T00:00:00.000Z',
+                nationality: 'Canadian',
+                maritalStatus: 'Single',
+                gender: 'Male',
+            },
+            contactNumber: '+1 987-654-3210',
+            address: {
+                street: '123 Maple Street',
+                city: 'Toronto',
+                state: 'ON',
+                zipCode: 'M5V 2E9',
+                country: 'Canada'
+            },
+            education: [
+                { id: 'edu-2', degree: 'B.Sc. Computer Science', institution: 'University of Toronto', yearOfCompletion: 2014 }
+            ],
+            compensation: {
+                salary: 95000,
+                payFrequency: 'Bi-Weekly',
+                bankDetails: {
+                    bankName: 'CIBC',
+                    accountNumber: '**** **** **** 5678',
+                    ifscCode: 'CIBCCATT'
+                }
+            },
+            documents: [
+                { id: 'doc-4', name: 'Work Permit', status: 'Verified' },
+                { id: 'doc-5', name: 'Address Proof', status: 'Submitted' },
+            ]
+        },
+        { 
+            id: '4', name: 'Sarah Chen', email: 'sarah.chen@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-5'],
+            jobTitle: 'Designer', status: 'Active', joinedDate: '2024-02-01T00:00:00.000Z',
+            skills: ['UI/UX', 'Figma', 'Adobe Creative Suite', 'Prototyping'],
+            stats: { completedTasks: 8, inProgressTasks: 2, efficiency: 88, totalHours: 98, workload: 'Light' },
+            rating: 8.8
+        },
+        { 
+            id: '5', name: 'Mike Rodriguez', email: 'mike.rodriguez@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
+            jobTitle: 'Developer', status: 'Busy', joinedDate: '2023-11-10T00:00:00.000Z',
+            skills: ['Vue.js', 'Python', 'Docker', 'AWS'],
+            stats: { completedTasks: 18, inProgressTasks: 4, efficiency: 85, totalHours: 234, workload: 'Heavy' },
+            rating: 8.5
+        },
+        { 
+            id: '6', name: 'Jessica Brown', email: 'jessica.b@test.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
+            jobTitle: 'QA Engineer', status: 'Offline', joinedDate: '2023-03-12T00:00:00.000Z',
+            skills: ['Jest', 'Cypress', 'Automation', 'CI/CD'],
+            stats: { completedTasks: 35, inProgressTasks: 1, efficiency: 98, totalHours: 180, workload: 'Light' },
+            rating: 9.8
+        },
+        { 
+            id: '7', name: 'David Miller', email: 'david.m@test.com', role: UserRole.EMPLOYEE, companyId: 'comp-1', departmentIds: ['dept-7'], // Belongs to no manager
+            jobTitle: 'DevOps Engineer', status: 'Active', joinedDate: '2022-08-01T00:00:00.000Z',
+            skills: ['Kubernetes', 'Terraform', 'Jenkins', 'GCP'],
+            stats: { completedTasks: 22, inProgressTasks: 2, efficiency: 93, totalHours: 210, workload: 'Normal' },
+            rating: 9.3
+        },
+        { 
+            id: '8', name: 'HR User', email: 'hr@test.com', role: UserRole.HR, companyId: 'comp-1', departmentIds: ['dept-3'],
+            jobTitle: 'HR Specialist', status: 'Active', joinedDate: '2023-01-10T00:00:00.000Z',
+            skills: ['Recruiting', 'Onboarding', 'Employee Relations'],
+            stats: { completedTasks: 10, inProgressTasks: 2, efficiency: 96, totalHours: 40, workload: 'Normal' },
+            rating: 9.6
+        },
+    ];
 };
 
-const getPasswords = (): Record<string, string> => {
-    const passwordsJson = localStorage.getItem(PASSWORDS_KEY);
-    if(passwordsJson) {
-        return JSON.parse(passwordsJson);
-    }
-    const initialPasswords = getInitialPasswords();
-    localStorage.setItem(PASSWORDS_KEY, JSON.stringify(initialPasswords));
-    return initialPasswords;
-}
+export const getUsers = (): User[] => {
+  const usersJson = localStorage.getItem(USERS_KEY);
+  if (usersJson) {
+    return JSON.parse(usersJson);
+  }
+  const initialUsers = getInitialUsers();
+  localStorage.setItem(USERS_KEY, JSON.stringify(initialUsers));
+  return initialUsers;
+};
 
 const saveUsers = (users: User[]) => {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 };
 
-const savePasswords = (passwords: Record<string, string>) => {
-    localStorage.setItem(PASSWORDS_KEY, JSON.stringify(passwords));
-}
+export const register = async (credentials: RegisterCredentials): Promise<User> => {
+    // Step 1: Call the backend API to register the user.
+    const response = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: credentials.name,
+            email: credentials.email,
+            password: credentials.password,
+        }),
+    });
 
-export const updatePassword = (email: string, oldPass: string, newPass: string): void => {
-    const passwords = getPasswords();
-    if (passwords[email] !== oldPass) {
-        throw new Error("Incorrect current password.");
+    const responseData = await response.json();
+
+    if (!response.ok) {
+        throw new Error(responseData.message || 'Registration failed.');
     }
-    if (newPass.length < 6) {
-        throw new Error("New password must be at least 6 characters long.");
+
+    // Step 2: Store the received token.
+    localStorage.setItem(TOKEN_KEY, responseData.token);
+
+    // Step 3: Create a parallel user record in the frontend's local storage.
+    const users = getUsers();
+    const existingUser = users.find(u => u.email === credentials.email);
+
+    if (existingUser) {
+        console.warn('User already exists locally. Logging them in instead.');
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(existingUser));
+        return existingUser;
     }
-    passwords[email] = newPass;
-    savePasswords(passwords);
+
+    const newUser: User = {
+        id: `user-${Date.now()}`,
+        name: credentials.name,
+        email: credentials.email,
+        role: UserRole.EMPLOYEE, // Default role for new signups
+        status: 'Active',
+        joinedDate: new Date().toISOString(),
+        jobTitle: 'New Employee',
+        skills: [],
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' },
+    };
+    
+    users.push(newUser);
+    saveUsers(users);
+
+    // Step 4: Set the new user as the current user for the session.
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+    return newUser;
+};
+
+export const updateUser = (userId: string, updates: Partial<User>): User | undefined => {
+    const users = getUsers();
+    const userIndex = users.findIndex(u => u.id === userId);
+    if (userIndex > -1) {
+        users[userIndex] = { ...users[userIndex], ...updates };
+        saveUsers(users);
+
+        const currentUserJson = localStorage.getItem(CURRENT_USER_KEY);
+        if (currentUserJson) {
+            const currentUser = JSON.parse(currentUserJson) as User;
+            if (currentUser.id === userId) {
+                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(users[userIndex]));
+            }
+        }
+
+        return users[userIndex];
+    }
+    return undefined;
+};
+
+export const deleteUser = (userId: string): void => {
+    let users = getUsers();
+    users = users.filter(u => u.id !== userId);
+    saveUsers(users);
 };
 
 export const login = async (email: LoginCredentials['email'], password: LoginCredentials['password']): Promise<User> => {
-  const users = await getUsers();
-  const passwords = getPasswords();
-  const user = users.find(u => u.email === email);
-  
-  const storedPassword = passwords[email];
+    // Step 1: Authenticate against the backend.
+    const response = await fetch('https://y6rtqrl50i.execute-api.ap-south-1.amazonaws.com/ETS-auth-dev/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+    });
 
-  if (!user || storedPassword !== password) {
-    throw new Error('Invalid email or password.');
-  }
+    const responseData = await response.json();
 
-  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
-  return user;
+    if (!response.ok) {
+        throw new Error(responseData.message || 'Invalid email or password.');
+    }
+    
+    // Step 2: Extract authoritative data from API response.
+    const { token, role: apiRole, id: apiUserId } = responseData;
+
+    if (!apiRole || !Object.values(UserRole).includes(apiRole)) {
+        throw new Error(`Invalid or missing role received from server. Role was: ${apiRole}`);
+    }
+    if (!apiUserId) {
+        throw new Error('User ID was not returned from the server.');
+    }
+
+    // Step 3: Store the received token.
+    localStorage.setItem(TOKEN_KEY, token);
+
+    // Step 4: Find or create a user in local storage and sync with API data.
+    let users = getUsers();
+    const localUser = users.find(u => u.email === email);
+    
+    let sessionUser: User;
+
+    if (localUser) {
+        const oldId = localUser.id;
+
+        // Deconstruct the existing local user to safely merge with API data.
+        // This ensures the role and ID from the server always override local values.
+        const { id: _, role: __, ...restOfLocalUser } = localUser;
+        
+        sessionUser = {
+            ...restOfLocalUser, // All other details from the local profile
+            id: apiUserId,      // Authoritative ID from the API
+            role: apiRole,      // Authoritative Role from the API
+        };
+        
+        // Find the user in our full list by their OLD ID and update them.
+        const userIndex = users.findIndex(u => u.id === oldId);
+        if (userIndex > -1) {
+            users[userIndex] = sessionUser;
+        }
+
+        // CRITICAL: If the user's ID changed and they are a manager, update employee references.
+        if (oldId !== apiUserId && apiRole === UserRole.MANAGER) {
+            users = users.map(u => {
+                if (u.managerId === oldId) {
+                    return { ...u, managerId: apiUserId };
+                }
+                return u;
+            });
+        }
+        
+        saveUsers(users);
+
+    } else {
+        // User does not exist locally. Create a new profile with data from the API.
+        console.warn(`User ${email} authenticated but not in local data. Creating a local profile.`);
+        
+        const name = email.split('@')[0].replace(/[\._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+        sessionUser = {
+            id: apiUserId, // Use ID from API
+            name: name,
+            email: email,
+            role: apiRole, // Use role from API
+            status: 'Active',
+            joinedDate: new Date().toISOString(),
+        };
+        users.push(sessionUser);
+        saveUsers(users);
+    }
+
+    // Step 5: Set the corrected user object as the current user for the session.
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(sessionUser));
+    return sessionUser;
 };
+
 
 export const logout = (): void => {
   localStorage.removeItem(CURRENT_USER_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(ORIGINAL_USER_KEY);
 };
 
-export const getCurrentUser = async(): Promise<User> => {
-  // Prime the user and password stores if they don't exist
-  await getUsers();
-  getPasswords();
+export const getCurrentUser = (): User | null => {
+  // Prime the user store if it doesn't exist
+  getUsers();
   
   const userJson = localStorage.getItem(CURRENT_USER_KEY);
   return userJson ? JSON.parse(userJson) : null;
 };
 
-// export const getUserById = (userId: string): User | undefined => {
-//     const users = getUsers();
-//     return users.find(u => u.id === userId);
-// };
+export const getUserById = (userId: string): User | undefined => {
+    const users = getUsers();
+    return users.find(u => u.id === userId);
+};
 
-// export const getTeamMembers = (managerId: string): User[] => {
-//   const users = getUsers();
-//   return users.filter(user => user.role === UserRole.EMPLOYEE && user.managerId === managerId);
-// };
+export const getOriginalUser = (): User | null => {
+    const originalUserId = localStorage.getItem(ORIGINAL_USER_KEY);
+    if (!originalUserId) return null;
+    return getUserById(originalUserId);
+};
 
-// export const getManagers = (): User[] => {
-//     const users = getUsers();
-//     return users.filter(user => user.role === UserRole.MANAGER);
-// };
-// src/services/authService.api.ts
-// import { User, UserRole } from "../types";
-
-    export const getUsers = async (): Promise<User[]> => {
-    const res = await fetch(`${API_URL}/users`);
-    // console.log(res);
-    if (!res.ok) throw new Error("Failed to fetch users");
-    const usersJson = localStorage.getItem(USERS_KEY);
-    // console.log("usersJson",usersJson);
-  if (usersJson) {
-    return JSON.parse(usersJson);
-  }
-//   const initialUsers = getInitialUsers();
-  const initialUsers= await res.json();
-  console.log("data",initialUsers);
-  localStorage.setItem(USERS_KEY, JSON.stringify(initialUsers));
-    return initialUsers;
-    };
-
-    export const  getCompanies = async() => {
-        const res = await fetch("https://j5dfp9hh9k.execute-api.ap-south-1.amazonaws.com/del/Ets-Create-Com-pz"); // 👈 replace with your API endpoint
-        if (!res.ok) throw new Error("Failed to fetch companies");
-        const data = await res.json();
-        console.log("data",data)
-        return data;
+export const impersonate = (userId: string): User | null => {
+    const originalUser = getCurrentUser();
+    if (!originalUser) {
+        throw new Error("Cannot impersonate without being logged in.");
+    }
+    if (originalUser.id === userId || originalUser.role !== UserRole.ADMIN) {
+        console.error("Impersonation attempt failed due to invalid permissions or target.");
+        return null;
     }
 
-   export const  getDepartments = async()=> {
-        const res = await fetch("https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/"); // 👈 replace with your endpoint
-        if (!res.ok) throw new Error("Failed to fetch departments");
-        const data = await res.json();    
-        return data;
+    const userToImpersonate = getUserById(userId);
+    if (userToImpersonate) {
+        localStorage.setItem(ORIGINAL_USER_KEY, originalUser.id);
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(userToImpersonate));
+        return userToImpersonate;
     }
-
-export const register = async (credentials: RegisterCredentials): Promise<User> => {
-      const users = await getUsers();
-  const passwords = getPasswords();
-  if (users.find(u => u.email === credentials.email)) {
-    throw new Error('An account with this email already exists.');
-  }
-  const res = await fetch(`${API_URL}/users`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(credentials),
-  });
-  if (!res.ok) throw new Error("Failed to register user");
-  let newUser = await res.json();
-  users.push(newUser);
-  passwords[credentials.email] = credentials.password;
-  saveUsers(users);
-  savePasswords(passwords);
-//   localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
-  return newUser;
+    return null;
 };
 
-export const updateUser = async (userId: string, updates: Partial<User>): Promise<User> => {
-  const res = await fetch(`${API_URL}/users/${userId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-  if (!res.ok) throw new Error("Failed to update user");
-  return res.json();
-};
-
-export const deleteUser = async (userId: string): Promise<ApiResponse> => {
-    const res = await fetch(`${API_URL}/users`, {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ id: userId }),
-    });
-    const responseData: ApiResponse = await res.json();
-    if (!res.ok) {
-      throw new Error((responseData as ErrorResponse).message || (responseData as ErrorResponse).error || "Failed to delete user");
+export const stopImpersonating = (): User | null => {
+    const originalUserId = localStorage.getItem(ORIGINAL_USER_KEY);
+    if (!originalUserId) {
+        return null;
     }
-    return responseData;
-  };
-
-
-
-export const getUserById = async (userId: string): Promise<User> => {
-//   const res = await fetch(`${API_URL}/users/${userId}`);
-//   if (!res.ok) throw new Error("Failed to fetch user");
-  const users = await getUsers();
-  return users.find(u => u.id === userId);
-//   return res.json();
+    const originalUser = getUserById(originalUserId);
+    if (originalUser) {
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(originalUser));
+        localStorage.removeItem(ORIGINAL_USER_KEY);
+        return originalUser;
+    }
+    return null;
 };
 
-export const getManagers = async (): Promise<User[]> => {
-  const users = await getUsers();
-  return users.filter((u) => u.role === UserRole.MANAGER);
+export const getTeamMembers = (managerId: string): User[] => {
+  const users = getUsers();
+  return users.filter(user => user.role === UserRole.EMPLOYEE && user.managerId === managerId);
 };
 
-export const getTeamMembers = async (managerId: string): Promise<User[]> => {
-  const users = await getUsers();
-  return users.filter((u) => u.role === UserRole.EMPLOYEE && u.managerId === managerId);
-};
-
-export const getToken = (): string | null => {
-  // Example implementation: Retrieve token from localStorage
-  return localStorage.getItem('auth_token');
+export const getManagers = (): User[] => {
+    const users = getUsers();
+    return users.filter(user => user.role === UserRole.MANAGER);
 };

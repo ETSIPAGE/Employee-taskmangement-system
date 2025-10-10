@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
@@ -64,7 +64,7 @@ const TaskDetail: React.FC = () => {
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
-                DataService.getUsers() // Corrected: Use DataService.getUsers()
+                DataService.getAllUsersFromApi()
             ]);
 
             setProject(taskProject || null);
