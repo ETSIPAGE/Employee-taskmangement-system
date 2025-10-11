@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import { Company, Project, TaskStatus } from '../../types';
+import { Company, Project, TaskStatus, Task } from '../../types'; // Import Task type
 import ProjectCard from '../projects/ProjectCard';
 
 const CompanyProjects: React.FC = () => {
-    const { companyId: rawCompanyId } = useParams<{ companyId: string }>(); // Getting raw companyId from URL params
-    const companyId = rawCompanyId || ''; // Ensure companyId is always a string
+    const { companyId: rawCompanyId } = useParams<{ companyId: string }>();
+    const companyId = rawCompanyId || '';
 
     const [company, setCompany] = useState<Company | null>(null);
     const [projects, setProjects] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null); // Added error state
+    const [error, setError] = useState<string | null>(null);
 
     const loadData = useCallback(async () => {
         if (!companyId) {
@@ -21,14 +21,13 @@ const CompanyProjects: React.FC = () => {
             return;
         }
         
-        console.log("CompanyProjects: Attempting to load data for companyId:", companyId); // <-- IMPORTANT DEBUG LOG
+        console.log("CompanyProjects: Attempting to load data for companyId:", companyId);
 
         setIsLoading(true);
-        setError(null); // Clear previous errors
+        setError(null);
         try {
-            // Fetch the current company details
             const currentCompany = await DataService.getCompanyById(companyId); 
-            console.log("CompanyProjects: Fetched currentCompany details:", currentCompany); // <-- IMPORTANT DEBUG LOG
+            console.log("CompanyProjects: Fetched currentCompany details:", currentCompany);
             
             if (!currentCompany) {
                 setCompany(null);
@@ -39,44 +38,38 @@ const CompanyProjects: React.FC = () => {
             }
             setCompany(currentCompany);
 
-            // Fetch all projects and all departments
-            const [allProjects, depts] = await Promise.all([
-                DataService.getAllProjects(), // Fetch ALL projects first
-                DataService.getDepartments()
+            // Fetch ALL projects, ALL departments, and ALL tasks in parallel
+            const [allProjects, allDepartments, allTasks] = await Promise.all([
+                DataService.getAllProjects(),
+                DataService.getDepartments(),
+                DataService.getAllTasks() // Fetch all tasks ONCE
             ]);
-            console.log("CompanyProjects: All projects fetched (first 2 items):", allProjects.slice(0,2), "Total:", allProjects.length); // <-- IMPORTANT DEBUG LOG
-            console.log("CompanyProjects: All departments fetched (first 2 items):", depts.slice(0,2), "Total:", depts.length); // <-- IMPORTANT DEBUG LOG
+            console.log("CompanyProjects: All projects fetched (first 2 items):", allProjects.slice(0,2), "Total:", allProjects.length);
+            console.log("CompanyProjects: All departments fetched (first 2 items):", allDepartments.slice(0,2), "Total:", allDepartments.length);
+            console.log("CompanyProjects: All tasks fetched (first 2 items):", allTasks.slice(0,2), "Total:", allTasks.length);
 
-            // --- CRITICAL FILTERING LOGIC ---
+
             const companyProjects = allProjects.filter(p => {
-                // Defensive checks: Ensure p.companyId exists and is a string
                 const projectCompanyId = typeof p.companyId === 'string' ? p.companyId.trim() : String(p.companyId).trim();
                 const targetCompanyId = companyId.trim();
-
-                const isMatch = projectCompanyId === targetCompanyId;
-                
-                // Detailed logging for each project if it doesn't match
-                if (!isMatch) {
-                    // console.log(`Project ID: ${p.id}, Project Name: ${p.name}, Project Company ID: '${projectCompanyId}' (Type: ${typeof p.companyId}) did NOT match target Company ID: '${targetCompanyId}' (Type: ${typeof targetCompanyId})`);
-                }
-                return isMatch;
+                return projectCompanyId === targetCompanyId;
             });
-            // --- END CRITICAL FILTERING LOGIC ---
 
-            console.log(`CompanyProjects: Filtered projects for company ID '${companyId}' (total ${companyProjects.length} projects):`, companyProjects); // <-- IMPORTANT DEBUG LOG
+            console.log(`CompanyProjects: Filtered projects for company ID '${companyId}' (total ${companyProjects.length} projects):`, companyProjects);
 
             if (companyProjects.length === 0) {
                 console.log(`CompanyProjects: No projects found for company '${currentCompany.name}' (ID: '${companyId}') after filtering.`);
             }
 
             const projectsWithDetailsPromises = companyProjects.map(async p => {
-                const projectTasks = await DataService.getTasksByProject(p.id);
+                // Filter tasks for the current project from the 'allTasks' list
+                const projectTasks = allTasks.filter(task => task.projectId === p.id); // Optimized filtering
+                
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
                 const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
                 
-                // Ensure p.departmentIds is an array before mapping
                 const departmentNames = Array.isArray(p.departmentIds) 
-                    ? p.departmentIds.map(id => depts.find(d => d.id === id)?.name).filter(Boolean).join(', ')
+                    ? p.departmentIds.map(id => allDepartments.find(d => d.id === id)?.name).filter(Boolean).join(', ')
                     : 'N/A';
                 
                 return {
@@ -88,17 +81,17 @@ const CompanyProjects: React.FC = () => {
             });
             const projectsWithDetails = await Promise.all(projectsWithDetailsPromises);
             setProjects(projectsWithDetails);
-            console.log("CompanyProjects: Final projects with details set:", projectsWithDetails); // <-- IMPORTANT DEBUG LOG
+            console.log("CompanyProjects: Final projects with details set:", projectsWithDetails);
 
         } catch (err) {
             console.error("CompanyProjects: Failed to load company projects:", err);
-            setError("Failed to load projects. An error occurred."); // Set user-friendly error
+            setError("Failed to load projects. An error occurred.");
             setCompany(null); 
             setProjects([]); 
         } finally {
             setIsLoading(false);
         }
-    }, [companyId]); // Dependency array should only include companyId
+    }, [companyId]);
 
     useEffect(() => {
         loadData();
