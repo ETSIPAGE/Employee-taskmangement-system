@@ -16,22 +16,19 @@ import { EditIcon, TrashIcon } from '../../constants';
 const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
 const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects';
 const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project';
-// The PROJECTS_UPDATE_BASE_URL is assumed to *not* require the ID in the path, but in the body,
-// based on your existing usage in handleSaveProject and handleUpdateMilestoneStatus.
-// If your backend *does* require the ID in the URL path (e.g., /updt-project/{id}),
-// you would need to adjust the fetch URL like: PROJECTS_UPDATE_BASE_URL.replace('{id}', projectId)
 const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project';
 
 
 export interface ProjectDisplayData extends Project {
-    managerName: string;
+    managerNames: string; // Changed from managerName
     progress: number;
     departmentNames: string;
     companyName: string;
-    overallStatus: string; // Ensure this is present
-    createdAt: string; // Add createdAt to ProjectDisplayData interface
+    overallStatus: string;
+    // createdAt: string; // Already in Project
 }
 
+// Function to parse API responses (remains the same)
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
         let errorText = await response.text();
@@ -62,14 +59,18 @@ const Projects: React.FC = () => {
     const navigate = useNavigate();
 
     const [projects, setProjects] = useState<ProjectDisplayData[]>([]);
-    const [managers, setManagers] = useState<User[]>([]);
-    const [departments, setDepartments] = useState<Department[]>([]);
+    const [allManagers, setAllManagers] = useState<User[]>([]);
+    const [allDepartments, setAllDepartments] = useState<Department[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
 
+    const [filteredDepartments, setFilteredDepartments] = useState<Department[]>([]);
+    const [filteredManagers, setFilteredManagers] = useState<User[]>([]);
+
+
     const [isLoading, setIsLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false); // For Create/Edit Project
+    const [isModalOpen, setIsModalOpen] = useState(false);
     const [view, setView] = useState<'table' | 'card'>('table');
-    const [roadmapProjectId, setRoadmapProjectId] = useState<string | null>(null); // Use an ID to identify the project for roadmap
+    const [roadmapProjectId, setRoadmapProjectId] = useState<string | null>(null);
 
     const [confirmDeleteProject, setConfirmDeleteProject] = useState<ProjectDisplayData | null>(null);
 
@@ -82,7 +83,8 @@ const Projects: React.FC = () => {
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectCompanyId, setNewProjectCompanyId] = useState('');
     const [newProjectDesc, setNewProjectDesc] = useState('');
-    const [assignedManagerId, setAssignedManagerId] = useState('');
+    // *** CHANGE: Use an array for manager IDs ***
+    const [assignedManagerIds, setAssignedManagerIds] = useState<string[]>([]); // Multiple managers
     const [newProjectDeadline, setNewProjectDeadline] = useState('');
     const [assignedDeptIds, setAssignedDeptIds] = useState<string[]>([]);
     const [newProjectPriority, setNewProjectPriority] = useState<'low' | 'medium' | 'high'>('medium');
@@ -97,8 +99,7 @@ const Projects: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
- 
-            const token = AuthService.getToken(); // Corrected getToken() call
+            const token = AuthService.getToken();
 
             const projectsResponse = await fetch(PROJECTS_GET_ALL_API_URL, {
                 headers: {
@@ -114,45 +115,39 @@ const Projects: React.FC = () => {
             let allProjects: Project[] = [];
             if (typeof apiResponse === 'object' && apiResponse !== null && 'Items' in apiResponse && Array.isArray((apiResponse as any).Items)) {
                 allProjects = (apiResponse as any).Items;
-                console.log('[Projects] Projects API response contains an "Items" array, processing it.');
             } else if (typeof apiResponse === 'object' && apiResponse !== null && 'items' in apiResponse && Array.isArray((apiResponse as any).items)) {
                 allProjects = (apiResponse as any).items;
-                console.log('[Projects] Projects API response contains an "items" array, processing it.');
             } else if (Array.isArray(apiResponse)) {
                 allProjects = apiResponse;
-                console.log('[Projects] Projects API response is directly an array, processing it.');
             } else {
                 console.warn('Projects API response was not a direct array or an object with an "items" / "Items" array. Check API format.');
                 allProjects = [];
             }
             console.log(`[Projects] Fetched ${allProjects.length} raw projects.`);
 
-            const [allUsers, managerList, depts, allCompanies] = await Promise.all([
-                DataService.getUsers(), // Corrected from AuthService.getUsers()
-                DataService.getManagers(), // Corrected from AuthService.getManagers()
+            const [allUsers, allDepts, allCompaniesData] = await Promise.all([
+                DataService.getUsers(),
                 DataService.getDepartments(),
                 DataService.getCompanies()
             ]);
             
-            setDepartments(depts);
-            setCompanies(allCompanies);
-            setManagers(managerList);
+            setAllDepartments(allDepts);
+            setCompanies(allCompaniesData);
+            setAllManagers(allUsers.filter(u => u.role === UserRole.MANAGER));
 
-            // Set initial manager/company for new project if not already set
-            if (managerList.length > 0) {
-                setAssignedManagerId(user?.id || managerList[0].id);
-            }
-            if (!newProjectCompanyId && allCompanies.length > 0) {
-                setNewProjectCompanyId(allCompanies[0].id);
+            if (!newProjectCompanyId && allCompaniesData.length > 0) {
+                setNewProjectCompanyId(allCompaniesData[0].id);
             }
 
- 
             const projectsWithDetails: ProjectDisplayData[] = await Promise.all(
                 allProjects.map(async (p) => {
-                    const cleanedManagerId = p.managerId ? String(p.managerId).trim() : '';
-                    const manager = allUsers.find((u) => u.id === cleanedManagerId);
+                    // *** CHANGE: Map multiple manager IDs to names ***
+                    const managerNames = (p.managerIds || [])
+                        .map((id) => allUsers.find((u) => u.id === id)?.name)
+                        .filter(Boolean)
+                        .join(', '); // Join multiple names
 
-                    const createdAt = (p as any).createdAt || new Date().toISOString(); // Access createdAt as any
+                    const createdAt = (p as any).createdAt || new Date().toISOString();
 
                     let progress = 0;
                     let overallStatus: string = 'Pending';
@@ -166,7 +161,7 @@ const Projects: React.FC = () => {
                             (m) => m.status === MilestoneStatus.IN_PROGRESS
                         ).length;
                         const onHoldMilestones = p.roadmap.filter(
-                            (m) => m.status === MilestoneStatus.ON_HOLD // Corrected MilestoneStatus.ON_HOLD
+                            (m) => m.status === MilestoneStatus.ON_HOLD
                         ).length;
 
                         if (totalMilestones > 0) {
@@ -207,15 +202,15 @@ const Projects: React.FC = () => {
                     }
 
                     const departmentNames = (p.departmentIds || [])
-                        .map((id) => depts.find((d) => d.id === id)?.name)
+                        .map((id) => allDepts.find((d) => d.id === id)?.name)
                         .filter(Boolean)
                         .join(', ');
 
-                    const company = allCompanies.find((c) => c.id === p.companyId);
+                    const company = allCompaniesData.find((c) => c.id === p.companyId);
 
                     return {
                         ...p,
-                        managerName: manager?.name || 'Unassigned',
+                        managerNames: managerNames || 'Unassigned', // Use managerNames
                         progress,
                         overallStatus,
                         departmentNames,
@@ -226,8 +221,6 @@ const Projects: React.FC = () => {
             );
 
             projectsWithDetails.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
- 
-
             setProjects(projectsWithDetails);
         } catch (error) {
             console.error('[Projects] Failed to load project data:', error instanceof Error ? error.message : error);
@@ -235,29 +228,74 @@ const Projects: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [user, showToast, newProjectCompanyId]); // removed assignedManagerId from dependency array to prevent unnecessary re-runs
+    }, [showToast, newProjectCompanyId]);
 
     useEffect(() => {
-        let isMounted = true;
-        const fetchData = async () => {
-            if (isMounted) {
-                await loadData();
+        loadData();
+    }, [loadData]);
+
+
+    // Effect to fetch departments when company changes in the modal
+    useEffect(() => {
+        const fetchDepartments = async () => {
+            if (newProjectCompanyId) {
+                try {
+                    const depts = await DataService.getDepartmentsByCompany(newProjectCompanyId);
+                    setFilteredDepartments(depts);
+                    if (editingProject && editingProject.companyId === newProjectCompanyId) {
+                        const validAssignedDepts = (editingProject.departmentIds || []).filter(
+                            deptId => depts.some(d => d.id === deptId)
+                        );
+                        setAssignedDeptIds(validAssignedDepts);
+                    } else {
+                        setAssignedDeptIds([]);
+                    }
+                } catch (error) {
+                    console.error('Error fetching departments for company:', error);
+                    setFilteredDepartments([]);
+                    setAssignedDeptIds([]);
+                }
+            } else {
+                setFilteredDepartments([]);
+                setAssignedDeptIds([]);
             }
         };
+        if (isModalOpen) {
+            fetchDepartments();
+        }
+    }, [newProjectCompanyId, isModalOpen, editingProject]);
 
-        fetchData();
 
-        return () => {
-            isMounted = false;
-        };
-    }, [loadData]);
+    // Effect to filter managers when assigned departments change in the modal
+    useEffect(() => {
+        if (isModalOpen) {
+            if (assignedDeptIds.length > 0) {
+                const managersInSelectedDepts = allManagers.filter(manager =>
+                    manager.departmentIds && manager.departmentIds.some(deptId => assignedDeptIds.includes(deptId))
+                );
+                setFilteredManagers(managersInSelectedDepts);
+
+                // *** CHANGE: Filter out assigned managers who are no longer valid ***
+                setAssignedManagerIds(prevAssigned =>
+                    prevAssigned.filter(managerId => managersInSelectedDepts.some(m => m.id === managerId))
+                );
+
+                // *** REMOVED: Auto-preselection for a single manager. Users will now manually select multiple. ***
+
+            } else {
+                setFilteredManagers([]);
+                setAssignedManagerIds([]); // Clear all assigned managers if no departments selected
+            }
+        }
+    }, [assignedDeptIds, isModalOpen, allManagers]); // No assignedManagerIds in deps, as we are setting it here
 
 
     const filteredProjects = useMemo(() => {
         return projects.filter((project) => {
             const companyMatch = companyFilter === 'all' || project.companyId === companyFilter;
             const departmentMatch = departmentFilter === 'all' || (project.departmentIds && project.departmentIds.includes(departmentFilter));
-            const managerMatch = managerFilter === 'all' || project.managerId === managerFilter;
+            // *** CHANGE: Filter by if ANY of the project's managers match the selected manager filter ***
+            const managerMatch = managerFilter === 'all' || (project.managerIds && project.managerIds.includes(managerFilter));
             const searchMatch =
                 project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (project.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -267,7 +305,6 @@ const Projects: React.FC = () => {
     }, [projects, searchTerm, companyFilter, departmentFilter, managerFilter]);
 
 
-    // Derive the project for the roadmap modal from the 'projects' state
     const projectForRoadmap = useMemo(() => {
         return roadmapProjectId ? projects.find(p => p.id === roadmapProjectId) : null;
     }, [roadmapProjectId, projects]);
@@ -277,10 +314,11 @@ const Projects: React.FC = () => {
         setEditingProject(null);
         setNewProjectName('');
         setNewProjectDesc('');
-        setAssignedManagerId(managers.length > 0 ? (user?.id || managers[0].id) : '');
         setNewProjectCompanyId(companies.length > 0 ? companies[0].id : '');
-        setNewProjectDeadline('');
         setAssignedDeptIds([]);
+        // *** CHANGE: Reset to empty array ***
+        setAssignedManagerIds([]);
+        setNewProjectDeadline('');
         setNewProjectPriority('medium');
         setNewProjectEstTime('');
         setIsModalOpen(true);
@@ -290,10 +328,11 @@ const Projects: React.FC = () => {
         setEditingProject(projectToEdit);
         setNewProjectName(projectToEdit.name);
         setNewProjectDesc(projectToEdit.description || '');
-        setAssignedManagerId(projectToEdit.managerId);
         setNewProjectCompanyId(projectToEdit.companyId);
-        setNewProjectDeadline(projectToEdit.deadline || '');
         setAssignedDeptIds(projectToEdit.departmentIds || []);
+        // *** CHANGE: Set from projectToEdit.managerIds ***
+        setAssignedManagerIds(projectToEdit.managerIds || []);
+        setNewProjectDeadline(projectToEdit.deadline || '');
         setNewProjectPriority(projectToEdit.priority || 'medium');
         setNewProjectEstTime(projectToEdit.estimatedTime?.toString() || '');
         setIsModalOpen(true);
@@ -302,18 +341,19 @@ const Projects: React.FC = () => {
     const handleCloseModal = () => {
         setIsModalOpen(false);
         setEditingProject(null);
-        // Reset form fields to initial state or defaults
         setNewProjectName('');
         setNewProjectDesc('');
-        setAssignedManagerId(managers.length > 0 ? (user?.id || managers[0].id) : '');
-        setNewProjectCompanyId(companies.length > 0 ? companies[0].id : '');
+        setNewProjectCompanyId('');
+        // *** CHANGE: Reset to empty array ***
+        setAssignedManagerIds([]);
         setNewProjectDeadline('');
         setAssignedDeptIds([]);
         setNewProjectPriority('medium');
         setNewProjectEstTime('');
+        setFilteredDepartments([]);
+        setFilteredManagers([]);
     };
 
-    // Close roadmap modal
     const handleCloseRoadmapModal = useCallback(() => {
         setRoadmapProjectId(null);
     }, []);
@@ -327,10 +367,21 @@ const Projects: React.FC = () => {
         });
     };
 
+    // *** NEW: Toggle manager selection ***
+    const handleManagerToggle = (managerId: string) => {
+        setAssignedManagerIds((prev) => {
+            const newIds = new Set(prev);
+            if (newIds.has(managerId)) newIds.delete(managerId);
+            else newIds.add(managerId);
+            return Array.from(newIds);
+        });
+    };
+
     const handleSaveProject = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newProjectName.trim() || !assignedManagerId || !newProjectCompanyId) {
-            showToast('Project name, assigned manager, and company are required.', 'error');
+        // *** CHANGE: Validate at least one manager is selected ***
+        if (!newProjectName.trim() || assignedManagerIds.length === 0 || !newProjectCompanyId || assignedDeptIds.length === 0) {
+            showToast('Project name, at least one assigned manager, company, and at least one department are required.', 'error');
             return;
         }
         if (!user) {
@@ -338,12 +389,13 @@ const Projects: React.FC = () => {
             return;
         }
 
-        const token = AuthService.getToken(); // Corrected getToken() call
+        const token = AuthService.getToken();
 
         const baseProjectPayload = {
             name: newProjectName,
             description: newProjectDesc,
-            managerId: assignedManagerId,
+            // *** CHANGE: Send managerIds array ***
+            managerIds: assignedManagerIds,
             departmentIds: assignedDeptIds,
             deadline: newProjectDeadline,
             priority: newProjectPriority,
@@ -361,24 +413,21 @@ const Projects: React.FC = () => {
 
                 const updateFields: Partial<Project> = {
                     ...baseProjectPayload,
-                    // Keep existing roadmap if not explicitly updated in the form
                     roadmap: editingProject.roadmap || [],
-                    // createdAt should not be updated, it's part of the primary key for DynamoDB update
                 };
-                // If the Project type *does* contain createdAt, ensure it's not directly in updateFields
-                // This cast allows accessing and removing createdAt if it were there, without a TypeScript error
-                delete (updateFields as any).createdAt; // Cast to any to allow deleting createdAt if it exists on Project type
+                // Ensure createdAt is not sent in updateFields, as it's part of the key
+                delete (updateFields as any).createdAt;
 
                 const requestBodyForLambda = {
                     id: editingProject.id,
                     timestamp: editingProject.createdAt,
-                    updateFields: updateFields,
+                    updateFields: updateFields, // Will include managerIds array
                 };
 
                 console.log('Attempting to update project. URL:', PROJECTS_UPDATE_BASE_URL);
                 console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
 
-                const response = await fetch(`${PROJECTS_UPDATE_BASE_URL}/${editingProject.id}`, { // Include ID in path for PUT
+                const response = await fetch(`${PROJECTS_UPDATE_BASE_URL}/${editingProject.id}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -401,8 +450,8 @@ const Projects: React.FC = () => {
             } else {
                 const createPayload = {
                     ...baseProjectPayload,
-                    createdAt: new Date().toISOString(), // This should be consistently generated or from backend
-                    roadmap: [], // New projects start with an empty roadmap
+                    createdAt: new Date().toISOString(),
+                    roadmap: [],
                 };
 
                 console.log('Attempting to create project. URL:', PROJECTS_CREATE_API_URL);
@@ -453,7 +502,7 @@ const Projects: React.FC = () => {
         const projectToDelete = confirmDeleteProject;
         setConfirmDeleteProject(null);
 
-        const token = AuthService.getToken(); // Corrected getToken() call
+        const token = AuthService.getToken();
         try {
             const deletePayload = {
                 id: projectToDelete.id,
@@ -495,34 +544,28 @@ const Projects: React.FC = () => {
         }
 
         const projectToUpdate = projects[projectToUpdateIndex];
-        if (!(projectToUpdate as any).createdAt) { // Access createdAt as any
+        if (!(projectToUpdate as any).createdAt) {
             showToast('Failed to update project status: Creation timestamp not found.', 'error');
             return;
         }
 
-        const originalStatus = projectToUpdate.overallStatus; // Store original status for potential rollback
-        const token = AuthService.getToken(); // Corrected getToken() call
+        const originalStatus = projectToUpdate.overallStatus;
+        const token = AuthService.getToken();
 
         try {
-            // --- OPTIMISTIC UI UPDATE START ---
-            // Create a *new array* and update the specific project object within it.
-            // This triggers a re-render of the Projects component and its children (ProjectCard).
             setProjects(prevProjects => {
-                const updatedProjects = [...prevProjects]; // Shallow copy the array
-                // Create a shallow copy of the project object itself before modifying
+                const updatedProjects = [...prevProjects];
                 updatedProjects[projectToUpdateIndex] = {
                     ...updatedProjects[projectToUpdateIndex],
                     overallStatus: newStatus,
                 };
-                return updatedProjects; // Return the new array to update state
+                return updatedProjects;
             });
             console.log(`[Projects] Optimistically updated project ${projectId} overall status to ${newStatus}.`);
-            // --- OPTIMISTIC UI UPDATE END ---
 
-            // Prepare the payload for the backend API
             const requestBodyForLambda = {
                 id: projectToUpdate.id,
-                timestamp: projectToUpdate.createdAt, // Use the createdAt property
+                timestamp: projectToUpdate.createdAt,
                 updateFields: {
                     overallStatus: newStatus,
                 },
@@ -530,10 +573,7 @@ const Projects: React.FC = () => {
 
             console.log(`[Projects] Attempting to update project ${projectId} overall status to ${newStatus} via API.`);
             const response = await fetch(
-                // Using PROJECTS_UPDATE_BASE_URL as is, assuming backend expects ID in body.
-                // If backend requires ID in URL path (e.g., /updt-project/some-id),
-                // you would change this to: PROJECTS_UPDATE_BASE_URL.replace('{id}', projectId)
-                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`, // Corrected to include ID in path
+                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`,
                 {
                     method: 'PUT',
                     headers: {
@@ -545,7 +585,6 @@ const Projects: React.FC = () => {
             );
 
             if (!response.ok) {
-                // If the API call fails, throw an error to trigger the catch block
                 let errorMessage = `Failed to update project status. Status: ${response.status} ${response.statusText}.`;
                 try {
                     const errorData = await response.json();
@@ -557,46 +596,37 @@ const Projects: React.FC = () => {
             }
 
             showToast(`Project status updated to ${newStatus} successfully!`, 'success');
-
-            // After successful API update, reload all data to ensure full consistency.
-            // This will also correct any discrepancies if the optimistic update was slightly off
-            // (e.g., if the backend applies additional logic or returns a different computed status).
             await loadData();
 
         } catch (error) {
             console.error('[Projects] Failed to update project status:', error instanceof Error ? error.message : error);
             showToast(`Failed to update project status: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
 
-            // --- REVERT OPTIMISTIC UPDATE ON ERROR ---
-            // Revert the local UI state back to the original status
             setProjects(prevProjects => {
                 const revertedProjects = [...prevProjects];
                 revertedProjects[projectToUpdateIndex] = {
                     ...revertedProjects[projectToUpdateIndex],
-                    overallStatus: originalStatus, // Revert to the status before the attempted update
+                    overallStatus: originalStatus,
                 };
                 return revertedProjects;
             });
             console.log(`[Projects] Reverted project ${projectId} status to ${originalStatus} due to API error.`);
-            // --- REVERT OPTIMISTIC UPDATE END ---
         }
-    }, [projects, loadData, showToast]); // Added 'projects' to dependencies
+    }, [projects, loadData, showToast]);
 
-
-    // Make sure this callback is stable
     const handleUpdateMilestoneStatus = useCallback(async (projectId: string, milestoneId: string, newStatus: TaskStatus) => {
         const projectToUpdate = projects.find(p => p.id === projectId);
-        if (!projectToUpdate || !projectToUpdate.roadmap || !(projectToUpdate as any).createdAt) { // Access createdAt as any
+        if (!projectToUpdate || !projectToUpdate.roadmap || !(projectToUpdate as any).createdAt) {
             showToast('Failed to update roadmap: Project, roadmap, or creation timestamp not found.', 'error');
             return;
         }
 
-        const token = AuthService.getToken(); // Corrected getToken() call
+        const token = AuthService.getToken();
 
         const mappedNewStatus: MilestoneStatus =
             newStatus === TaskStatus.COMPLETED ? MilestoneStatus.COMPLETED :
             newStatus === TaskStatus.IN_PROGRESS ? MilestoneStatus.IN_PROGRESS :
-            newStatus === TaskStatus.ON_HOLD ? MilestoneStatus.ON_HOLD : // Corrected MilestoneStatus.ON_HOLD
+            newStatus === TaskStatus.ON_HOLD ? MilestoneStatus.ON_HOLD :
             MilestoneStatus.PENDING;
 
         const updatedRoadmap = projectToUpdate.roadmap.map(ms =>
@@ -606,7 +636,7 @@ const Projects: React.FC = () => {
         try {
             const requestBodyForLambda = {
                 id: projectToUpdate.id,
-                timestamp: projectToUpdate.createdAt, // Use the createdAt property
+                timestamp: projectToUpdate.createdAt,
                 updateFields: {
                     roadmap: updatedRoadmap,
                 },
@@ -616,7 +646,7 @@ const Projects: React.FC = () => {
             console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
 
             const response = await fetch(
-                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`, // Corrected to include ID in path
+                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`,
                 {
                     method: 'PUT',
                     headers: {
@@ -678,11 +708,11 @@ const Projects: React.FC = () => {
                     </select>
                     <select value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Departments</option>
-                        {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                        {allDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
                     <select value={managerFilter} onChange={e => setManagerFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Managers</option>
-                        {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        {allManagers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                 </div>
             </div>
@@ -706,7 +736,7 @@ const Projects: React.FC = () => {
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project Name</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Departments</th>
-                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Manager</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Managers</th> {/* Changed header */}
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Deadline</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Priority</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
@@ -729,7 +759,7 @@ const Projects: React.FC = () => {
                                         <p className="text-slate-600 whitespace-no-wrap">{project.departmentNames}</p>
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
-                                        <p className="text-slate-900 whitespace-no-wrap">{project.managerName}</p>
+                                        <p className="text-slate-900 whitespace-no-wrap">{project.managerNames}</p> {/* Changed from managerName */}
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 whitespace-no-wrap">{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'N/A'}</p>
@@ -756,7 +786,7 @@ const Projects: React.FC = () => {
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    setRoadmapProjectId(project.id); // Set only the ID
+                                                    setRoadmapProjectId(project.id);
                                                 }}
                                                 className="px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-700 hover:bg-slate-100 transition-colors border border-slate-300 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                                 disabled={!project.roadmap || project.roadmap.length === 0}
@@ -801,10 +831,9 @@ const Projects: React.FC = () => {
             )}
 
 
-            {/* MODAL FOR CREATE/EDIT PROJECT - TARGETED FOR SIZE REDUCTION */}
+            {/* MODAL FOR CREATE/EDIT PROJECT */}
             <Modal title={editingProject ? "Edit Project" : "Create New Project"} isOpen={isModalOpen} onClose={handleCloseModal}>
-                {/* Changed space-y-4 to space-y-3 and added text-sm for a more compact form */}
-                <form onSubmit={handleSaveProject} className="space-y-3 text-sm"> 
+                <form onSubmit={handleSaveProject} className="space-y-3 text-sm">
                     {/* 1. Project Name */}
                     <Input
                         id="newProjectName"
@@ -813,7 +842,6 @@ const Projects: React.FC = () => {
                         value={newProjectName}
                         onChange={(e) => setNewProjectName(e.target.value)}
                         required
-                        // Added classes for smaller input/label appearance
                         className="py-1"
                         labelClassName="text-sm"
                     />
@@ -825,65 +853,88 @@ const Projects: React.FC = () => {
                             id="company"
                             value={newProjectCompanyId}
                             onChange={(e) => setNewProjectCompanyId(e.target.value)}
-                            // Adjusted padding and font size for select
                             className="mt-1 block w-full pl-2 pr-8 py-1.5 text-sm border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md shadow-sm"
                             required
                         >
+                            <option value="">Select Company</option>
                             {companies.map(c => (
                                 <option key={c.id} value={c.id}>{c.name}</option>
                             ))}
                         </select>
                     </div>
 
-                    {/* 3. Departments - Keep as is, it's a multi-select */}
+                    {/* 3. Departments (Filtered by Company) */}
                     <div>
-                        {/* Reduced bottom margin for label */}
                         <label className="block text-sm font-medium text-slate-700 mb-1">Departments</label>
-                        {/* Reduced gaps, added max-height and overflow-y for scrollable list if many departments */}
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1 border border-slate-300 rounded-md p-2 text-sm max-h-40 overflow-y-auto">
-                            {departments.map(dept => (
-                                <div key={dept.id} className="flex items-center">
-                                    {/* Smaller checkboxes */}
-                                    <input
-                                        id={`dept-${dept.id}`}
-                                        type="checkbox"
-                                        checked={assignedDeptIds.includes(dept.id)}
-                                        onChange={() => handleDeptToggle(dept.id)}
-                                        className="h-3.5 w-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                    />
-                                    {/* Smaller label font and reduced left margin */}
-                                    <label htmlFor={`dept-${dept.id}`} className="ml-1.5 block text-xs text-slate-800">
-                                        {dept.name}
-                                    </label>
-                                </div>
-                            ))}
-                        </div>
+                        {filteredDepartments.length === 0 && newProjectCompanyId ? (
+                            <p className="text-xs text-slate-500">No departments found for the selected company.</p>
+                        ) : filteredDepartments.length === 0 && !newProjectCompanyId ? (
+                            <p className="text-xs text-slate-500">Select a company to see departments.</p>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 border border-slate-300 rounded-md p-2 text-sm max-h-40 overflow-y-auto">
+                                {filteredDepartments.map(dept => (
+                                    <div key={dept.id} className="flex items-center">
+                                        <input
+                                            id={`dept-${dept.id}`}
+                                            type="checkbox"
+                                            checked={assignedDeptIds.includes(dept.id)}
+                                            onChange={() => handleDeptToggle(dept.id)}
+                                            className="h-3.5 w-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                        />
+                                        <label htmlFor={`dept-${dept.id}`} className="ml-1.5 block text-xs text-slate-800">
+                                            {dept.name}
+                                        </label>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
-                    {/* 4. Manager (Conditional) */}
-                    {![UserRole.EMPLOYEE, UserRole.MANAGER].includes(user?.role as UserRole) && (
-                        <div>
-                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                            <select
-                                id="manager"
-                                value={assignedManagerId}
-                                onChange={(e) => setAssignedManagerId(e.target.value)}
-                                // Adjusted padding and font size for select
-                                className="mt-1 block w-full pl-2 pr-8 py-1.5 text-sm border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md shadow-sm"
-                                required
-                            >
-                                {managers.map(m => (
-                                    <option key={m.id} value={m.id}>{m.name}</option>
+                    {/* 4. Manager (Filtered by Selected Departments) - NOW MULTI-SELECT */}
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
+                        {filteredManagers.length === 0 && assignedDeptIds.length > 0 ? (
+                            <p className="text-xs text-red-600 mt-1">No managers found for the selected departments.</p>
+                        ) : filteredManagers.length === 0 && !newProjectCompanyId ? (
+                            <p className="text-xs text-slate-500 mt-1">Select company and departments to see managers.</p>
+                        ) : filteredManagers.length === 0 && newProjectCompanyId && assignedDeptIds.length === 0 ? (
+                            <p className="text-xs text-slate-500 mt-1">Select at least one department to see managers.</p>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 border border-slate-300 rounded-md p-2 text-sm max-h-40 overflow-y-auto">
+                                {filteredManagers.map(manager => (
+                                    <div key={manager.id} className="flex items-center">
+                                        <input
+                                            id={`manager-${manager.id}`}
+                                            type="checkbox"
+                                            checked={assignedManagerIds.includes(manager.id)}
+                                            onChange={() => handleManagerToggle(manager.id)} // Use the new toggle handler
+                                            className="h-3.5 w-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                        />
+                                        <label htmlFor={`manager-${manager.id}`} className="ml-1.5 block text-xs text-slate-800">
+                                            {manager.name}
+                                        </label>
+                                    </div>
                                 ))}
-                            </select>
-                        </div>
-                    )}
-                    {user?.role === UserRole.MANAGER && (
-                        <input type="hidden" value={assignedManagerId} />
-                    )}
+                            </div>
+                        )}
+                        {assignedManagerIds.length === 0 && assignedDeptIds.length > 0 && (
+                            <p className="text-xs text-red-600 mt-1">At least one manager must be assigned.</p>
+                        )}
+                    </div>
+
+                    {/* If the current user is a manager, and they are not already in assignedManagerIds, you might
+                        want to automatically select them here. Or, if they are already selected, ensure it remains.
+                        For simplicity, manual selection via checkboxes is implemented above.
+                        You could add logic like this:
+                        useEffect(() => {
+                            if (user?.role === UserRole.MANAGER && !assignedManagerIds.includes(user.id)) {
+                                // Potentially add user.id to assignedManagerIds if a specific rule dictates
+                            }
+                        }, [user, assignedManagerIds]);
+                    */}
+
 
                     {/* 5. Deadline, Priority, Estimated Time - Grouped in a grid */}
-                    {/* Reduced gap between grid items */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <Input
                             id="newProjectDeadline"
@@ -891,7 +942,6 @@ const Projects: React.FC = () => {
                             type="date"
                             value={newProjectDeadline}
                             onChange={(e) => setNewProjectDeadline(e.target.value)}
-                            // Added classes for smaller input/label appearance
                             className="py-1"
                             labelClassName="text-sm"
                         />
@@ -901,7 +951,6 @@ const Projects: React.FC = () => {
                                 id="newProjectPriority"
                                 value={newProjectPriority}
                                 onChange={(e) => setNewProjectPriority(e.target.value as 'low' | 'medium' | 'high')}
-                                // Adjusted padding and font size for select
                                 className="mt-1 block w-full pl-2 pr-8 py-1.5 text-sm border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 rounded-md shadow-sm"
                             >
                                 <option value="low">Low</option>
@@ -916,7 +965,6 @@ const Projects: React.FC = () => {
                             value={newProjectEstTime}
                             onChange={(e) => setNewProjectEstTime(e.target.value)}
                             min="0"
-                            // Added classes for smaller input/label appearance
                             className="py-1"
                             labelClassName="text-sm"
                         />
@@ -931,17 +979,15 @@ const Projects: React.FC = () => {
                             id="newProjectDesc"
                             value={newProjectDesc}
                             onChange={(e) => setNewProjectDesc(e.target.value)}
-                            rows={2} // Kept rows at 2, but combined with smaller text should make it more compact
-                            // Adjusted padding and font size for textarea
+                            rows={2}
                             className="mt-1 appearance-none block w-full px-2 py-1.5 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                         />
                     </div>
 
-                    <div className="pt-2 flex justify-end space-x-2"> {/* Reduced space-x */}
+                    <div className="pt-2 flex justify-end space-x-2">
                         <button type="button" onClick={handleCloseModal} className="px-3 py-1.5 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
-                        {/* Applied padding and font size to the Button component */}
                         <Button type="submit" className="px-3 py-1.5 text-sm">
                             {editingProject ? "Save Changes" : "Create Project"}
                         </Button>
@@ -984,7 +1030,7 @@ const Projects: React.FC = () => {
                 <Modal
                     title={`Project Roadmap: ${projectForRoadmap.name}`}
                     isOpen={true}
-                    onClose={handleCloseRoadmapModal} // Use the specific close handler
+                    onClose={handleCloseRoadmapModal}
                     size="lg"
                 >
                     {projectForRoadmap.roadmap && projectForRoadmap.roadmap.length > 0 ? (
