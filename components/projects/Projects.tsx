@@ -19,13 +19,15 @@ const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazo
 const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project';
 
 
+// ProjectDisplayData now extends Project, which already has 'timestamp'.
+// No need to add 'createdAt' or 'timestamp' explicitly here unless it's for display-specific derived fields.
 export interface ProjectDisplayData extends Project {
     managerNames: string; // Changed from managerName
     progress: number;
     departmentNames: string;
     companyName: string;
     overallStatus: string;
-    // createdAt: string; // Already in Project
+    // 'timestamp' is already inherited from Project
 }
 
 // Function to parse API responses (remains the same)
@@ -147,7 +149,8 @@ const Projects: React.FC = () => {
                         .filter(Boolean)
                         .join(', '); // Join multiple names
 
-                    const createdAt = (p as any).createdAt || new Date().toISOString();
+                    // 'p.timestamp' is already the correct sort key and should be used directly
+                    // const createdAt = (p as any).createdAt || new Date().toISOString(); // REMOVED
 
                     let progress = 0;
                     let overallStatus: string = 'Pending';
@@ -180,6 +183,8 @@ const Projects: React.FC = () => {
                             }
                         }
                     } else {
+                        // This branch runs if there's no roadmap. It should fetch tasks.
+                        // Ensure DataService.getTasksByProject is robust.
                         const projectTasks = await DataService.getTasksByProject(p.id);
                         const completedTasks = projectTasks.filter(
                             (t) => t.status === TaskStatus.COMPLETED
@@ -215,12 +220,13 @@ const Projects: React.FC = () => {
                         overallStatus,
                         departmentNames,
                         companyName: company?.name || 'N/A',
-                        createdAt: createdAt,
+                        // timestamp: p.timestamp, // 'timestamp' is already present in 'p' because ProjectDisplayData extends Project
                     };
                 })
             );
 
-            projectsWithDetails.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            // *** FIX 3: Sort by 'timestamp' (which is on the Project interface) ***
+            projectsWithDetails.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
             setProjects(projectsWithDetails);
         } catch (error) {
             console.error('[Projects] Failed to load project data:', error instanceof Error ? error.message : error);
@@ -401,13 +407,14 @@ const Projects: React.FC = () => {
             priority: newProjectPriority,
             estimatedTime: newProjectEstTime ? parseInt(newProjectEstTime, 10) : undefined,
             companyId: newProjectCompanyId,
-            createdBy: user.id,
+            createdBy: user.id, // Assuming this is part of the Project model or backend handles it
         };
 
         try {
             if (editingProject) {
-                if (!editingProject.id || !editingProject.createdAt) {
-                    showToast("Cannot edit project: Missing project ID or creation timestamp.", "error");
+                // *** FIX 4: Use editingProject.timestamp for the sort key ***
+                if (!editingProject.id || !editingProject.timestamp) {
+                    showToast("Cannot edit project: Missing project ID or timestamp.", "error");
                     return;
                 }
 
@@ -415,12 +422,13 @@ const Projects: React.FC = () => {
                     ...baseProjectPayload,
                     roadmap: editingProject.roadmap || [],
                 };
-                // Ensure createdAt is not sent in updateFields, as it's part of the key
-                delete (updateFields as any).createdAt;
+                // Ensure 'timestamp' is not sent in updateFields, as it's part of the key
+                delete (updateFields as any).timestamp; 
 
                 const requestBodyForLambda = {
                     id: editingProject.id,
-                    timestamp: editingProject.createdAt,
+                    // *** FIX 5: Use editingProject.timestamp ***
+                    timestamp: editingProject.timestamp,
                     updateFields: updateFields, // Will include managerIds array
                 };
 
@@ -450,7 +458,8 @@ const Projects: React.FC = () => {
             } else {
                 const createPayload = {
                     ...baseProjectPayload,
-                    createdAt: new Date().toISOString(),
+                    // *** FIX 6: Use 'timestamp' for creation ***
+                    timestamp: new Date().toISOString(),
                     roadmap: [],
                 };
 
@@ -483,14 +492,15 @@ const Projects: React.FC = () => {
             showToast(`Failed to save project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
             return;
         }
-        await loadData();
+        await loadData(); // Reload data to reflect changes and fetch new timestamps
         handleCloseModal();
     };
 
     const handleDeleteProject = (projectToDelete: ProjectDisplayData) => {
-        if (!projectToDelete.id || !projectToDelete.createdAt) {
-            showToast('Cannot delete project: Missing ID or creation timestamp.', 'error');
-            console.error('Deletion attempt failed due to missing ID or createdAt:', projectToDelete);
+        // *** FIX 7: Use projectToDelete.timestamp for validation ***
+        if (!projectToDelete.id || !projectToDelete.timestamp) {
+            showToast('Cannot delete project: Missing ID or timestamp.', 'error');
+            console.error('Deletion attempt failed due to missing ID or timestamp:', projectToDelete);
             return;
         }
         setConfirmDeleteProject(projectToDelete);
@@ -506,7 +516,8 @@ const Projects: React.FC = () => {
         try {
             const deletePayload = {
                 id: projectToDelete.id,
-                timestamp: projectToDelete.createdAt,
+                // *** FIX 8: Use projectToDelete.timestamp for deletion payload ***
+                timestamp: projectToDelete.timestamp,
             };
 
             const response = await fetch(PROJECTS_DELETE_API_URL, {
@@ -529,7 +540,7 @@ const Projects: React.FC = () => {
                 throw new Error(errorMessage);
             }
             showToast('Project deleted successfully!', 'success');
-            await loadData();
+            await loadData(); // Reload data to reflect changes
         } catch (error) {
             console.error('[Projects] Failed to delete project:', error instanceof Error ? error.message : error);
             showToast(`Failed to delete project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
@@ -544,28 +555,31 @@ const Projects: React.FC = () => {
         }
 
         const projectToUpdate = projects[projectToUpdateIndex];
-        if (!(projectToUpdate as any).createdAt) {
-            showToast('Failed to update project status: Creation timestamp not found.', 'error');
+        // *** FIX 9: Use projectToUpdate.timestamp for validation ***
+        if (!projectToUpdate.timestamp) {
+            showToast('Failed to update project status: Timestamp not found.', 'error');
             return;
         }
 
         const originalStatus = projectToUpdate.overallStatus;
         const token = AuthService.getToken();
 
-        try {
-            setProjects(prevProjects => {
-                const updatedProjects = [...prevProjects];
-                updatedProjects[projectToUpdateIndex] = {
-                    ...updatedProjects[projectToUpdateIndex],
-                    overallStatus: newStatus,
-                };
-                return updatedProjects;
-            });
-            console.log(`[Projects] Optimistically updated project ${projectId} overall status to ${newStatus}.`);
+        // Optimistic update
+        setProjects(prevProjects => {
+            const updatedProjects = [...prevProjects];
+            updatedProjects[projectToUpdateIndex] = {
+                ...updatedProjects[projectToUpdateIndex],
+                overallStatus: newStatus,
+            };
+            return updatedProjects;
+        });
+        console.log(`[Projects] Optimistically updated project ${projectId} overall status to ${newStatus}.`);
 
+        try {
             const requestBodyForLambda = {
                 id: projectToUpdate.id,
-                timestamp: projectToUpdate.createdAt,
+                // *** FIX 10: Use projectToUpdate.timestamp ***
+                timestamp: projectToUpdate.timestamp,
                 updateFields: {
                     overallStatus: newStatus,
                 },
@@ -595,13 +609,15 @@ const Projects: React.FC = () => {
                 throw new Error(errorMessage);
             }
 
-            showToast(`Project status updated to ${newStatus} successfully!`, 'success');
+            // *** IMPORTANT: After successful update, reload data to get the new timestamp from backend ***
             await loadData();
+            showToast(`Project status updated to ${newStatus} successfully!`, 'success');
 
         } catch (error) {
             console.error('[Projects] Failed to update project status:', error instanceof Error ? error.message : error);
             showToast(`Failed to update project status: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
 
+            // Revert optimistic update on error
             setProjects(prevProjects => {
                 const revertedProjects = [...prevProjects];
                 revertedProjects[projectToUpdateIndex] = {
@@ -616,8 +632,9 @@ const Projects: React.FC = () => {
 
     const handleUpdateMilestoneStatus = useCallback(async (projectId: string, milestoneId: string, newStatus: TaskStatus) => {
         const projectToUpdate = projects.find(p => p.id === projectId);
-        if (!projectToUpdate || !projectToUpdate.roadmap || !(projectToUpdate as any).createdAt) {
-            showToast('Failed to update roadmap: Project, roadmap, or creation timestamp not found.', 'error');
+        // *** FIX 11: Use projectToUpdate.timestamp for validation ***
+        if (!projectToUpdate || !projectToUpdate.roadmap || !projectToUpdate.timestamp) {
+            showToast('Failed to update roadmap: Project, roadmap, or timestamp not found.', 'error');
             return;
         }
 
@@ -633,10 +650,22 @@ const Projects: React.FC = () => {
             ms.id === milestoneId ? { ...ms, status: mappedNewStatus } : ms
         );
 
+        // Optimistically update the roadmap status in the UI
+        setProjects(prevProjects => {
+            return prevProjects.map(p =>
+                p.id === projectId
+                    ? { ...p, roadmap: updatedRoadmap }
+                    : p
+            );
+        });
+        console.log(`[Projects] Optimistically updated milestone ${milestoneId} in project ${projectId} to ${mappedNewStatus}.`);
+
+
         try {
             const requestBodyForLambda = {
                 id: projectToUpdate.id,
-                timestamp: projectToUpdate.createdAt,
+                // *** FIX 12: Use projectToUpdate.timestamp ***
+                timestamp: projectToUpdate.timestamp,
                 updateFields: {
                     roadmap: updatedRoadmap,
                 },
@@ -667,11 +696,20 @@ const Projects: React.FC = () => {
                 }
                 throw new Error(errorMessage);
             }
-            showToast('Roadmap updated successfully!', 'success');
+            
+            // *** IMPORTANT: After successful update, reload data to get the new timestamp from backend ***
             await loadData();
+            showToast('Roadmap updated successfully!', 'success');
+
         } catch (error) {
             console.error('[Projects] Failed to update roadmap milestone:', error instanceof Error ? error.message : error);
             showToast(`Failed to update roadmap: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
+
+            // Revert optimistic update on error by reloading old data
+            // Or if you want to be purely optimistic (less robust, but faster)
+            // you'd save the original roadmap state and revert to that.
+            // For now, loadData() will effectively revert if the backend is the source of truth.
+            await loadData(); // Force a reload to revert if optimistic failed and backend isn't updated.
         }
     }, [projects, loadData, showToast]);
 
@@ -736,7 +774,7 @@ const Projects: React.FC = () => {
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project Name</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Departments</th>
-                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Managers</th> {/* Changed header */}
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Managers</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Deadline</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Priority</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
@@ -759,7 +797,7 @@ const Projects: React.FC = () => {
                                         <p className="text-slate-600 whitespace-no-wrap">{project.departmentNames}</p>
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
-                                        <p className="text-slate-900 whitespace-no-wrap">{project.managerNames}</p> {/* Changed from managerName */}
+                                        <p className="text-slate-900 whitespace-no-wrap">{project.managerNames}</p>
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 whitespace-no-wrap">{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'N/A'}</p>
@@ -921,18 +959,6 @@ const Projects: React.FC = () => {
                             <p className="text-xs text-red-600 mt-1">At least one manager must be assigned.</p>
                         )}
                     </div>
-
-                    {/* If the current user is a manager, and they are not already in assignedManagerIds, you might
-                        want to automatically select them here. Or, if they are already selected, ensure it remains.
-                        For simplicity, manual selection via checkboxes is implemented above.
-                        You could add logic like this:
-                        useEffect(() => {
-                            if (user?.role === UserRole.MANAGER && !assignedManagerIds.includes(user.id)) {
-                                // Potentially add user.id to assignedManagerIds if a specific rule dictates
-                            }
-                        }, [user, assignedManagerIds]);
-                    */}
-
 
                     {/* 5. Deadline, Priority, Estimated Time - Grouped in a grid */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

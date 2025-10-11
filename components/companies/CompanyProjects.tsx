@@ -1,15 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import { Company, Project, TaskStatus, Task } from '../../types'; // Import Task type
+// Import all necessary types, including MilestoneStatus and User
+import { Company, Project, TaskStatus, Task, MilestoneStatus, User, Department } from '../../types';
 import ProjectCard from '../projects/ProjectCard';
+
+// Define ProjectDisplayData here, or preferably, move it to your 'types.ts' file
+// if it's used in multiple places (like Projects.tsx and CompanyProjects.tsx).
+// For this example, I'll include it locally.
+export interface ProjectDisplayData extends Project {
+    managerNames: string;
+    progress: number;
+    departmentNames: string;
+    companyName: string;
+    overallStatus: string;
+    // 'timestamp' is already inherited from Project
+}
+
 
 const CompanyProjects: React.FC = () => {
     const { companyId: rawCompanyId } = useParams<{ companyId: string }>();
     const companyId = rawCompanyId || '';
 
     const [company, setCompany] = useState<Company | null>(null);
-    const [projects, setProjects] = useState<any[]>([]);
+    const [projects, setProjects] = useState<ProjectDisplayData[]>([]); // Use ProjectDisplayData
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -38,15 +52,17 @@ const CompanyProjects: React.FC = () => {
             }
             setCompany(currentCompany);
 
-            // Fetch ALL projects, ALL departments, and ALL tasks in parallel
-            const [allProjects, allDepartments, allTasks] = await Promise.all([
+            // Fetch ALL projects, ALL departments, ALL tasks, and ALL users in parallel
+            const [allProjects, allDepartments, allTasks, allUsers] = await Promise.all([
                 DataService.getAllProjects(),
                 DataService.getDepartments(),
-                DataService.getAllTasks() // Fetch all tasks ONCE
+                DataService.getAllTasks(), // Fetch all tasks ONCE
+                DataService.getUsers() // Fetch all users ONCE for manager names
             ]);
             console.log("CompanyProjects: All projects fetched (first 2 items):", allProjects.slice(0,2), "Total:", allProjects.length);
             console.log("CompanyProjects: All departments fetched (first 2 items):", allDepartments.slice(0,2), "Total:", allDepartments.length);
             console.log("CompanyProjects: All tasks fetched (first 2 items):", allTasks.slice(0,2), "Total:", allTasks.length);
+            console.log("CompanyProjects: All users fetched (first 2 items):", allUsers.slice(0,2), "Total:", allUsers.length);
 
 
             const companyProjects = allProjects.filter(p => {
@@ -61,25 +77,81 @@ const CompanyProjects: React.FC = () => {
                 console.log(`CompanyProjects: No projects found for company '${currentCompany.name}' (ID: '${companyId}') after filtering.`);
             }
 
-            const projectsWithDetailsPromises = companyProjects.map(async p => {
-                // Filter tasks for the current project from the 'allTasks' list
-                const projectTasks = allTasks.filter(task => task.projectId === p.id); // Optimized filtering
+            const projectsWithDetails: ProjectDisplayData[] = await Promise.all(companyProjects.map(async p => {
+                // *** 1. Calculate managerNames ***
+                const managerNames = (p.managerIds || [])
+                    .map((id) => allUsers.find((u) => u.id === id)?.name)
+                    .filter(Boolean)
+                    .join(', ');
+
+                let progress = 0;
+                let overallStatus: string = 'Pending'; // Default status
+
+                // *** 2. Calculate progress and overallStatus based on roadmap or tasks ***
+                if (p.roadmap && p.roadmap.length > 0) {
+                    const totalMilestones = p.roadmap.length;
+                    const completedMilestones = p.roadmap.filter(
+                        (m) => m.status === MilestoneStatus.COMPLETED
+                    ).length;
+                    const inProgressMilestones = p.roadmap.filter(
+                        (m) => m.status === MilestoneStatus.IN_PROGRESS
+                    ).length;
+                    const onHoldMilestones = p.roadmap.filter(
+                        (m) => m.status === MilestoneStatus.ON_HOLD
+                    ).length;
+
+                    if (totalMilestones > 0) {
+                        progress = Math.round(
+                            ((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100
+                        );
+
+                        if (progress === 100) {
+                            overallStatus = 'Completed';
+                        } else if (onHoldMilestones > 0) {
+                            overallStatus = 'On Hold';
+                        } else if (inProgressMilestones > 0 || completedMilestones > 0) {
+                            overallStatus = 'In Progress';
+                        } else {
+                            overallStatus = 'Pending';
+                        }
+                    }
+                } else {
+                    // Filter tasks for the current project from the 'allTasks' list
+                    const projectTasks = allTasks.filter(task => task.projectId === p.id); // Optimized filtering
+                    
+                    const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
+                    const totalTasks = projectTasks.length;
+
+                    progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+                    if (progress === 100) {
+                        overallStatus = 'Completed';
+                    } else if (progress > 0) {
+                        overallStatus = 'In Progress';
+                    } else {
+                        overallStatus = 'Pending';
+                    }
+                }
+
+                // Check for overdue status if not already completed
+                if (overallStatus !== 'Completed' && p.deadline && new Date(p.deadline) < new Date()) {
+                    overallStatus = 'Overdue';
+                }
                 
-                const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
-                
+                // *** 3. Calculate departmentNames ***
                 const departmentNames = Array.isArray(p.departmentIds) 
                     ? p.departmentIds.map(id => allDepartments.find(d => d.id === id)?.name).filter(Boolean).join(', ')
                     : 'N/A';
                 
                 return {
                     ...p,
+                    managerNames: managerNames || 'Unassigned', // Add managerNames
                     progress,
+                    overallStatus, // Add overallStatus
                     departmentNames,
                     companyName: currentCompany.name, 
                 };
-            });
-            const projectsWithDetails = await Promise.all(projectsWithDetailsPromises);
+            }));
             setProjects(projectsWithDetails);
             console.log("CompanyProjects: Final projects with details set:", projectsWithDetails);
 
@@ -126,6 +198,10 @@ const CompanyProjects: React.FC = () => {
                             progress={project.progress} 
                             departmentNames={project.departmentNames}
                             companyName={project.companyName}
+                            // *** Pass overallStatus to ProjectCard ***
+                            overallStatus={project.overallStatus}
+                            // Also pass managerNames if ProjectCard displays it
+                            managerNames={project.managerNames}
                         />
                     ))}
                 </div>
