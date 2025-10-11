@@ -80,7 +80,7 @@ export interface User {
   email: string;
   role: UserRole;
   companyId?: string;
-  managerId?: string;
+  managerId?: string; // Keep managerId here for User if it's their direct manager, but Project uses managerIds
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';
@@ -125,13 +125,19 @@ export interface Project {
   id: string;
   name: string;
   description?: string;
-  managerId: string;
+  // *** CHANGE 1: Replaced 'managerId: string;' with 'managerIds: string[];' ***
+  managerIds: string[]; // This must be an array now for multiple managers
   departmentIds: string[];
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
+<<<<<<< HEAD
+=======
+  // *** CHANGE 2: Renamed 'timestamp' back to 'createdAt' to match frontend usage ***
+  createdAt: string; // Use 'createdAt' as expected by Projects.tsx for consistency
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
 }
 
 export interface TaskDependency {

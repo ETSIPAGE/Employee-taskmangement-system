@@ -1,8 +1,9 @@
+// components/companies/Companies.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
-import { Company, UserRole, TaskStatus } from '../../types';
+import { Company, UserRole, TaskStatus, User, Department, Project, MilestoneStatus } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -70,19 +71,59 @@ const CompanyCard: React.FC<{ company: CompanyWithStats }> = ({ company }) => {
     );
 };
 
+<<<<<<< HEAD
+=======
+// Define the ToastMessage type locally
+type ToastMessage = {
+    message: string;
+    type: 'success' | 'error' | 'info' | 'warning';
+};
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
 
 const Companies: React.FC = () => {
     const { user } = useAuth();
     const [companiesWithStats, setCompaniesWithStats] = useState<CompanyWithStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+<<<<<<< HEAD
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newCompanyName, setNewCompanyName] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
+=======
+    const [isCreateEditModalOpen, setIsCreateEditModalOpen] = useState(false);
+    const [newCompanyName, setNewCompanyName] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [editingCompany, setEditingCompany] = useState<CompanyWithStats | null>(null);
+
+    const [currentToast, setCurrentToast] = useState<ToastMessage | null>(null);
+    const toastTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+
+    const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] = useState(false);
+    const [companyToDelete, setCompanyToDelete] = useState<CompanyWithStats | null>(null);
+
+    const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') => {
+        if (toastTimeoutRef.current) {
+            clearTimeout(toastTimeoutRef.current);
+        }
+        setCurrentToast({ message, type });
+        toastTimeoutRef.current = setTimeout(() => {
+            setCurrentToast(null);
+            toastTimeoutRef.current = null;
+        }, 5000);
+    }, []);
+
+    // API endpoints for company operations
+    const GET_COMPANIES_API_URL = "https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com";
+    const CREATE_COMPANY_API_URL = "https://j5dfp9hh9k.execute-api.ap-south-1.amazonaws.com/del/Ets-Create-Com-pz";
+    const EDIT_COMPANY_BASE_URL = "https://f25828ro5f.execute-api.ap-south-1.amazonaws.com/edt/Ets-edit-com";
+    const DELETE_COMPANY_BASE_URL = "https://o46q7fnoel.execute-api.ap-south-1.amazonaws.com/prod/Ets-del-pz";
+
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
         if (!user) return;
         try {
+<<<<<<< HEAD
             const companies = DataService.getCompanies();
             const users = AuthService.getUsers();
             
@@ -120,11 +161,142 @@ const Companies: React.FC = () => {
                     managerCount: companyUsers.filter(u => u.role === UserRole.MANAGER).length,
                     departmentCount: companyDepartments.length,
                     projectCount: companyProjects.length,
+=======
+            const token = AuthService.getToken();
+
+            const [companiesRes, allUsers, allDepartments, allProjects] = await Promise.all([
+                fetch(GET_COMPANIES_API_URL, { method: "GET", headers: token ? { 'Authorization': `Bearer ${token}` } : {} }),
+                DataService.getUsers(),
+                DataService.getDepartments(),
+                DataService.getAllProjects(),
+            ]);
+
+            if (!companiesRes.ok) {
+                const errorText = await companiesRes.text();
+                throw new Error(`Failed to fetch companies: ${companiesRes.status} ${companiesRes.statusText}. Response: ${errorText}`);
+            }
+
+            const apiResponse: unknown = await companiesRes.json();
+            let rawCompanies: any[] = [];
+
+            if (typeof apiResponse === 'object' && apiResponse !== null && 'items' in apiResponse && Array.isArray((apiResponse as any).items)) {
+                rawCompanies = (apiResponse as any).items;
+            } else if (Array.isArray(apiResponse)) {
+                rawCompanies = apiResponse;
+            } else {
+                throw new Error('API response for companies was not a direct array or an object with an "items" array.');
+            }
+
+            // --- DEBUGGING LOGS START HERE ---
+            console.log("--- DEBUGGING COMPANIES LOAD DATA ---");
+            console.log("Raw Companies from API:", rawCompanies);
+            console.log("All Users fetched:", allUsers);
+            console.log("All Departments fetched:", allDepartments);
+            console.log("All Projects fetched:", allProjects);
+            console.log("-----------------------------------");
+            // --- DEBUGGING LOGS END HERE ---
+
+            const companiesWithCalculatedStats: CompanyWithStats[] = rawCompanies.map((comp: any) => {
+                // Normalize the company ID from the raw company object
+                const companyId = String(comp.id || comp._id || `comp-${Math.random().toString(36).substring(2, 9)}`).toLowerCase().trim();
+
+                // --- COMPANY-SPECIFIC DEBUGGING LOGS ---
+                console.log(`\n--- Processing Company: ${comp.name} (Normalized ID: ${companyId}) ---`);
+                
+                // Filter users for this company with consistent normalization
+                const usersInCompany = allUsers.filter(u => {
+                    const normalizedUserCompanyId = String(u.companyId || '').toLowerCase().trim();
+                    const matches = normalizedUserCompanyId === companyId; // Compare normalized values
+                    // console.log(`  User: ${u.name} (ID: ${u.id}, User CompanyID: "${u.companyId}" -> Normalized: "${normalizedUserCompanyId}") vs Target CompanyID: "${companyId}" -> Match: ${matches}`); // Uncomment for very detailed user match log
+                    return matches;
+                });
+                const employeeCount = usersInCompany.filter(u => u.role === UserRole.EMPLOYEE).length;
+                const managerCount = usersInCompany.filter(u => u.role === UserRole.MANAGER).length;
+                console.log(`  -> Employees: ${employeeCount}, Managers: ${managerCount} (Total users in company: ${usersInCompany.length})`);
+
+
+                // Filter departments for this company with consistent normalization
+                const departmentsInCompany = allDepartments.filter(d => {
+                    const normalizedDeptCompanyId = String(d.companyId || '').toLowerCase().trim();
+                    const matches = normalizedDeptCompanyId === companyId; // Compare normalized values
+                    // console.log(`  Dept: ${d.name} (ID: ${d.id}, Dept CompanyID: "${d.companyId}" -> Normalized: "${normalizedDeptCompanyId}") vs Target CompanyID: "${companyId}" -> Match: ${matches}`); // Uncomment for very detailed dept match log
+                    return matches;
+                });
+                const departmentCount = departmentsInCompany.length;
+                console.log(`  -> Departments: ${departmentCount}`);
+
+
+                // Filter projects for this company with consistent normalization
+                const projectsInCompany = allProjects.filter(p => {
+                    const normalizedProjectCompanyId = String(p.companyId || '').toLowerCase().trim();
+                    const matches = normalizedProjectCompanyId === companyId; // Compare normalized values
+                    // console.log(`  Project: ${p.name} (ID: ${p.id}, Project CompanyID: "${p.companyId}" -> Normalized: "${normalizedProjectCompanyId}") vs Target CompanyID: "${companyId}" -> Match: ${matches}`); // Uncomment for very detailed project match log
+                    return matches;
+                });
+                const projectCount = projectsInCompany.length;
+                
+                let projectsCompleted = 0;
+                let projectsInProgress = 0;
+                let projectsPending = 0;
+
+                projectsInCompany.forEach(project => {
+                    let projectStatus: string = 'Pending';
+                    
+                    if (project.roadmap && project.roadmap.length > 0) {
+                        const totalMilestones = project.roadmap.length;
+                        const completedMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
+                        const inProgressMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
+                        const onHoldMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.ON_HOLD).length;
+
+                        if (totalMilestones > 0) {
+                            if (completedMilestones === totalMilestones) {
+                                projectStatus = 'Completed';
+                            } else if (onHoldMilestones > 0) {
+                                projectStatus = 'On Hold';
+                            } else if (inProgressMilestones > 0 || completedMilestones > 0) {
+                                projectStatus = 'In Progress';
+                            } else {
+                                projectStatus = 'Pending';
+                            }
+                        }
+                    } else {
+                        // Simplified project status if no roadmap, based on deadline
+                        if (project.deadline && new Date(project.deadline) < new Date()) {
+                            projectStatus = 'Overdue'; 
+                        }
+                    }
+
+                    // Final check for overdue status
+                    if (projectStatus !== 'Completed' && project.deadline && new Date(project.deadline) < new Date()) {
+                        projectStatus = 'Overdue'; 
+                    }
+
+                    if (projectStatus === 'Completed') {
+                        projectsCompleted++;
+                    } else if (projectStatus === 'In Progress' || projectStatus === 'Overdue' || projectStatus === 'On Hold') {
+                        projectsInProgress++;
+                    } else {
+                        projectsPending++;
+                    }
+                });
+                console.log(`  -> Projects: Total: ${projectCount}, Completed: ${projectsCompleted}, InProgress: ${projectsInProgress}, Pending: ${projectsPending}`);
+
+                return {
+                    id: companyId, // Use the normalized companyId here
+                    name: comp.name || 'Unnamed Company',
+                    ownerId: comp.ownerId || '1',
+                    createdAt: comp.createdAt || new Date().toISOString(),
+                    employeeCount,
+                    managerCount,
+                    departmentCount,
+                    projectCount,
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
                     projectsCompleted,
                     projectsInProgress,
                     projectsPending,
                 };
             });
+<<<<<<< HEAD
             const stats = await Promise.all(statsPromises);
             setCompaniesWithStats(stats);
         } catch (error) {
@@ -133,6 +305,21 @@ const Companies: React.FC = () => {
             setIsLoading(false);
         }
     }, [user]);
+=======
+
+            setCompaniesWithStats(companiesWithCalculatedStats);
+            if (rawCompanies.length > 0) {
+                 addToast('Companies loaded successfully!', 'success');
+            }
+        } catch (error: any) {
+            console.error("Failed to load company data:", error.message || error);
+            setCompaniesWithStats([]);
+            addToast(`Failed to load companies: ${error.message || 'Unknown error'}`, 'error');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [user, addToast]); 
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
 
     useEffect(() => {
         loadData();
@@ -163,6 +350,12 @@ const Companies: React.FC = () => {
     };
 
     if (user?.role !== UserRole.ADMIN) {
+<<<<<<< HEAD
+=======
+        if (!currentToast || currentToast.message !== "You do not have permission to view this page.") {
+             addToast("You do not have permission to view this page.", "error");
+        }
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
         return <Navigate to="/" />;
     }
 
@@ -189,7 +382,20 @@ const Companies: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {filteredCompanies.map(comp => (
+<<<<<<< HEAD
                     <CompanyCard key={comp.id} company={comp} />
+=======
+                    <CompanyCard
+                        key={comp.id}
+                        company={comp}
+                        onEdit={() => {
+                            setEditingCompany(comp);
+                            setNewCompanyName(comp.name);
+                            setIsCreateEditModalOpen(true);
+                        }}
+                        onDelete={() => handleOpenDeleteConfirmModal(comp)}
+                    />
+>>>>>>> 153472fe1ab0438d7b62f0272c6183965a6c6e33
                 ))}
             </div>
 

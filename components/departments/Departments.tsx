@@ -1,8 +1,10 @@
+// components/departments/Departments.tsx
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
-import { Department, User, UserRole, Project, TaskStatus, Company } from '../../types';
+// REMOVED: AuthService.getUsers() because DataService.getUsers() should be used consistently
+import { Department, User, UserRole, Project, TaskStatus, Company, MilestoneStatus } from '../../types'; // Added MilestoneStatus
 import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -90,40 +92,93 @@ const Departments: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const [departments, users, projects, allCompanies] = await Promise.all([
+            // Fetch ALL necessary data in parallel
+            const [allDepartments, allUsers, allProjects, allCompanies, allTasks] = await Promise.all([
                 DataService.getDepartments(),
-                AuthService.getUsers(),
+                DataService.getUsers(),      // Use DataService for consistency
                 DataService.getAllProjects(),
-                DataService.getCompanies()
+                DataService.getCompanies(),
+                DataService.getAllTasks(), // Fetch all tasks once
             ]);
 
             setCompanies(allCompanies);
-            if (allCompanies.length > 0) {
+            if (allCompanies.length > 0 && !newDepartmentCompanyId) { // Set default only if not already set
                 setNewDepartmentCompanyId(allCompanies[0].id);
             }
 
-            const statsPromises = departments.map(async dept => {
-                const deptUsers = users.filter(u => u.departmentIds?.includes(dept.id));
-                const deptProjects = projects.filter(p => p.departmentIds.includes(dept.id));
+            const statsPromises = allDepartments.map(async dept => {
+                const departmentId = dept.id; // Use dept.id consistently
+
+                // Filter users who belong to THIS department
+                // Ensure u.departmentIds is an array before using .includes
+                const deptUsers = allUsers.filter(u => u.departmentIds && u.departmentIds.includes(departmentId));
+                
+                // Filter projects associated with THIS department
+                const deptProjects = allProjects.filter(p => p.departmentIds && p.departmentIds.includes(departmentId));
+                
                 const company = allCompanies.find(c => c.id === dept.companyId);
 
                 let projectsCompleted = 0;
                 let projectsInProgress = 0;
                 let projectsPending = 0;
                 
-                await Promise.all(deptProjects.map(async project => {
-                    const tasks = await DataService.getTasksByProject(project.id);
-                    if (tasks.length === 0) {
-                        projectsPending++;
-                        return;
-                    }
-                    const completedTasks = tasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                    if (completedTasks === tasks.length) {
-                        projectsCompleted++;
+                deptProjects.forEach(project => {
+                    let projectStatus: string = 'Pending'; // Default
+                    
+                    if (project.roadmap && project.roadmap.length > 0) {
+                        const totalMilestones = project.roadmap.length;
+                        const completedMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
+                        const inProgressMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
+                        const onHoldMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.ON_HOLD).length;
+
+                        if (totalMilestones > 0) {
+                            if (completedMilestones === totalMilestones) {
+                                projectStatus = 'Completed';
+                            } else if (onHoldMilestones > 0) {
+                                projectStatus = 'On Hold';
+                            } else if (inProgressMilestones > 0 || completedMilestones > 0) {
+                                projectStatus = 'In Progress';
+                            } else {
+                                projectStatus = 'Pending';
+                            }
+                        }
                     } else {
-                        projectsInProgress++;
+                        // If no roadmap, derive status from tasks for this project
+                        const projectTasks = allTasks.filter(task => task.projectId === project.id);
+                        if (projectTasks.length === 0) {
+                            // If no tasks and no roadmap, check deadline
+                            if (project.deadline && new Date(project.deadline) < new Date()) {
+                                projectStatus = 'Overdue';
+                            } else {
+                                projectStatus = 'Pending';
+                            }
+                        } else {
+                            const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
+                            const totalTasks = projectTasks.length;
+                            if (completedTasks === totalTasks) {
+                                projectStatus = 'Completed';
+                            } else if (completedTasks > 0) {
+                                projectStatus = 'In Progress';
+                            } else {
+                                projectStatus = 'Pending';
+                            }
+                        }
                     }
-                }));
+
+                    // Final check for overdue, overriding other non-completed statuses
+                    if (projectStatus !== 'Completed' && project.deadline && new Date(project.deadline) < new Date()) {
+                        projectStatus = 'Overdue';
+                    }
+
+                    if (projectStatus === 'Completed') {
+                        projectsCompleted++;
+                    } else if (projectStatus === 'In Progress' || projectStatus === 'Overdue' || projectStatus === 'On Hold') {
+                        projectsInProgress++; // Group Overdue and On Hold with In Progress for display
+                    } else {
+                        projectsPending++;
+                    }
+                });
+
 
                 return {
                     ...dept,
@@ -140,10 +195,11 @@ const Departments: React.FC = () => {
             setDepartmentsWithStats(stats);
         } catch (error) {
             console.error("Failed to load department data:", error);
+            // Optionally set an error toast
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [newDepartmentCompanyId]); // newDepartmentCompanyId is a dependency if it affects the initial selection logic
 
     useEffect(() => {
         loadData();
@@ -161,20 +217,26 @@ const Departments: React.FC = () => {
     const handleCloseModal = () => {
         setIsModalOpen(false);
         setNewDepartmentName('');
+        // Ensure the selected company is reset to default for new creation
         if (companies.length > 0) {
             setNewDepartmentCompanyId(companies[0].id);
         }
     };
 
-    const handleCreateDepartment = (e: React.FormEvent) => {
+    const handleCreateDepartment = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newDepartmentName.trim() || !newDepartmentCompanyId) {
-            alert('Department name and company are required.');
+            alert('Department name and company are required.'); // Consider using the toast notification here
             return;
         }
-        DataService.createDepartment(newDepartmentName, newDepartmentCompanyId);
-        loadData();
-        handleCloseModal();
+        try {
+            await DataService.createDepartment(newDepartmentName, newDepartmentCompanyId);
+            await loadData(); // Reload data after creation
+            handleCloseModal();
+        } catch (error) {
+            console.error("Error creating department:", error);
+            alert(`Failed to create department: ${error instanceof Error ? error.message : String(error)}`); // Use toast
+        }
     };
 
     if (user?.role !== UserRole.ADMIN) {
