@@ -46,6 +46,51 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
 };
 
+export const deleteUser = async (userId: string): Promise<void> => {
+    try {
+        const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users', {
+            method: 'DELETE',
+            body: JSON.stringify({ id: userId }),
+        });
+        await parseApiResponse(response);
+        // Invalidate caches so lists refresh correctly
+        cachedAllUsers = null;
+        cachedManagers = null;
+    } catch (error: any) {
+        const message = error?.message || 'Failed to delete user.';
+        throw new Error(message);
+    }
+};
+
+export const updateUser = async (
+    userId: string,
+    updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'managerIds' | 'managerId' | 'jobTitle' | 'status' | 'skills' | 'rating'>>
+): Promise<User> => {
+    try {
+        const payload: any = {
+            ...updates,
+        };
+
+        const response = await authenticatedFetch(`https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users/${encodeURIComponent(userId)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+        });
+
+        const data = await parseApiResponse(response);
+        const updated = Array.isArray(data) ? data[0] : (data?.user || data?.User || data);
+        const mapped = mapApiUserToUser(updated);
+
+        // Invalidate caches so subsequent reads reflect latest values
+        cachedAllUsers = null;
+        cachedManagers = null;
+
+        return mapped;
+    } catch (error: any) {
+        const message = error?.message || 'Failed to update user.';
+        throw new Error(message);
+    }
+};
+
 // --- API BASED DATA SERVICE ---
 
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
@@ -171,6 +216,47 @@ export const getUserById = async (userId: string): Promise<User | undefined> => 
 export const getEmployees = async (): Promise<User[]> => {
     const allUsers = await getUsers();
     return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
+};
+
+export const createUser = async (userData: {
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    departmentIds?: string[];
+    companyId?: string;
+    managerIds?: string[];
+}): Promise<User> => {
+    try {
+        const payload: any = {
+            name: userData.name,
+            email: userData.email,
+            password: userData.password,
+            role: userData.role,
+            departmentIds: userData.departmentIds || [],
+            companyId: userData.companyId || '',
+            managerIds: userData.managerIds || [],
+        };
+
+        const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+
+        const data = await parseApiResponse(response);
+        // Response could be the created user object or wrapped. Try to extract object.
+        const created = Array.isArray(data) ? data[0] : (data?.user || data?.User || data);
+        const mapped = mapApiUserToUser(created);
+
+        // Invalidate cache so next list fetch includes new user
+        cachedAllUsers = null;
+        cachedManagers = null;
+
+        return mapped;
+    } catch (error: any) {
+        const message = error?.message || 'Failed to create user.';
+        throw new Error(message);
+    }
 };
 
 export const getManagers = async (): Promise<User[]> => {
