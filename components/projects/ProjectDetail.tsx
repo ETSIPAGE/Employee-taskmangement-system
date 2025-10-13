@@ -124,6 +124,10 @@ const ProjectDetail: React.FC = () => {
             // And force a new array for roadmap to ensure React detects changes
             const projectWithEnsuredTimestamp: Project = {
                 ...currentProject,
+                // Ensure `id` is currentProject.id and `timestamp` is currentProject.timestamp
+                // Your current code already retrieves them correctly from getProjectById
+                // No need to override `id` here as it's already in currentProject
+                // Make sure timestamp is a string, and if it's missing, provide a default.
                 timestamp: currentProject.timestamp || new Date().toISOString(),
                 roadmap: currentProject.roadmap ? [...currentProject.roadmap] : [] // Deep clone roadmap array
             };
@@ -236,8 +240,8 @@ const ProjectDetail: React.FC = () => {
         setIsSavingRoadmap(true);
         try {
             const requestBodyForLambda = {
-                id: project.id,
-                timestamp: project.timestamp,
+                id: project.id,          // Partition key
+                timestamp: project.timestamp, // Sort key
                 updateFields: {
                     roadmap: newRoadmap
                 }
@@ -304,11 +308,20 @@ const ProjectDetail: React.FC = () => {
             ms.id === milestoneId ? { ...ms, status: newStatus } : ms
         );
 
+        // Optimistically update the UI
+        setProject(prevProject => {
+            if (!prevProject) return null;
+            return {
+                ...prevProject,
+                roadmap: updatedRoadmap
+            };
+        });
+
         setIsSavingRoadmap(true); // Indicate saving state
         try {
             const requestBodyForLambda = {
-                id: project.id,
-                timestamp: project.timestamp,
+                id: project.id,          // Partition key
+                timestamp: project.timestamp, // Sort key
                 updateFields: {
                     roadmap: updatedRoadmap
                 }
@@ -330,7 +343,13 @@ const ProjectDetail: React.FC = () => {
                 let errorMessage = `Failed to update milestone status. Status: ${response.status} ${response.statusText}.`;
                 try {
                     const errorData = await response.json();
-                    errorMessage = errorData.message || JSON.stringify(errorData);
+                    // If the backend returns a specific error for "Project not found or timestamp mismatch"
+                    // it's crucial to capture that.
+                    if (errorData.message?.includes("Project not found or timestamp (sort key) mismatch")) {
+                        errorMessage = "Failed to update milestone status: Project data out of sync. Please refresh.";
+                    } else {
+                         errorMessage = errorData.message || JSON.stringify(errorData);
+                    }
                 } catch (jsonError) {
                     errorMessage = await response.text();
                 }
@@ -341,25 +360,30 @@ const ProjectDetail: React.FC = () => {
             console.log("Milestone status updated successfully:", result);
             showToast("Milestone status updated!", "success");
 
-            // --- IMMEDIATE UI UPDATE: Create NEW objects at all necessary levels ---
-            setProject(prevProject => {
-                if (!prevProject) return null;
-                // Return a completely new project object with the updated roadmap array
-                return {
-                    ...prevProject, // Shallow copy the old project properties
-                    roadmap: [...updatedRoadmap] // Create a new array for roadmap
-                };
-            });
-            // --- END IMMEDIATE UI UPDATE ---
-
-            // Removed `await loadData()` from here to prevent immediate overwrite by potentially stale data.
-            // `loadData()` will be called after the modal closes or if needed elsewhere for other parts of the UI.
+            // If the backend returns the *latest* project object, you could use that here
+            // to ensure full data consistency, but for just roadmap status, the optimistic
+            // update followed by success toast is usually sufficient.
+            // If the backend doesn't return the full updated object, and `parseApiResponse`
+            // might return just a success message, we rely on the optimistic update.
 
         } catch (error: any) {
             console.error("Failed to update milestone status:", error);
-            showToast(`Could not update milestone status. Error: ${error.message || 'Unknown error'}`, "error");
-            // Important: If optimistic update happened, revert it here on error
-            // (this would require storing the original roadmap state before the update attempt)
+            showToast(`Could not update milestone status: ${error.message || 'Unknown error'}`, "error");
+            // IMPORTANT: Revert optimistic update on error to reflect the true state
+            setProject(prevProject => {
+                if (!prevProject) return null;
+                // Find the original milestone status before the failed update
+                const originalRoadmap = project.roadmap; // Assuming 'project' still holds the state before optimistic update
+                return {
+                    ...prevProject,
+                    roadmap: originalRoadmap // Revert to the original roadmap
+                };
+            });
+            // Then, consider reloading all data if a timestamp mismatch occurred,
+            // as the local state is now definitely out of sync.
+            if (error.message.includes("Project data out of sync")) {
+                loadData(); // Force a full reload to get the latest state from the server
+            }
         } finally {
             setIsSavingRoadmap(false); // Reset saving state
         }

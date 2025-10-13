@@ -123,10 +123,11 @@ export interface ProjectMilestone {
 }
 
 export interface Project {
-  id: string;
+  id: string;          // This is the Partition Key (PK)
+  timestamp: string;   // This must be the Sort Key (SK) as your backend expects it.
+                       // Your previous errors explicitly mentioned 'timestamp (sort key) mismatch'.
   name: string;
   description?: string;
-  // *** CHANGE 1: Replaced 'managerId: string;' with 'managerIds: string[];' ***
   managerIds: string[]; // This must be an array now for multiple managers
   departmentIds: string[];
   deadline?: string;
@@ -134,8 +135,9 @@ export interface Project {
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
-  // *** CHANGE 2: Renamed 'timestamp' back to 'createdAt' to match frontend usage ***
-  createdAt: string; // Use 'createdAt' as expected by Projects.tsx for consistency
+  // If you also need a 'createdAt' field *separate* from the 'timestamp' sort key,
+  // then add it here. Otherwise, 'timestamp' will serve both purposes.
+  // createdAt?: string; // Optional: if you need a separate field for creation date
 }
 
 export interface TaskDependency {
