@@ -178,6 +178,7 @@ const UserManagement: React.FC = () => {
     const [managerIds, setManagerIds] = useState<string[]>([]);
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
     const [companyId, setCompanyId] = useState<string | undefined>(undefined);
+    const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
     const [rating, setRating] = useState(0);
 
     const loadData = useCallback(async () => {
@@ -236,6 +237,7 @@ const UserManagement: React.FC = () => {
         setEditingUser(null);
         setDepartmentIds([]);
         setCompanyId(companies.length > 0 ? companies[0].id : undefined);
+        setSelectedCompanyIds([]);
         setRating(0);
     }, [managers, companies]);
 
@@ -253,6 +255,7 @@ const UserManagement: React.FC = () => {
         setManagerIds(userToEdit.managerIds || (userToEdit.managerId ? [userToEdit.managerId] : []));
         setDepartmentIds(userToEdit.departmentIds || []);
         setCompanyId(userToEdit.companyId);
+        setSelectedCompanyIds(userToEdit.companyId ? [userToEdit.companyId] : []);
         setRating(userToEdit.rating || 0);
         setIsModalOpen(true);
     };
@@ -316,6 +319,14 @@ const UserManagement: React.FC = () => {
         });
     };
     
+    const handleCompanyToggle = (compId: string) => {
+        setSelectedCompanyIds(prev => {
+            const next = new Set(prev);
+            if (next.has(compId)) next.delete(compId); else next.add(compId);
+            return Array.from(next);
+        });
+    };
+    
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
@@ -325,7 +336,7 @@ const UserManagement: React.FC = () => {
                     name, 
                     role, 
                     departmentIds,
-                    companyId,
+                    companyId: selectedCompanyIds[0] || companyId,
                     // Keep legacy managerId (first) and new managerIds list for multi-manager support
                     managerId: role === UserRole.EMPLOYEE && managerIds.length > 0 ? managerIds[0] : undefined,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
@@ -345,7 +356,7 @@ const UserManagement: React.FC = () => {
                     password,
                     role,
                     departmentIds,
-                    companyId,
+                    companyId: selectedCompanyIds[0] || companyId,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
                 });
                 toast.update(tId, { type: 'success', message: 'Successfully created the employee.', duration: 2500 });
@@ -476,17 +487,32 @@ const UserManagement: React.FC = () => {
                     </div>
 
                     <div>
-                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
-                        <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                            <option value="">No Company</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        <label className="block text-sm font-medium text-slate-700">Companies</label>
+                        <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
+                            {companies.length > 0 ? companies.map(c => (
+                                <div key={c.id} className="flex items-center">
+                                    <input
+                                        id={`comp-${c.id}`}
+                                        type="checkbox"
+                                        checked={selectedCompanyIds.includes(c.id)}
+                                        onChange={() => handleCompanyToggle(c.id)}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`comp-${c.id}`} className="ml-2 block text-sm text-slate-800">
+                                        {c.name}
+                                    </label>
+                                </div>
+                            )) : <p className="text-sm text-slate-500">Loading companies...</p>}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">Departments list is filtered by the selected companies.</p>
                     </div>
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
                         <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
-                            {departments.length > 0 ? departments.map(dept => (
+                            {departments.length > 0 ? departments
+                                .filter(dept => selectedCompanyIds.length === 0 || selectedCompanyIds.includes(dept.companyId))
+                                .map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
