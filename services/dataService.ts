@@ -46,8 +46,9 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
 };
 
+// --- MODIFIED: authenticatedFetch, remains as is, as it's already correct ---
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-    const token = getToken();
+    const token = getToken(); // Gets the token here
     const headers = new Headers(options.headers || {});
     if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
@@ -484,8 +485,9 @@ export const getProjectById = async (id: string, attempt = 0): Promise<Project |
     return undefined;
 };
 
+// --- Important: This getProjectsByManager is fine as it filters from cached/all projects ---
 export const getProjectsByManager = async (managerId: string): Promise<Project[]> => {
-    const projects = await getAllProjects();
+    const projects = await getAllProjects(); // Fetches all then filters
     return projects.filter(p => p.managerIds && p.managerIds.includes(managerId));
 };
 
@@ -553,10 +555,9 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
     return newProject;
 };
 
-// --- NEW/UPDATED updateProject in dataService.ts ---
-// This function will now handle API calls for project updates and cache invalidation.
+// --- MODIFIED updateProject in dataService.ts (removed token param) ---
 export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
-    const token = getToken();
+    // No need to get token here, authenticatedFetch handles it.
 
     // Map frontend Project fields to backend API expected fields
     const updateFields: any = {};
@@ -580,6 +581,7 @@ export const updateProject = async (projectId: string, projectTimestamp: string,
 
     console.log(`[DataService] Calling updateProject API for ${projectId}. Payload:`, JSON.stringify(requestBodyForLambda));
 
+    // Authenticated fetch will automatically add the token
     const response = await authenticatedFetch(`${PROJECTS_UPDATE_API_BASE_URL}/${projectId}`, {
         method: 'PUT',
         body: JSON.stringify(requestBodyForLambda),
@@ -631,13 +633,14 @@ export const updateProject = async (projectId: string, projectTimestamp: string,
 };
 
 
-// --- NEW deleteProject function ---
-export const deleteProject = async (projectId: string, projectTimestamp: string, token: string | null): Promise<void> => {
+// --- MODIFIED deleteProject function (removed token parameter) ---
+export const deleteProject = async (projectId: string, projectTimestamp: string): Promise<void> => {
     const deletePayload = {
         id: projectId,
         timestamp: projectTimestamp,
     };
 
+    // Authenticated fetch will automatically add the token
     const response = await authenticatedFetch(PROJECTS_DELETE_API_URL, {
         method: 'DELETE',
         body: JSON.stringify(deletePayload),

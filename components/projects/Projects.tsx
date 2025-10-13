@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+import * as AuthService from '../../services/authService'; // Make sure this is imported
 import { Project, User, UserRole, TaskStatus, Department, Company, ProjectMilestone, MilestoneStatus } from '../../types';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
@@ -11,14 +11,6 @@ import ViewSwitcher from '../shared/ViewSwitcher';
 import ProjectCard from './ProjectCard';
 import ProjectRoadmap from './ProjectRoadmap';
 import { EditIcon, TrashIcon } from '../../constants';
-
-// API Endpoints for Project CRUD (managed directly in this component)
-// These are now for reference, DataService handles the actual calls.
-const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
-// const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects'; // Handled by DataService
-// const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project'; // Handled by DataService
-// const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project'; // Handled by DataService
-
 
 // ProjectDisplayData now extends Project, which already has 'timestamp'.
 export interface ProjectDisplayData extends Project {
@@ -29,8 +21,9 @@ export interface ProjectDisplayData extends Project {
     overallStatus: string;
 }
 
-// Function to parse API responses (no longer used directly in this component for project CRUD)
-// Keeping it here for consistency if other direct fetches still use it.
+// NOTE: parseApiResponse is not used internally by DataService.fetchData
+// and is not directly used in this component's CRUD operations.
+// Keeping it for backward compatibility if other parts of your app use it.
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
         let errorText = await response.text();
@@ -99,8 +92,6 @@ const Projects: React.FC = () => {
 
 
     // --- Helper function to calculate project display data ---
-    // This helper now receives all necessary 'lookup' data as arguments.
-    // It's also memoized using useCallback to prevent unnecessary re-creations.
     const getProjectDisplayData = useCallback(async (project: Project, usersList: User[], deptsList: Department[], companiesList: Company[]): Promise<ProjectDisplayData> => {
         const managerNames = (project.managerIds || [])
             .map((id) => usersList.find((u) => u.id === id)?.name)
@@ -140,6 +131,7 @@ const Projects: React.FC = () => {
         } else {
             // Fallback to tasks if no roadmap
             // IMPORTANT: Fetch tasks here to ensure fresh data for this specific project
+            // Make sure DataService.getTasksByProject is implemented in dataService.ts
             const projectTasks = await DataService.getTasksByProject(project.id);
             const completedTasks = projectTasks.filter(
                 (t) => t.status === TaskStatus.COMPLETED
@@ -176,23 +168,26 @@ const Projects: React.FC = () => {
             departmentNames,
             companyName: company?.name || 'N/A',
         };
-    }, []); // Dependencies are just here to satisfy useCallback, logic uses arguments
+    }, []);
 
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
         console.log("[Projects] Starting loadData...");
         try {
-            // Fetch all core lookup data first, fresh from the backend (cache will be invalidated by DataService functions)
-            // Use DataService functions for all data fetches for consistency and cache management
-            const [usersData, departmentsData, companiesData, allProjectsRaw] = await Promise.all([
-                DataService.getUsers(), 
+            if (!user) {
+                console.warn("[Projects] User not available, cannot load data.");
+                setIsLoading(false);
+                return;
+            }
+
+            // Fetch all core lookup data
+            const [usersData, departmentsData, companiesData] = await Promise.all([
+                DataService.getUsers(),
                 DataService.getDepartments(),
                 DataService.getCompanies(),
-                DataService.getAllProjects(), // Use DataService to get all projects
             ]);
-            
-            // Update state for filter options
+
             setAllManagers(usersData.filter(u => u.role === UserRole.MANAGER));
             setAllDepartments(departmentsData);
             setCompanies(companiesData);
@@ -201,9 +196,24 @@ const Projects: React.FC = () => {
                 setNewProjectCompanyId(companiesData[0].id);
             }
 
-            console.log(`[Projects] Fetched ${allProjectsRaw.length} raw projects from API.`);
+            let allProjectsRaw: Project[] = [];
 
-            // Map raw projects to display data, using the freshly fetched lookup data
+            if (user.role === UserRole.ADMIN || user.role === UserRole.HR) {
+                console.log("[Projects] Admin/HR user, fetching all projects.");
+                allProjectsRaw = await DataService.getAllProjects(); // Should now be `DataService.getAllProjects()` (no args)
+            } else if (user.role === UserRole.MANAGER) {
+                console.log(`[Projects] Manager user (${user.id}), fetching assigned projects.`);
+                // This calls the new function in dataService.ts
+                allProjectsRaw = await DataService.getProjectsByManager(user.id);
+            } else {
+                console.log(`[Projects] User role ${user.role}, no projects fetched.`);
+                setProjects([]);
+                setIsLoading(false);
+                return;
+            }
+
+            console.log(`[Projects] Fetched ${allProjectsRaw.length} raw projects from API for role ${user.role}.`);
+
             const projectsWithDetails: ProjectDisplayData[] = await Promise.all(
                 allProjectsRaw.map(async (p) => getProjectDisplayData(p, usersData, departmentsData, companiesData))
             );
@@ -219,7 +229,7 @@ const Projects: React.FC = () => {
             setIsLoading(false);
             console.log("[Projects] Finished loadData.");
         }
-    }, [showToast, newProjectCompanyId, getProjectDisplayData]);
+    }, [showToast, newProjectCompanyId, getProjectDisplayData, user]); // Added user to dependencies
 
 
     useEffect(() => {
@@ -428,19 +438,17 @@ const Projects: React.FC = () => {
         const projectToDelete = confirmDeleteProject;
         setConfirmDeleteProject(null);
 
-        const token = AuthService.getToken(); 
+        // No need to pass token explicitly to DataService methods if fetchData handles it
         try {
-            // Corrected: Use DataService.deleteProject
-            await DataService.deleteProject(projectToDelete.id, projectToDelete.timestamp, token); 
+            await DataService.deleteProject(projectToDelete.id, projectToDelete.timestamp);
             showToast('Project deleted successfully!', 'success');
-            await loadData(); 
+            await loadData();
         } catch (error) {
             console.error('[Projects] Failed to delete project:', error instanceof Error ? error.message : error);
             showToast(`Failed to delete project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
         }
     };
 
-    // This is for ProjectCard directly updating overall status (e.g., mark complete)
     const handleUpdateProjectStatus = useCallback(async (projectId: string, newStatus: string) => {
         const projectToUpdate = projects.find(p => p.id === projectId);
         if (!projectToUpdate || !projectToUpdate.timestamp) {
@@ -448,11 +456,6 @@ const Projects: React.FC = () => {
             return;
         }
 
-        // --- FIX for error: `overallStatus` does not exist in type `Partial<Project>` ---
-        // `overallStatus` is a derived frontend property. It cannot be directly sent to the backend.
-        // If the intention is to mark a project as "Completed", you should update its roadmap.
-        // If your backend *does* have a 'status' field, you'd send that, not 'overallStatus'.
-        // Assuming 'overallStatus' means to imply completion of all milestones:
         let updatesToSend: Partial<Project> = {};
         if (newStatus === 'Completed') {
             const updatedRoadmap = (projectToUpdate.roadmap || []).map(milestone => ({
@@ -460,37 +463,22 @@ const Projects: React.FC = () => {
                 status: MilestoneStatus.COMPLETED
             }));
             updatesToSend.roadmap = updatedRoadmap;
-        } 
-        // If newStatus is not 'Completed' but some other direct status,
-        // you would need a dedicated `status` field in your `Project` interface
-        // and backend API to support it. For now, we'll only handle 'Completed' via roadmap.
-        // If the UI is just showing a custom status, without backend update:
-        // You could just optimistically update the UI and not call the API.
-        // But assuming you want a backend effect:
+        }
 
-        // Optimistic update of the main projects list for all derived properties
         setProjects(prevProjects => {
             return prevProjects.map(p => {
                 if (p.id === projectId) {
-                    const tempProjectForCalc: Project = { 
-                        ...p, 
-                        // Apply optimistic changes to roadmap if it was part of the update
-                        roadmap: newStatus === 'Completed' ? updatesToSend.roadmap : p.roadmap 
-                    }; 
-                    // Recalculate full display data locally for optimistic update
-                    const { overallStatus: recalculatedStatus, progress: recalculatedProgress } = 
-                        // Must be synchronous for optimistic, or simplified.
-                        // For a full refresh, loadData() is better.
-                        // For this direct update, only update the status field if it's not derived, 
-                        // or trigger full loadData.
-                        // The safest approach for `onUpdateStatus` that *doesn't* directly map to roadmap is to force a loadData.
-                        // If it *does* map to roadmap, then construct the roadmap update here.
-                        { overallStatus: newStatus, progress: (newStatus === 'Completed' ? 100 : p.progress) }; // Simplified optimistic
+                    const tempProjectForCalc: Project = {
+                        ...p,
+                        roadmap: newStatus === 'Completed' ? updatesToSend.roadmap : p.roadmap
+                    };
+                    const { overallStatus: recalculatedStatus, progress: recalculatedProgress } =
+                        { overallStatus: newStatus, progress: (newStatus === 'Completed' ? 100 : p.progress) };
 
-                    return { 
-                        ...p, 
-                        overallStatus: recalculatedStatus, 
-                        progress: recalculatedProgress 
+                    return {
+                        ...p,
+                        overallStatus: recalculatedStatus,
+                        progress: recalculatedProgress
                     };
                 }
                 return p;
@@ -499,25 +487,22 @@ const Projects: React.FC = () => {
         console.log(`[Projects] Optimistically updated project ${projectId} overall status to ${newStatus}.`);
 
         try {
-            if (Object.keys(updatesToSend).length > 0) { // Only call API if there are actual Project field updates
+            if (Object.keys(updatesToSend).length > 0) {
                 await DataService.updateProject(
                     projectId,
                     projectToUpdate.timestamp,
-                    updatesToSend // Send the actual Project fields to update
+                    updatesToSend
                 );
                 showToast(`Project status updated to ${newStatus} successfully!`, 'success');
-                await loadData(); // Full reload to ensure all derived properties are refreshed
+                await loadData();
             } else {
-                // If newStatus couldn't be mapped to a backend update,
-                // perhaps it's a display-only status change or an invalid one.
                 showToast(`Project status changed to ${newStatus} (display only).`, 'info');
-                // Even for display-only, a full reload might be needed to re-evaluate all state.
-                await loadData(); 
+                await loadData();
             }
         } catch (error) {
             console.error('[Projects] Failed to update project status:', error instanceof Error ? error.message : error);
             showToast(`Failed to update project status: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
-            await loadData(); // Revert optimistic update by reloading
+            await loadData();
         }
     }, [projects, loadData, showToast]);
 
@@ -539,13 +524,10 @@ const Projects: React.FC = () => {
             ms.id === milestoneId ? { ...ms, status: mappedNewStatus } : ms
         );
 
-        // Optimistically update the roadmap status in the UI (within the modal and list)
         setProjects(prevProjects => {
             return prevProjects.map(p => {
                 if (p.id === projectId) {
-                    // Only update the roadmap portion for optimistic update
-                    // Derived properties will be fully re-calculated after loadData()
-                    return { ...p, roadmap: updatedRoadmap }; 
+                    return { ...p, roadmap: updatedRoadmap };
                 }
                 return p;
             });
@@ -558,23 +540,20 @@ const Projects: React.FC = () => {
                 projectToUpdate.timestamp,
                 { roadmap: updatedRoadmap }
             );
-            
+
             showToast('Roadmap updated successfully!', 'success');
-            // CRITICAL: After a successful update, perform a FULL reload via loadData()
-            // This ensures all derived properties for ALL projects are re-evaluated from the latest backend data.
-            await loadData(); 
+            await loadData();
 
         } catch (error) {
             console.error('[Projects] Failed to update roadmap milestone:', error instanceof Error ? error.message : error);
             showToast(`Failed to update roadmap: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
-
-            // On error, revert by performing a full reload to get the true state from the backend.
-            await loadData(); 
+            await loadData();
         }
     }, [projects, loadData, showToast]);
 
 
     if (!user || ![UserRole.ADMIN, UserRole.MANAGER, UserRole.HR].includes(user.role)) {
+        // Redirect if not authorized
         return <Navigate to="/" />;
     }
 
@@ -691,6 +670,9 @@ const Projects: React.FC = () => {
                                             >
                                                 View Roadmap
                                             </button>
+                                            {/* Only allow edit/delete for ADMIN or MANAGERS. */}
+                                            {/* Managers can only edit/delete their own projects (backend logic for this). */}
+                                            {/* UI-wise, we show the buttons, but backend should enforce permissions. */}
                                             {[UserRole.ADMIN, UserRole.MANAGER].includes(user?.role as UserRole) && (
                                                 <>
                                                     <button
