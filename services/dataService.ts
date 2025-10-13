@@ -1,18 +1,18 @@
-// services/dataService.ts (CONFIRMED CORRECT AND ROBUST MAPPING)
+// services/dataService.ts
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
-import { getToken } from './authService'; // Import getToken from authService
+import { getToken } from './authService';
 
-// --- API URLs ---
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
-
-// --- ATTENDANCE API URLs ---
-const ATTENDANCE_GET_BY_DATE_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-date';
-// Renamed the following variables for consistency with ATTENDANCE_GET_BY_DATE_URL
+const ATTENDANCE_GET_BY_DATE_URL = 'https://onp8l5se9i.execute-api.ap-south-1.amazonaws.com/dev/get-attendance-by-date';
 const ATTENDANCE_GET_BY_USER_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-user';
 const ATTENDANCE_RECORD_ACTION_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/ETS-record-attendance-action';
 
+// Project API Endpoints (as defined in Projects.tsx initially, centralized here)
+const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
+const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects';
+const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project';
+const PROJECTS_UPDATE_API_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project'; // NO {id} here
 
-// --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
 let CONVERSATIONS: ChatConversation[] = [
     { id: 'conv-1', type: 'group', name: 'Project Marketing', participantIds: ['2', '3', '4', '5'], adminIds: ['2'] },
     { id: 'conv-2', type: 'group', name: 'Website Dev Team', participantIds: ['2', '4', '5', '6'], adminIds: ['2'] },
@@ -46,8 +46,6 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
 };
 
-// --- API BASED DATA SERVICE ---
-
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
     const token = getToken();
     const headers = new Headers(options.headers || {});
@@ -62,7 +60,14 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
 
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
-        const errorText = await response.text();
+        let errorText = await response.text();
+        try {
+            const errorJson = JSON.parse(errorText);
+            errorText = errorJson.message || JSON.stringify(errorJson);
+        } catch (e) {
+            // Not JSON, use raw text
+        }
+        console.error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
         throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
     const data = await response.json();
@@ -97,14 +102,16 @@ const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
     return [];
 }
 
-
-// Caching mechanism
 let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
 let cachedAllUsers: User[] | null = null;
 let cachedManagers: User[] | null = null;
 let cachedCompanies: Company[] | null = null;
+
+// Retry constants for eventual consistency
+const MAX_RETRIES = 3; 
+const RETRY_DELAY_MS = 500; // milliseconds
 
 const mapApiUserToUser = (apiUser: any): User => {
     const roleString = apiUser.role || 'employee';
@@ -129,7 +136,7 @@ const mapApiUserToUser = (apiUser: any): User => {
                     ? String(apiUser.companyIds[0])
                     : String(apiUser.companyId || apiUser.company_id || apiUser.company || apiUser.organizationId || 'default-company-id')
                    ).toLowerCase().trim(),
-        managerId: apiUser.managerId, // This `managerId` is for the User's direct manager, not the Project's
+        managerId: apiUser.managerId,
         departmentIds: Array.isArray(apiUser.departmentIds) ? apiUser.departmentIds : (typeof apiUser.departmentIds === 'string' ? [apiUser.departmentIds] : []),
         jobTitle: apiUser.jobTitle,
         status: apiUser.status || 'Offline',
@@ -199,91 +206,66 @@ export const getManagersByDepartments = async (departmentIds: string[]): Promise
     }
 };
 
-
-// --- TASKS ---
 const mapApiStatusToTaskStatus = (apiStatus?: string): TaskStatus => {
-    console.log(`mapApiStatusToTaskStatus: Received raw status: "${apiStatus}"`); // NEW LOG
     if (!apiStatus) {
-        console.log("mapApiStatusToTaskStatus: Raw status is undefined/null. Defaulting to To-Do."); // NEW LOG
         return TaskStatus.TODO;
     }
     const normalized = apiStatus.toLowerCase().replace(/[\s-]+/g, '');
-    console.log(`mapApiStatusToTaskStatus: Normalized status: "${normalized}"`); // NEW LOG
 
     if (normalized.includes('inprogress')) {
-        console.log("mapApiStatusToTaskStatus: Mapped to IN_PROGRESS"); // NEW LOG
         return TaskStatus.IN_PROGRESS;
     }
     if (normalized.includes('onhold')) {
-        console.log("mapApiStatusToTaskStatus: Mapped to ON_HOLD"); // NEW LOG
         return TaskStatus.ON_HOLD;
     }
     if (normalized.includes('completed')) {
-        console.log("mapApiStatusToTaskStatus: Mapped to COMPLETED"); // NEW LOG
         return TaskStatus.COMPLETED;
     }
     if (normalized.includes('todo')) {
-        console.log("mapApiStatusToTaskStatus: Mapped to TODO"); // NEW LOG
         return TaskStatus.TODO;
     }
     
-    console.warn(`mapApiStatusToTaskStatus: Unknown task status from API: "${apiStatus}". Defaulting to To-Do.`);
+    console.warn(`Unknown task status from API: "${apiStatus}". Defaulting to To-Do.`);
     return TaskStatus.TODO;
 };
 
 export const getAllTasks = async (): Promise<Task[]> => {
-    // if (cachedTasks) return cachedTasks; // Comment out temporarily if you want to force API call every time
-
     try {
-        console.log("DataService: Attempting to fetch tasks from API...");
         const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
-        console.log("DataService: Task API response status:", response.status, response.statusText);
-
         if (!response.ok) {
             const errorText = await response.text();
-            console.error("DataService: Task API Error Response (raw text):", errorText);
             throw new Error(`API request for tasks failed: ${response.status} ${response.statusText}`);
         }
 
         const responseData = await response.json();
-        console.log("DataService: Task API raw responseData:", responseData);
         
         let tasksFromApi: any[];
         if (responseData.body && typeof responseData.body === 'string') {
             try {
                 tasksFromApi = JSON.parse(responseData.body);
-                console.log("DataService: Parsed tasks from responseData.body (string):", tasksFromApi);
             } catch (e) {
-                console.error("DataService: Failed to JSON.parse responseData.body:", e, "Original body:", responseData.body);
                 tasksFromApi = [];
             }
         } else if (Array.isArray(responseData.body)) {
             tasksFromApi = responseData.body;
-            console.log("DataService: Parsed tasks from responseData.body (array):", tasksFromApi);
         } else if (Array.isArray(responseData)) {
             tasksFromApi = responseData;
-            console.log("DataService: Parsed tasks from raw responseData (array):", tasksFromApi);
         } else if (responseData.Tasks && Array.isArray(responseData.Tasks)) {
             tasksFromApi = responseData.Tasks;
-            console.log("DataService: Parsed tasks from responseData.Tasks:", tasksFromApi);
         } else {
             tasksFromApi = extractArrayFromApiResponse(responseData, 'Tasks');
-            console.log("DataService: Parsed tasks using extractArrayFromApiResponse:", tasksFromApi);
         }
 
         if (!Array.isArray(tasksFromApi)) {
-            console.error("DataService: Final processed task data is not an array:", tasksFromApi);
             return [];
         }
 
         if (tasksFromApi.length === 0) {
-            console.warn("DataService: Task API returned an empty array of tasks.");
             return [];
         }
         
-        cachedTasks = tasksFromApi.map((task: any): Task => {
-            const mappedTaskStatus = mapApiStatusToTaskStatus(task.status); // Call the mapping function
-            console.log(`DataService: Task ID ${task.id || 'N/A'}, Raw API status: "${task.status}", Mapped status: "${mappedTaskStatus}"`); // NEW LOG
+        const mappedTasks = tasksFromApi.map((task: any): Task => {
+            const mappedTaskStatus = mapApiStatusToTaskStatus(task.status);
             return ({
                 id: task.id,
                 name: task.title,
@@ -292,21 +274,20 @@ export const getAllTasks = async (): Promise<Task[]> => {
                 projectId: task.project,
                 assigneeId: task.assign_to,
                 assign_by: task.assign_by,
-                status: mappedTaskStatus, // Use the mapped status
+                status: mappedTaskStatus,
                 priority: task.priority,
                 estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
             });
         });
         
-        console.log("DataService: Successfully mapped and cached tasks. Total:", cachedTasks.length, "First task status:", cachedTasks[0]?.status);
-        return cachedTasks;
+        cachedTasks = mappedTasks;
+        return mappedTasks;
 
     } catch (error) {
         console.error("DataService: A critical error occurred while fetching tasks:", error);
         return [];
     }
 };
-
 
 export const createTask = async (taskData: any): Promise<Task> => {
     const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task', {
@@ -330,7 +311,7 @@ export const createTask = async (taskData: any): Promise<Task> => {
         projectId: createdTaskData.project,
         assigneeId: createdTaskData.assign_to,
         assign_by: createdTaskData.assign_by,
-        status: mapApiStatusToTaskStatus(createdTaskData.status), // Ensure status is mapped
+        status: mapApiStatusToTaskStatus(createdTaskData.status),
         priority: createdTaskData.priority,
         estimatedTime: createdTaskData.est_time ? parseInt(createdTaskData.est_time, 10) : undefined,
     };
@@ -360,11 +341,11 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
 };
 
 export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeId?: string | undefined }, currentUserId: string): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string } = { // Changed status type to string for payload
+    const payload: { currentUserId: string; status?: string; assign_to?: string } = {
         currentUserId: currentUserId,
     };
     if (updates.status) {
-        payload.status = updates.status; // Send the enum value directly as string
+        payload.status = updates.status;
     }
     if (updates.hasOwnProperty('assigneeId')) {
         payload.assign_to = updates.assigneeId || '';
@@ -388,7 +369,7 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         throw new Error(errorMessage);
     }
     
-    cachedTasks = null;
+    cachedTasks = null; // Invalidate cache after update
     
     const responseData = await response.json();
     const updatedTaskData = responseData.Task;
@@ -401,7 +382,7 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         projectId: updatedTaskData.project,
         assigneeId: updatedTaskData.assign_to,
         assign_by: updatedTaskData.assign_by,
-        status: mapApiStatusToTaskStatus(updatedTaskData.status), // Ensure status is mapped from API response
+        status: mapApiStatusToTaskStatus(updatedTaskData.status),
         priority: updatedTaskData.priority,
         estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
         notes: updatedTaskData.notes,
@@ -425,7 +406,6 @@ export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task 
     return undefined;
 };
 
-
 export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
     const response = await authenticatedFetch(`https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task/${taskId}`, {
         method: 'POST',
@@ -433,7 +413,7 @@ export const deleteTask = async (taskId: string, currentUserId: string): Promise
     });
 
     if (!response.ok) {
-        let errorMessage = 'Failed to update task.'; // Changed from delete to update, as per similar functions' error messages
+        let errorMessage = 'Failed to delete task.';
         try {
             const errorBody = await response.json();
             errorMessage = errorBody.message || JSON.stringify(errorBody);
@@ -447,27 +427,21 @@ export const deleteTask = async (taskId: string, currentUserId: string): Promise
     cachedTasks = null;
 };
 
-
-// --- PROJECTS ---
 export const getAllProjects = async (): Promise<Project[]> => {
     if (cachedProjects) return cachedProjects;
     try {
-        const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
+        const response = await authenticatedFetch(PROJECTS_GET_ALL_API_URL); // Use centralized URL
         const data = await parseApiResponse(response);
         const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
         cachedProjects = projectsFromApi.map((proj: any): Project => ({
             id: proj.id,
             name: proj.name,
             description: proj.description,
-            // *** CHANGE 1: Map from manager_id (API) to managerIds (Type) ***
-            // Assuming API might return a single string or an array for managers.
-            // Adjust based on your actual API response. Here, we try to convert anything to an array.
             managerIds: Array.isArray(proj.manager_ids)
                         ? proj.manager_ids.map((id: string) => String(id).trim())
                         : (typeof proj.manager_id === 'string' && proj.manager_id)
                             ? [String(proj.manager_id).trim()]
                             : [],
-            // --- IMPROVED DEPARTMENT ID EXTRACTION FOR PROJECT ---
             departmentIds: (Array.isArray(proj.departmentIds) && proj.departmentIds.length > 0
                             ? proj.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(proj.department_ids) && proj.department_ids.length > 0
@@ -476,14 +450,12 @@ export const getAllProjects = async (): Promise<Project[]> => {
                                     ? [String(proj.departmentId).toLowerCase().trim()]
                                     : []
                            ),
-            // --- END IMPROVED ---
             deadline: proj.deadline,
             priority: proj.priority,
             estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
             companyId: String(proj.companyId || proj.company_id || proj.company || 'default-company-id').toLowerCase().trim(),
             roadmap: proj.roadmap || [],
-            // *** FIX 1: Map from timestamp (API) to 'timestamp' property in Project interface ***
-            timestamp: proj.timestamp || new Date().toISOString(), // Use 'timestamp' to match the Project interface
+            timestamp: proj.timestamp || new Date().toISOString(),
         }));
         return cachedProjects;
     } catch (error) {
@@ -492,12 +464,26 @@ export const getAllProjects = async (): Promise<Project[]> => {
     }
 };
 
-export const getProjectById = async (id: string): Promise<Project | undefined> => {
-    const projects = await getAllProjects();
-    return projects.find(p => p.id === id);
+// --- Modified getProjectById with retry logic ---
+export const getProjectById = async (id: string, attempt = 0): Promise<Project | undefined> => {
+    const projects = await getAllProjects(); // This call will use/update the cache as necessary
+    const foundProject = projects.find(p => p.id === id);
+
+    if (foundProject) {
+        return foundProject;
+    }
+
+    if (attempt < MAX_RETRIES) {
+        console.warn(`[DataService] Project ${id} not found on attempt ${attempt + 1}. Retrying in ${RETRY_DELAY_MS}ms...`);
+        cachedProjects = null; // Invalidate cache before next attempt to force a fresh fetch
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        return getProjectById(id, attempt + 1); // Recursive retry with incremented attempt
+    }
+
+    console.error(`[DataService] Project ${id} not found after ${MAX_RETRIES} attempts.`);
+    return undefined;
 };
 
-// *** CHANGE 3: Filter by managerIds (plural) ***
 export const getProjectsByManager = async (managerId: string): Promise<Project[]> => {
     const projects = await getAllProjects();
     return projects.filter(p => p.managerIds && p.managerIds.includes(managerId));
@@ -513,25 +499,19 @@ export const getProjectsByDepartment = async (departmentId: string): Promise<Pro
     return projects.filter(p => p.departmentIds && p.departmentIds.includes(departmentId));
 };
 
-// *** CHANGE 4: Update Omit and payload for createProject ***
-// *** FIX 2: Update Omit for createProject to use 'timestamp' ***
 export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp'>): Promise<Project> => {
-    // Generate the timestamp directly since 'projectData' is explicitly defined NOT to have it.
     const newProjectTimestamp = new Date().toISOString(); 
 
     const payload = {
         ...projectData,
-        // *** CHANGE 5: Pass managerIds as manager_ids to the API ***
-        manager_ids: projectData.managerIds, // Use managerIds
+        manager_ids: projectData.managerIds,
         department_ids: projectData.departmentIds,
         company_id: projectData.companyId, 
         id: `proj-${Date.now()}`, 
-        // *** CHANGE 6 (from previous, now correct): Pass the generated timestamp to the API ***
-        // *** This maps our frontend 'timestamp' (implicitly the creation date) to the backend's sort key 'timestamp' ***
         timestamp: newProjectTimestamp, 
     };
     
-    const response = await authenticatedFetch('https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects', {
+    const response = await authenticatedFetch(PROJECTS_CREATE_API_URL, { // Use centralized URL
         method: 'POST',
         body: JSON.stringify(payload)
     });
@@ -541,15 +521,14 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
         throw new Error(errorData.message || 'Failed to create project.');
     }
 
-    cachedProjects = null;
-    const responseData = await response.json();
-    const createdProjectData = responseData.Project.Item;
+    cachedProjects = null; // Ensure cache is invalidated after creation
+    const responseData = await parseApiResponse(response);
+    const createdProjectData = responseData.Project?.Item || responseData.Item || responseData; // More robust parsing
 
     const newProject: Project = {
         id: createdProjectData.id,
         name: createdProjectData.name,
         description: createdProjectData.description,
-        // *** CHANGE 7: Map manager_id/manager_ids from API response to managerIds ***
         managerIds: Array.isArray(createdProjectData.manager_ids)
                     ? createdProjectData.manager_ids.map((id: string) => String(id).trim())
                     : (typeof createdProjectData.manager_id === 'string' && createdProjectData.manager_id)
@@ -568,38 +547,115 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
         estimatedTime: createdProjectData.estimated_time ? parseInt(createdProjectData.estimated_time, 10) : undefined,
         companyId: String(createdProjectData.companyId || createdProjectData.company_id || createdProjectData.company || 'default-company-id').toLowerCase().trim(),
         roadmap: createdProjectData.roadmap || [],
-        // *** FIX 3: Map timestamp from API response to 'timestamp' property in Project interface ***
-        timestamp: createdProjectData.timestamp, // Use 'timestamp' to match the Project interface
+        timestamp: createdProjectData.timestamp,
     };
     
     return newProject;
 };
 
+// --- NEW/UPDATED updateProject in dataService.ts ---
+// This function will now handle API calls for project updates and cache invalidation.
+export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
+    const token = getToken();
 
-// *** CHANGE 9: Update updateProject signature for createdAt and ensure payload uses createdAt/managerIds ***
-// NOTE: Your `updateProject` here is a client-side cache update, not an API call.
-// The `Projects.tsx` component directly calls the API for updates using fetch.
-// This function needs to be adapted or removed if not used for actual API calls.
-// If it *is* meant for API calls, its signature and body must be adjusted similar to createProject.
-// For now, I'm assuming it's for local cache updates and `Projects.tsx` handles API.
-// If you want this `dataService.ts` function to handle the API update, you need to change its body.
-export const updateProject = async (projectId: string, updates: Partial<Project>): Promise<Project | undefined> => {
-    // This currently only updates the local cache.
-    // If you need an API call here, you'll need projectId, timestamp from the original project,
-    // and the updates for the API body.
-    if (cachedProjects) {
-        const projectIndex = cachedProjects.findIndex(p => p.id === projectId);
-        if (projectIndex > -1) {
-            // Assuming 'updates' correctly contains managerIds if they are updated
-            cachedProjects[projectIndex] = { ...cachedProjects[projectIndex], ...updates };
-            return cachedProjects[projectIndex];
+    // Map frontend Project fields to backend API expected fields
+    const updateFields: any = {};
+    if (updates.name !== undefined) updateFields.name = updates.name;
+    if (updates.description !== undefined) updateFields.description = updates.description;
+    if (updates.managerIds !== undefined) updateFields.manager_ids = updates.managerIds; // Backend expects manager_ids
+    if (updates.departmentIds !== undefined) updateFields.department_ids = updates.departmentIds; // Backend expects department_ids
+    if (updates.deadline !== undefined) updateFields.deadline = updates.deadline;
+    if (updates.priority !== undefined) updateFields.priority = updates.priority;
+    if (updates.estimatedTime !== undefined) updateFields.estimated_time = updates.estimatedTime; // Backend expects estimated_time
+    if (updates.companyId !== undefined) updateFields.company_id = updates.companyId; // Backend expects company_id
+    if (updates.roadmap !== undefined) updateFields.roadmap = updates.roadmap;
+    // If your backend has a dedicated 'status' field that corresponds to overallStatus, add it here:
+    // For example: if ((updates as any).status !== undefined) updateFields.status = (updates as any).status;
+
+    const requestBodyForLambda = {
+        id: projectId,
+        timestamp: projectTimestamp, // Crucial for DynamoDB conditional update
+        updateFields: updateFields,
+    };
+
+    console.log(`[DataService] Calling updateProject API for ${projectId}. Payload:`, JSON.stringify(requestBodyForLambda));
+
+    const response = await authenticatedFetch(`${PROJECTS_UPDATE_API_BASE_URL}/${projectId}`, {
+        method: 'PUT',
+        body: JSON.stringify(requestBodyForLambda),
+    });
+
+    if (!response.ok) {
+        let errorMessage = `Failed to update project ${projectId}. Status: ${response.status} ${response.statusText}.`;
+        try {
+            const errorData = await response.json();
+            errorMessage = errorData.message || JSON.stringify(errorData);
+        } catch (jsonError) {
+            errorMessage = await response.text();
         }
+        throw new Error(errorMessage);
     }
-    return undefined;
+
+    cachedProjects = null; // Invalidate cache after server update
+
+    const responseData = await parseApiResponse(response);
+    const updatedProjectData = responseData.updatedItem || responseData; // Assuming it returns `updatedItem` or the item directly
+
+    // Map backend response back to frontend Project type
+    const updatedProject: Project = {
+        id: updatedProjectData.id,
+        name: updatedProjectData.name,
+        description: updatedProjectData.description,
+        managerIds: Array.isArray(updatedProjectData.manager_ids)
+                    ? updatedProjectData.manager_ids.map((id: string) => String(id).trim())
+                    : (typeof updatedProjectData.manager_id === 'string' && updatedProjectData.manager_id)
+                        ? [String(updatedProjectData.manager_id).trim()]
+                        : [],
+        departmentIds: (Array.isArray(updatedProjectData.departmentIds) && updatedProjectData.departmentIds.length > 0
+                            ? updatedProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
+                            : Array.isArray(updatedProjectData.department_ids) && updatedProjectData.department_ids.length > 0
+                                ? updatedProjectData.department_ids.map((id: string) => String(id).toLowerCase().trim())
+                                : (typeof updatedProjectData.departmentId === 'string' && updatedProjectData.departmentId)
+                                    ? [String(updatedProjectData.departmentId).toLowerCase().trim()]
+                                    : []
+                           ),
+        deadline: updatedProjectData.deadline,
+        priority: updatedProjectData.priority,
+        estimatedTime: updatedProjectData.estimated_time ? parseInt(updatedProjectData.estimated_time, 10) : undefined,
+        companyId: String(updatedProjectData.companyId || updatedProjectData.company_id || updatedProjectData.company || 'default-company-id').toLowerCase().trim(),
+        roadmap: updatedProjectData.roadmap || [],
+        timestamp: updatedProjectData.timestamp,
+    };
+    
+    return updatedProject;
 };
 
 
-// --- DEPARTMENTS ---
+// --- NEW deleteProject function ---
+export const deleteProject = async (projectId: string, projectTimestamp: string, token: string | null): Promise<void> => {
+    const deletePayload = {
+        id: projectId,
+        timestamp: projectTimestamp,
+    };
+
+    const response = await authenticatedFetch(PROJECTS_DELETE_API_URL, {
+        method: 'DELETE',
+        body: JSON.stringify(deletePayload),
+    });
+
+    if (!response.ok) {
+        let errorMessage = `Failed to delete project ${projectId}. Status: ${response.status} ${response.statusText}.`;
+        try {
+            const errorData = await response.json();
+            errorMessage = errorData.message || JSON.stringify(errorData);
+        } catch (jsonError) {
+            errorMessage = await response.text();
+        }
+        throw new Error(errorMessage);
+    }
+    cachedProjects = null; // Invalidate cache after deletion
+};
+
 export const getDepartments = async (): Promise<Department[]> => {
     if (cachedDepartments) return cachedDepartments;
     try {
@@ -625,7 +681,6 @@ export const getDepartmentsByCompany = async (companyId: string): Promise<Depart
     const allDepartments = await getDepartments();
     return allDepartments.filter(dept => dept.companyId === companyId);
 };
-
 
 export const getDepartmentById = async (id: string): Promise<Department | undefined> => {
     const depts = await getDepartments();
@@ -663,7 +718,6 @@ export const createDepartment = async (name: string, companyId: string): Promise
     return newDepartment;
 };
 
-// --- API-BACKED FUNCTIONS (previously in MOCKED FUNCTIONS) ---
 export const getCompanies = async (): Promise<Company[]> => {
     if (cachedCompanies) return cachedCompanies;
 
@@ -690,7 +744,6 @@ export const getCompanyById = async (id: string): Promise<Company | undefined> =
     return allCompanies.find(c => c.id === id);
 };
 
-// --- MOCKED FUNCTIONS (only truly mocked ones remain) ---
 export const createCompany = (name: string, ownerId: string): Company => {
     const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
     if (cachedCompanies) {
@@ -701,7 +754,6 @@ export const createCompany = (name: string, ownerId: string): Company => {
     return newCompany;
 };
 
-// --- NEW ATTENDANCE API FUNCTIONS ---
 export const getAttendanceByDate = async (date: string): Promise<string[]> => {
     try {
         const response = await authenticatedFetch(ATTENDANCE_GET_BY_DATE_URL, {
@@ -768,7 +820,6 @@ export const recordAttendance = async (userId: string, date: string): Promise<bo
     }
 };
 
-// --- REST OF THE MOCKED FUNCTIONS (UNCHANGED) ---
 export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
 export const getConversationsForUser = (userId: string): ChatConversation[] => CONVERSATIONS.filter(c => c.participantIds.includes(userId)).sort((a,b) => {
     const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;

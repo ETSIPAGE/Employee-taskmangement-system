@@ -10,13 +10,8 @@ import Input from '../shared/Input';
 import TaskCard from '../tasks/TaskCard';
 import { BuildingOfficeIcon, UsersIcon } from '../../constants';
 import RoadmapBuilderModal from './RoadmapBuilderModal';
-import ProjectRoadmap from './ProjectRoadmap'; // Corrected import path for ProjectRoadmap
+import ProjectRoadmap from './ProjectRoadmap';
 
-// REVERTED: UPDATE_PROJECT_API_BASE_URL now includes {id} as a placeholder,
-// because your testing indicates the backend *requires* it in the URL path.
-const UPDATE_PROJECT_API_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project/{id}';
-
-// --- Toast component and interface (self-contained within this file) ---
 interface ToastMessage {
     id: string;
     message: string;
@@ -27,7 +22,7 @@ const Toast: React.FC<{ message: ToastMessage; onClose: (id: string) => void }> 
     useEffect(() => {
         const timer = setTimeout(() => {
             onClose(message.id);
-        }, 3000); // Auto-close after 3 seconds
+        }, 3000);
         return () => clearTimeout(timer);
     }, [message.id, onClose]);
 
@@ -42,14 +37,20 @@ const Toast: React.FC<{ message: ToastMessage; onClose: (id: string) => void }> 
         </div>
     );
 };
-// --- End Toast component ---
 
+export interface ProjectDisplayData extends Project {
+    overallStatus: string;
+    progress: number;
+    managerNames?: string;
+    departmentNames?: string;
+    companyName?: string;
+}
 
 const ProjectDetail: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
     const { user } = useAuth();
 
-    const [project, setProject] = useState<Project | null>(null);
+    const [project, setProject] = useState<ProjectDisplayData | null>(null);
     const [company, setCompany] = useState<Company | null>(null);
     const [tasks, setTasks] = useState<Task[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
@@ -60,10 +61,8 @@ const ProjectDetail: React.FC = () => {
     const [isRoadmapModalOpen, setIsRoadmapModalOpen] = useState(false);
     const [isSavingRoadmap, setIsSavingRoadmap] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
-    const [toast, setToast] = useState<ToastMessage | null>(null); // State for toast messages
+    const [toast, setToast] = useState<ToastMessage | null>(null);
 
-
-    // Form state for new tasks
     const [newTaskData, setNewTaskData] = useState({
         title: '',
         description: '',
@@ -73,32 +72,6 @@ const ProjectDetail: React.FC = () => {
         assign_to: ''
     });
 
-    const parseApiResponse = async (response: Response) => {
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
-            let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
-            try {
-                const errorJson = JSON.parse(errorText);
-                errorMessage = errorJson.message || errorMessage;
-            } catch (e) {
-                // If it's not JSON, use the raw text
-            }
-            throw new Error(errorMessage);
-        }
-        const data = await response.json();
-        if (typeof data.body === 'string') {
-            try {
-                return JSON.parse(data.body);
-            } catch (e) {
-                console.error("Failed to parse API response body:", e);
-                return data.body;
-            }
-        }
-        return data;
-    };
-
-    // --- Toast functions ---
     const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
         setToast({ id: Date.now().toString(), message, type });
     }, []);
@@ -106,69 +79,129 @@ const ProjectDetail: React.FC = () => {
     const hideToast = useCallback((id: string) => {
         setToast(prevToast => (prevToast && prevToast.id === id ? null : prevToast));
     }, []);
-    // --- End Toast functions ---
+
+    const calculateProjectStatus = useCallback((currentProject: Project, currentTasks: Task[]): { overallStatus: string; progress: number } => {
+        let progress = 0;
+        let overallStatus: string = 'Pending';
+
+        if (currentProject.roadmap && currentProject.roadmap.length > 0) {
+            const totalMilestones = currentProject.roadmap.length;
+            const completedMilestones = currentProject.roadmap.filter(
+                (m) => m.status === MilestoneStatus.COMPLETED
+            ).length;
+            const inProgressMilestones = currentProject.roadmap.filter(
+                (m) => m.status === MilestoneStatus.IN_PROGRESS
+            ).length;
+            const onHoldMilestones = currentProject.roadmap.filter(
+                (m) => m.status === MilestoneStatus.ON_HOLD
+            ).length;
+
+            if (totalMilestones > 0) {
+                progress = Math.round(
+                    ((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100
+                );
+
+                if (progress === 100) {
+                    overallStatus = 'Completed';
+                } else if (onHoldMilestones > 0) {
+                    overallStatus = 'On Hold';
+                } else if (inProgressMilestones > 0 || completedMilestones > 0) {
+                    overallStatus = 'In Progress';
+                } else {
+                    overallStatus = 'Pending';
+                }
+            }
+        } else {
+            // Fallback to tasks if no roadmap or empty roadmap
+            const completedTasks = currentTasks.filter(
+                (t) => t.status === TaskStatus.COMPLETED
+            ).length;
+            const totalTasks = currentTasks.length;
+
+            progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+            if (progress === 100) {
+                overallStatus = 'Completed';
+            } else if (progress > 0) {
+                overallStatus = 'In Progress';
+            } else {
+                overallStatus = 'Pending';
+            }
+        }
+
+        if (overallStatus !== 'Completed' && currentProject.deadline && new Date(currentProject.deadline) < new Date()) {
+            overallStatus = 'Overdue';
+        }
+        return { overallStatus, progress };
+    }, []); // Dependencies are just here to satisfy useCallback, logic uses arguments
 
 
     const loadData = useCallback(async () => {
         if (!projectId || !user) return;
         setIsLoading(true);
         try {
+            // Fetch project details
             const currentProject = await DataService.getProjectById(projectId);
             if (!currentProject) {
                 setProject(null);
-                showToast("Project not found.", "error"); // Added toast for project not found
+                showToast("Project not found.", "error");
                 return;
             }
 
-            // Ensure 'timestamp' is present, falling back to a new date if not
-            // And force a new array for roadmap to ensure React detects changes
-            const projectWithEnsuredTimestamp: Project = {
-                ...currentProject,
-                // Ensure `id` is currentProject.id and `timestamp` is currentProject.timestamp
-                // Your current code already retrieves them correctly from getProjectById
-                // No need to override `id` here as it's already in currentProject
-                // Make sure timestamp is a string, and if it's missing, provide a default.
-                timestamp: currentProject.timestamp || new Date().toISOString(),
-                roadmap: currentProject.roadmap ? [...currentProject.roadmap] : [] // Deep clone roadmap array
-            };
-            setProject(projectWithEnsuredTimestamp);
+            // Fetch tasks for the project
+            const projectTasks = await DataService.getTasksByProject(projectId);
+            setTasks(projectTasks); // Update tasks state with fresh data
 
+            // Calculate status and progress using the freshly fetched project and tasks
+            const { overallStatus, progress } = calculateProjectStatus(currentProject, projectTasks);
+
+            // Set the project state with all necessary display data
+            const projectWithDisplayData: ProjectDisplayData = {
+                ...currentProject,
+                timestamp: currentProject.timestamp || new Date().toISOString(),
+                roadmap: currentProject.roadmap ? [...currentProject.roadmap] : [],
+                overallStatus,
+                progress,
+            };
+            setProject(projectWithDisplayData);
+
+            // Fetch other related data
             const [
                 projectCompany,
-                projectTasks, // Assuming getTasksByProject directly fetches fresh data or uses an invalidated cache
-                allCompanyUsers,
+                allUsers, 
                 allDepts
             ] = await Promise.all([
-                DataService.getCompanyById(projectWithEnsuredTimestamp.companyId),
-                DataService.getTasksByProject(projectId),
-                DataService.getUsers(),
+                DataService.getCompanyById(projectWithDisplayData.companyId),
+                DataService.getUsers(), 
                 DataService.getDepartments()
             ]);
 
-            console.log("[ProjectDetail] Fetched tasks:", projectTasks);
             setCompany(projectCompany || null);
-            setTasks(projectTasks);
+            
+            const employeesInProjectCompany = allUsers.filter(u => 
+                u.role === UserRole.EMPLOYEE && 
+                u.companyId === projectWithDisplayData.companyId
+            );
+            setAssignableEmployees(employeesInProjectCompany);
 
-            const allEmployees = allCompanyUsers.filter(u => u.role === UserRole.EMPLOYEE && u.companyId === projectWithEnsuredTimestamp.companyId);
-            setAssignableEmployees(allEmployees);
-
-            if (allEmployees.length > 0) {
-                 setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
+            if (employeesInProjectCompany.length > 0 && !newTaskData.assign_to) {
+                 setNewTaskData(prev => ({...prev, assign_to: employeesInProjectCompany[0].id}));
             }
-
             setDepartments(allDepts);
 
         } catch (error) {
             console.error("Failed to load project details:", error);
-            showToast("Failed to load project details.", "error"); // Show error toast
+            showToast("Failed to load project details.", "error");
+            setProject(null);
         } finally {
             setIsLoading(false);
         }
-    }, [projectId, user, showToast]); // Added showToast to dependencies
+    }, [projectId, user, showToast, calculateProjectStatus, newTaskData.assign_to]); // Ensure newTaskData.assign_to dependency
+
 
     useEffect(() => {
         loadData();
-    }, [loadData]);
+    }, [loadData]); // This effect triggers loadData on mount and when loadData itself changes
 
     const tasksByStatus = useMemo(() => {
         const categorized = tasks.reduce((acc, task) => {
@@ -178,7 +211,6 @@ const ProjectDetail: React.FC = () => {
             acc[task.status].push(task);
             return acc;
         }, {} as Record<TaskStatus, Task[]>);
-        console.log("[ProjectDetail] Tasks by Status:", categorized);
         return categorized;
     }, [tasks]);
 
@@ -221,7 +253,7 @@ const ProjectDetail: React.FC = () => {
             });
 
             showToast("Task created successfully!", "success");
-            loadData(); // Reload all data including tasks to reflect changes
+            await loadData(); // Full reload to get fresh tasks and recalculate project status
             handleCloseModal();
         } catch (error) {
             console.error("Failed to create task:", error);
@@ -239,58 +271,23 @@ const ProjectDetail: React.FC = () => {
 
         setIsSavingRoadmap(true);
         try {
-            const requestBodyForLambda = {
-                id: project.id,          // Partition key
-                timestamp: project.timestamp, // Sort key
-                updateFields: {
-                    roadmap: newRoadmap
-                }
-            };
+            // Use the updated DataService.updateProject
+            await DataService.updateProject( // NO LONGER CAPTURE RETURN, rely on loadData
+                project.id,
+                project.timestamp, 
+                { roadmap: newRoadmap }
+            );
 
-            console.log(`[ProjectDetail] Attempting to update project roadmap for ${project.id}.`);
-            const token = AuthService.getToken();
-
-            const response = await fetch(UPDATE_PROJECT_API_BASE_URL.replace('{id}', project.id), {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token && { 'Authorization': `Bearer ${token}` })
-                },
-                body: JSON.stringify(requestBodyForLambda),
-            });
-
-            if (!response.ok) { // Check response.ok immediately for API errors
-                let errorMessage = `Failed to save roadmap. Status: ${response.status} ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.message || JSON.stringify(errorData);
-                } catch (jsonError) {
-                    errorMessage = await response.text();
-                }
-                throw new Error(errorMessage);
-            }
-
-            const result = await parseApiResponse(response);
-            console.log("Roadmap saved successfully:", result);
             showToast("Roadmap updated successfully!", "success");
+            setIsRoadmapModalOpen(false);
+            await loadData(); // FULL RELOAD after successful update
 
-            // --- IMMEDIATE UI UPDATE: Create NEW objects at all necessary levels ---
-            setProject(prevProject => {
-                if (!prevProject) return null;
-                // Return a completely new project object with the updated roadmap array
-                return {
-                    ...prevProject, // Shallow copy the old project properties
-                    roadmap: [...newRoadmap] // Create a new array for roadmap
-                };
-            });
-            // --- END IMMEDIATE UI UPDATE ---
-
-            // Removed `await loadData()` from here to prevent immediate overwrite by potentially stale data.
-            // `loadData()` will be called on modal close.
-            setIsRoadmapModalOpen(false); // Close the modal
         } catch (error: any) {
             console.error("Failed to save roadmap:", error);
             showToast(`Could not save roadmap. Error: ${error.message || 'Unknown error'}`, "error");
+            if (error.message.includes("Project data out of sync")) {
+                await loadData(); 
+            }
         } finally {
             setIsSavingRoadmap(false);
         }
@@ -303,89 +300,46 @@ const ProjectDetail: React.FC = () => {
             return;
         }
 
-        // Create a new array for the updated roadmap
+        const originalRoadmap = project.roadmap; // Store for potential revert
+
         const updatedRoadmap = project.roadmap.map(ms =>
             ms.id === milestoneId ? { ...ms, status: newStatus } : ms
         );
 
-        // Optimistically update the UI
+        // Optimistic update for UI: apply changes immediately
         setProject(prevProject => {
             if (!prevProject) return null;
+            // Create a temporary Project object with the updated roadmap for calculation
+            const tempProjectForCalc: Project = { ...prevProject, roadmap: updatedRoadmap };
+            const { overallStatus, progress } = calculateProjectStatus(tempProjectForCalc, tasks); // Use current tasks state
             return {
                 ...prevProject,
-                roadmap: updatedRoadmap
+                roadmap: updatedRoadmap, // Update the roadmap in state
+                overallStatus,          // Update calculated overall status
+                progress,               // Update calculated progress
             };
         });
+        showToast("Updating milestone status...", "info");
 
-        setIsSavingRoadmap(true); // Indicate saving state
+        setIsSavingRoadmap(true);
         try {
-            const requestBodyForLambda = {
-                id: project.id,          // Partition key
-                timestamp: project.timestamp, // Sort key
-                updateFields: {
-                    roadmap: updatedRoadmap
-                }
-            };
-
-            console.log(`[ProjectDetail] Attempting to update milestone status for project ${project.id}.`);
-            const token = AuthService.getToken();
-
-            const response = await fetch(UPDATE_PROJECT_API_BASE_URL.replace('{id}', project.id), {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token && { 'Authorization': `Bearer ${token}` })
-                },
-                body: JSON.stringify(requestBodyForLambda),
-            });
-
-            if (!response.ok) { // Check response.ok immediately for API errors
-                let errorMessage = `Failed to update milestone status. Status: ${response.status} ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    // If the backend returns a specific error for "Project not found or timestamp mismatch"
-                    // it's crucial to capture that.
-                    if (errorData.message?.includes("Project not found or timestamp (sort key) mismatch")) {
-                        errorMessage = "Failed to update milestone status: Project data out of sync. Please refresh.";
-                    } else {
-                         errorMessage = errorData.message || JSON.stringify(errorData);
-                    }
-                } catch (jsonError) {
-                    errorMessage = await response.text();
-                }
-                throw new Error(errorMessage);
-            }
-
-            const result = await parseApiResponse(response);
-            console.log("Milestone status updated successfully:", result);
+            await DataService.updateProject( // NO LONGER CAPTURE RETURN, rely on loadData
+                project.id,
+                project.timestamp, 
+                { roadmap: updatedRoadmap }
+            );
+            
             showToast("Milestone status updated!", "success");
-
-            // If the backend returns the *latest* project object, you could use that here
-            // to ensure full data consistency, but for just roadmap status, the optimistic
-            // update followed by success toast is usually sufficient.
-            // If the backend doesn't return the full updated object, and `parseApiResponse`
-            // might return just a success message, we rely on the optimistic update.
+            await loadData(); // FULL RELOAD after successful update
 
         } catch (error: any) {
             console.error("Failed to update milestone status:", error);
             showToast(`Could not update milestone status: ${error.message || 'Unknown error'}`, "error");
-            // IMPORTANT: Revert optimistic update on error to reflect the true state
-            setProject(prevProject => {
-                if (!prevProject) return null;
-                // Find the original milestone status before the failed update
-                const originalRoadmap = project.roadmap; // Assuming 'project' still holds the state before optimistic update
-                return {
-                    ...prevProject,
-                    roadmap: originalRoadmap // Revert to the original roadmap
-                };
-            });
-            // Then, consider reloading all data if a timestamp mismatch occurred,
-            // as the local state is now definitely out of sync.
-            if (error.message.includes("Project data out of sync")) {
-                loadData(); // Force a full reload to get the latest state from the server
-            }
+            
+            // On error, revert optimistic UI by reloading old data from backend
+            await loadData(); 
         } finally {
-            setIsSavingRoadmap(false); // Reset saving state
+            setIsSavingRoadmap(false);
         }
     };
 
@@ -395,7 +349,7 @@ const ProjectDetail: React.FC = () => {
         try {
             await DataService.updateTask(taskId, { assigneeId: newAssigneeId }, user.id); 
             showToast("Task assignee updated!", "success");
-            loadData(); // Reload all data including tasks to reflect changes
+            await loadData(); // Full reload to get fresh tasks and recalculate project status
         } catch (error) {
             console.error("Failed to update task assignee:", error);
             showToast("Could not update task assignee. Please try again.", "error");
@@ -408,7 +362,7 @@ const ProjectDetail: React.FC = () => {
         try {
             await DataService.updateTask(taskId, { status: newStatus }, user.id); 
             showToast("Task status updated!", "success");
-            loadData(); // Reload all data including tasks to reflect changes
+            await loadData(); // Full reload to get fresh tasks and recalculate project status
         } catch (error) {
             console.error("Failed to update task status:", error);
             showToast("Could not update task status. Please try again.", "error");
@@ -427,7 +381,7 @@ const ProjectDetail: React.FC = () => {
         try {
             await DataService.deleteTask(taskToDelete.id, user.id); 
             showToast("Task deleted successfully!", "success");
-            loadData(); // Reload all data including tasks to reflect changes
+            await loadData(); // Full reload to get fresh tasks and recalculate project status
         } catch (error) {
             console.error("Failed to delete task:", error);
             showToast(`Failed to delete task: ${error instanceof Error ? error.message : 'Unknown error'}`, "error");
@@ -441,7 +395,6 @@ const ProjectDetail: React.FC = () => {
         return <div className="text-center p-8">Loading project details...</div>;
     }
 
-    // Conditionally render the main content only if project is loaded
     if (!project) {
         return (
             <div className="text-center p-8">
@@ -455,7 +408,26 @@ const ProjectDetail: React.FC = () => {
         );
     }
 
-    const isAuthorized = user?.role === UserRole.ADMIN || (user?.role === UserRole.MANAGER && user.id === project.managerId);
+    let isAuthorized = false;
+    if (user) {
+        if (user.role === UserRole.ADMIN) {
+            isAuthorized = true;
+        } else if (user.role === UserRole.MANAGER) {
+            isAuthorized = true; 
+        } else if (user.role === UserRole.EMPLOYEE) {
+            const isAssignedToTask = tasks.some(task => task.assigneeId === user.id);
+            const isInProjectDepartment = project.departmentIds && project.departmentIds.includes(user.departmentId);
+
+            isAuthorized = (
+                isAssignedToTask ||
+                isInProjectDepartment
+            );
+        } else if (user.role === UserRole.HR) {
+            isAuthorized = true;
+        }
+    }
+
+
     if (!isAuthorized) {
          return (
             <div className="text-center p-8">
@@ -481,7 +453,7 @@ const ProjectDetail: React.FC = () => {
                                 <span>{company.name}</span>
                             </div>
                         )}
-                        {departments.length > 0 && (
+                        {departments.length > 0 && project.departmentIds && (
                              <div className="flex items-center space-x-2">
                                 <UsersIcon className="w-5 h-5" />
                                 <span>{project.departmentIds.map(id => departments.find(d => d.id === id)?.name).filter(Boolean).join(', ')}</span>
@@ -489,23 +461,45 @@ const ProjectDetail: React.FC = () => {
                         )}
                     </div>
                     <p className="text-slate-600 mt-2 max-w-2xl">{project.description}</p>
+                    <div className="mt-4 flex items-center space-x-4">
+                        <span className="text-slate-700 font-semibold">Status:</span>
+                        <span className={`capitalize px-3 py-1 text-sm font-semibold rounded-full ${
+                            project.overallStatus === 'Completed' ? 'bg-green-100 text-green-800' :
+                            project.overallStatus === 'In Progress' ? 'bg-blue-100 text-blue-800' :
+                            project.overallStatus === 'On Hold' ? 'bg-yellow-100 text-yellow-800' :
+                            project.overallStatus === 'Overdue' ? 'bg-red-100 text-red-800' :
+                            'bg-slate-100 text-slate-800'
+                        }`}>
+                            {project.overallStatus}
+                        </span>
+                        <span className="text-slate-700 font-semibold">Progress:</span>
+                        <div className="flex items-center">
+                            <div className="w-24 bg-slate-200 rounded-full h-2.5">
+                                <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${project.progress}%` }}></div>
+                            </div>
+                            <span className="ml-2 text-sm text-slate-600 font-semibold">{project.progress}%</span>
+                        </div>
+                    </div>
                 </div>
-                <div className="flex items-center space-x-3 flex-shrink-0">
-                    <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
-                        {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
-                    </Button>
-                    <Button onClick={handleOpenModal}>Create New Task</Button>
-                </div>
+                {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                    <div className="flex items-center space-x-3 flex-shrink-0">
+                        <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
+                            {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
+                        </Button>
+                        <Button onClick={handleOpenModal}>Create New Task</Button>
+                    </div>
+                )}
             </div>
 
-            {/* ProjectRoadmap component now receives the 'roadmap' prop directly */}
             {project.roadmap && project.roadmap.length > 0 ? (
                 <div className="mb-8">
                     <h2 className="text-2xl font-bold text-slate-800 mb-4">Project Roadmap</h2>
-                    {/* Ensure onUpdate here correctly calls the handler for milestones */}
-                    <ProjectRoadmap roadmap={project.roadmap} onUpdate={handleUpdateMilestoneStatus} />
+                    <ProjectRoadmap 
+                        roadmap={project.roadmap} 
+                        onUpdate={user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) ? handleUpdateMilestoneStatus : undefined} 
+                    />
                 </div>
-            ) : ( // If roadmap is empty or undefined, show "No roadmap defined"
+            ) : (
                 <p className="text-center text-slate-500 py-8">No roadmap has been defined for this project.</p>
             )}
 
@@ -520,9 +514,9 @@ const ProjectDetail: React.FC = () => {
                                     key={task.id}
                                     task={task}
                                     employees={assignableEmployees}
-                                    onAssigneeChange={handleAssigneeChange}
+                                    onAssigneeChange={user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) ? handleAssigneeChange : undefined}
                                     onStatusChange={handleUpdateTaskStatus}
-                                    onDelete={handleRequestDelete}
+                                    onDelete={user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) ? handleRequestDelete : undefined}
                                 />
                             ))}
                         </div>
@@ -530,53 +524,56 @@ const ProjectDetail: React.FC = () => {
                 ))}
             </div>
 
-            <Modal title="Create New Task" isOpen={isTaskModalOpen} onClose={handleCloseModal}>
-                <form onSubmit={handleCreateTask} className="space-y-4">
-                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
-                    <div>
-                        <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
-                        <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
-                            className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                        />
-                    </div>
-                    <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
-                    <div className="grid grid-cols-2 gap-4">
+            {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                <Modal title="Create New Task" isOpen={isTaskModalOpen} onClose={handleCloseModal}>
+                    <form onSubmit={handleCreateTask} className="space-y-4">
+                        <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
                         <div>
-                            <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                                <option value="low">Low</option>
-                                <option value="medium">Medium</option>
-                                <option value="high">High</option>
+                            <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
+                            <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
+                                className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                            />
+                        </div>
+                        <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
+                                <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                </select>
+                            </div>
+                            <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
+                        </div>
+                        <div>
+                            <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
+                            <select id="assign_to" name="assign_to" value={newTaskData.assign_to || ''} onChange={handleInputChange}
+                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                                <option value="">Unassigned</option>
+                                {assignableEmployees.map(employee => (
+                                    <option key={employee.id} value={employee.id}>{employee.name}</option>
+                                ))}
                             </select>
                         </div>
-                        <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
-                    </div>
-                    <div>
-                        <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to || ''} onChange={handleInputChange}
-                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                            <option value="">Unassigned</option>
-                            {assignableEmployees.map(employee => (
-                                <option key={employee.id} value={employee.id}>{employee.name}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="pt-4 flex justify-end space-x-3">
-                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
-                            Cancel
-                        </button>
-                        <Button type="submit">Create Task</Button>
-                    </div>
-                </form>
-            </Modal>
+                        <div className="pt-4 flex justify-end space-x-3">
+                             <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                                Cancel
+                            </button>
+                            <Button type="submit">Create Task</Button>
+                        </div>
+                    </form>
+                </Modal>
+            )}
 
-            {/* Conditionally render RoadmapBuilderModal ONLY when project is not null */}
-            {project && (
+            {project && user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
                 <RoadmapBuilderModal
                     isOpen={isRoadmapModalOpen}
                     onClose={() => {
                         setIsRoadmapModalOpen(false);
-                        loadData(); // Call loadData when the roadmap builder modal closes
+                        // IMPORTANT: Always refresh after closing roadmap builder,
+                        // even if no explicit save button clicked in case there were internal changes.
+                        loadData(); 
                     }}
                     project={project}
                     onSave={handleSaveRoadmap}
@@ -584,21 +581,23 @@ const ProjectDetail: React.FC = () => {
                 />
             )}
             
-            <Modal
-                isOpen={!!taskToDelete}
-                onClose={() => setTaskToDelete(null)}
-                title="Confirm Task Deletion"
-            >
-                <p className="text-slate-600">
-                    Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
-                </p>
-                <div className="pt-4 flex justify-end space-x-3">
-                    <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
-                        Cancel
-                    </button>
-                    <Button onClick={handleConfirmDelete}>Delete Task</Button>
-                </div>
-            </Modal>
+            {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                <Modal
+                    isOpen={!!taskToDelete}
+                    onClose={() => setTaskToDelete(null)}
+                    title="Confirm Task Deletion"
+                >
+                    <p className="text-slate-600">
+                        Are you sure you want to delete the task "{taskToDelete?.name}"? This action cannot be undone.
+                    </p>
+                    <div className="pt-4 flex justify-end space-x-3">
+                        <button type="button" onClick={() => setTaskToDelete(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                            Cancel
+                        </button>
+                        <Button onClick={handleConfirmDelete}>Delete Task</Button>
+                    </div>
+                </Modal>
+            )}
 
             {toast && <Toast message={toast} onClose={hideToast} />}
         </div>

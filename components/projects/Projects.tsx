@@ -13,24 +13,24 @@ import ProjectRoadmap from './ProjectRoadmap';
 import { EditIcon, TrashIcon } from '../../constants';
 
 // API Endpoints for Project CRUD (managed directly in this component)
+// These are now for reference, DataService handles the actual calls.
 const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
-const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects';
-const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project';
-const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project';
+// const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects'; // Handled by DataService
+// const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project'; // Handled by DataService
+// const PROJECTS_UPDATE_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project'; // Handled by DataService
 
 
 // ProjectDisplayData now extends Project, which already has 'timestamp'.
-// No need to add 'createdAt' or 'timestamp' explicitly here unless it's for display-specific derived fields.
 export interface ProjectDisplayData extends Project {
-    managerNames: string; // Changed from managerName
+    managerNames: string;
     progress: number;
     departmentNames: string;
     companyName: string;
     overallStatus: string;
-    // 'timestamp' is already inherited from Project
 }
 
-// Function to parse API responses (remains the same)
+// Function to parse API responses (no longer used directly in this component for project CRUD)
+// Keeping it here for consistency if other direct fetches still use it.
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
         let errorText = await response.text();
@@ -85,8 +85,7 @@ const Projects: React.FC = () => {
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectCompanyId, setNewProjectCompanyId] = useState('');
     const [newProjectDesc, setNewProjectDesc] = useState('');
-    // *** CHANGE: Use an array for manager IDs ***
-    const [assignedManagerIds, setAssignedManagerIds] = useState<string[]>([]); // Multiple managers
+    const [assignedManagerIds, setAssignedManagerIds] = useState<string[]>([]);
     const [newProjectDeadline, setNewProjectDeadline] = useState('');
     const [assignedDeptIds, setAssignedDeptIds] = useState<string[]>([]);
     const [newProjectPriority, setNewProjectPriority] = useState<'low' | 'medium' | 'high'>('medium');
@@ -98,143 +97,130 @@ const Projects: React.FC = () => {
         setTimeout(() => setToast(null), 3000);
     }, []);
 
+
+    // --- Helper function to calculate project display data ---
+    // This helper now receives all necessary 'lookup' data as arguments.
+    // It's also memoized using useCallback to prevent unnecessary re-creations.
+    const getProjectDisplayData = useCallback(async (project: Project, usersList: User[], deptsList: Department[], companiesList: Company[]): Promise<ProjectDisplayData> => {
+        const managerNames = (project.managerIds || [])
+            .map((id) => usersList.find((u) => u.id === id)?.name)
+            .filter(Boolean)
+            .join(', ');
+
+        let progress = 0;
+        let overallStatus: string = 'Pending';
+
+        if (project.roadmap && project.roadmap.length > 0) {
+            const totalMilestones = project.roadmap.length;
+            const completedMilestones = project.roadmap.filter(
+                (m) => m.status === MilestoneStatus.COMPLETED
+            ).length;
+            const inProgressMilestones = project.roadmap.filter(
+                (m) => m.status === MilestoneStatus.IN_PROGRESS
+            ).length;
+            const onHoldMilestones = project.roadmap.filter(
+                (m) => m.status === MilestoneStatus.ON_HOLD
+            ).length;
+
+            if (totalMilestones > 0) {
+                progress = Math.round(
+                    ((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100
+                );
+
+                if (progress === 100) {
+                    overallStatus = 'Completed';
+                } else if (onHoldMilestones > 0) {
+                    overallStatus = 'On Hold';
+                } else if (inProgressMilestones > 0 || completedMilestones > 0) {
+                    overallStatus = 'In Progress';
+                } else {
+                    overallStatus = 'Pending';
+                }
+            }
+        } else {
+            // Fallback to tasks if no roadmap
+            // IMPORTANT: Fetch tasks here to ensure fresh data for this specific project
+            const projectTasks = await DataService.getTasksByProject(project.id);
+            const completedTasks = projectTasks.filter(
+                (t) => t.status === TaskStatus.COMPLETED
+            ).length;
+            const totalTasks = projectTasks.length;
+
+            progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+            if (progress === 100) {
+                overallStatus = 'Completed';
+            } else if (progress > 0) {
+                overallStatus = 'In Progress';
+            } else {
+                overallStatus = 'Pending';
+            }
+        }
+
+        if (overallStatus !== 'Completed' && project.deadline && new Date(project.deadline) < new Date()) {
+            overallStatus = 'Overdue';
+        }
+
+        const departmentNames = (project.departmentIds || [])
+            .map((id) => deptsList.find((d) => d.id === id)?.name)
+            .filter(Boolean)
+            .join(', ');
+
+        const company = companiesList.find((c) => c.id === project.companyId);
+
+        return {
+            ...project,
+            managerNames: managerNames || 'Unassigned',
+            progress,
+            overallStatus,
+            departmentNames,
+            companyName: company?.name || 'N/A',
+        };
+    }, []); // Dependencies are just here to satisfy useCallback, logic uses arguments
+
+
     const loadData = useCallback(async () => {
         setIsLoading(true);
+        console.log("[Projects] Starting loadData...");
         try {
-            const token = AuthService.getToken();
-
-            const projectsResponse = await fetch(PROJECTS_GET_ALL_API_URL, {
-                headers: {
-                    ...(token && { 'Authorization': `Bearer ${token}` })
-                }
-            });
-            if (!projectsResponse.ok) {
-                const errorText = await projectsResponse.text();
-                throw new Error(`Failed to fetch projects: ${projectsResponse.status} ${projectsResponse.statusText}. Response: ${errorText}`);
-            }
-
-            const apiResponse: unknown = await projectsResponse.json();
-            let allProjects: Project[] = [];
-            if (typeof apiResponse === 'object' && apiResponse !== null && 'Items' in apiResponse && Array.isArray((apiResponse as any).Items)) {
-                allProjects = (apiResponse as any).Items;
-            } else if (typeof apiResponse === 'object' && apiResponse !== null && 'items' in apiResponse && Array.isArray((apiResponse as any).items)) {
-                allProjects = (apiResponse as any).items;
-            } else if (Array.isArray(apiResponse)) {
-                allProjects = apiResponse;
-            } else {
-                console.warn('Projects API response was not a direct array or an object with an "items" / "Items" array. Check API format.');
-                allProjects = [];
-            }
-            console.log(`[Projects] Fetched ${allProjects.length} raw projects.`);
-
-            const [allUsers, allDepts, allCompaniesData] = await Promise.all([
-                DataService.getUsers(),
+            // Fetch all core lookup data first, fresh from the backend (cache will be invalidated by DataService functions)
+            // Use DataService functions for all data fetches for consistency and cache management
+            const [usersData, departmentsData, companiesData, allProjectsRaw] = await Promise.all([
+                DataService.getUsers(), 
                 DataService.getDepartments(),
-                DataService.getCompanies()
+                DataService.getCompanies(),
+                DataService.getAllProjects(), // Use DataService to get all projects
             ]);
             
-            setAllDepartments(allDepts);
-            setCompanies(allCompaniesData);
-            setAllManagers(allUsers.filter(u => u.role === UserRole.MANAGER));
+            // Update state for filter options
+            setAllManagers(usersData.filter(u => u.role === UserRole.MANAGER));
+            setAllDepartments(departmentsData);
+            setCompanies(companiesData);
 
-            if (!newProjectCompanyId && allCompaniesData.length > 0) {
-                setNewProjectCompanyId(allCompaniesData[0].id);
+            if (!newProjectCompanyId && companiesData.length > 0) {
+                setNewProjectCompanyId(companiesData[0].id);
             }
 
+            console.log(`[Projects] Fetched ${allProjectsRaw.length} raw projects from API.`);
+
+            // Map raw projects to display data, using the freshly fetched lookup data
             const projectsWithDetails: ProjectDisplayData[] = await Promise.all(
-                allProjects.map(async (p) => {
-                    // *** CHANGE: Map multiple manager IDs to names ***
-                    const managerNames = (p.managerIds || [])
-                        .map((id) => allUsers.find((u) => u.id === id)?.name)
-                        .filter(Boolean)
-                        .join(', '); // Join multiple names
-
-                    // 'p.timestamp' is already the correct sort key and should be used directly
-                    // const createdAt = (p as any).createdAt || new Date().toISOString(); // REMOVED
-
-                    let progress = 0;
-                    let overallStatus: string = 'Pending';
-
-                    if (p.roadmap && p.roadmap.length > 0) {
-                        const totalMilestones = p.roadmap.length;
-                        const completedMilestones = p.roadmap.filter(
-                            (m) => m.status === MilestoneStatus.COMPLETED
-                        ).length;
-                        const inProgressMilestones = p.roadmap.filter(
-                            (m) => m.status === MilestoneStatus.IN_PROGRESS
-                        ).length;
-                        const onHoldMilestones = p.roadmap.filter(
-                            (m) => m.status === MilestoneStatus.ON_HOLD
-                        ).length;
-
-                        if (totalMilestones > 0) {
-                            progress = Math.round(
-                                ((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100
-                            );
-
-                            if (progress === 100) {
-                                overallStatus = 'Completed';
-                            } else if (onHoldMilestones > 0) {
-                                overallStatus = 'On Hold';
-                            } else if (inProgressMilestones > 0 || completedMilestones > 0) {
-                                overallStatus = 'In Progress';
-                            } else {
-                                overallStatus = 'Pending';
-                            }
-                        }
-                    } else {
-                        // This branch runs if there's no roadmap. It should fetch tasks.
-                        // Ensure DataService.getTasksByProject is robust.
-                        const projectTasks = await DataService.getTasksByProject(p.id);
-                        const completedTasks = projectTasks.filter(
-                            (t) => t.status === TaskStatus.COMPLETED
-                        ).length;
-                        const totalTasks = projectTasks.length;
-
-                        progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-
-                        if (progress === 100) {
-                            overallStatus = 'Completed';
-                        } else if (progress > 0) {
-                            overallStatus = 'In Progress';
-                        } else {
-                            overallStatus = 'Pending';
-                        }
-                    }
-
-                    if (overallStatus !== 'Completed' && p.deadline && new Date(p.deadline) < new Date()) {
-                        overallStatus = 'Overdue';
-                    }
-
-                    const departmentNames = (p.departmentIds || [])
-                        .map((id) => allDepts.find((d) => d.id === id)?.name)
-                        .filter(Boolean)
-                        .join(', ');
-
-                    const company = allCompaniesData.find((c) => c.id === p.companyId);
-
-                    return {
-                        ...p,
-                        managerNames: managerNames || 'Unassigned', // Use managerNames
-                        progress,
-                        overallStatus,
-                        departmentNames,
-                        companyName: company?.name || 'N/A',
-                        // timestamp: p.timestamp, // 'timestamp' is already present in 'p' because ProjectDisplayData extends Project
-                    };
-                })
+                allProjectsRaw.map(async (p) => getProjectDisplayData(p, usersData, departmentsData, companiesData))
             );
 
-            // *** FIX 3: Sort by 'timestamp' (which is on the Project interface) ***
             projectsWithDetails.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            console.log("[Projects] Setting projects state. First project's status:", projectsWithDetails[0]?.overallStatus);
             setProjects(projectsWithDetails);
+
         } catch (error) {
             console.error('[Projects] Failed to load project data:', error instanceof Error ? error.message : error);
             showToast(`Failed to load projects: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
         } finally {
             setIsLoading(false);
+            console.log("[Projects] Finished loadData.");
         }
-    }, [showToast, newProjectCompanyId]);
+    }, [showToast, newProjectCompanyId, getProjectDisplayData]);
+
 
     useEffect(() => {
         loadData();
@@ -281,26 +267,22 @@ const Projects: React.FC = () => {
                 );
                 setFilteredManagers(managersInSelectedDepts);
 
-                // *** CHANGE: Filter out assigned managers who are no longer valid ***
+                // Filter out assigned managers who are no longer valid
                 setAssignedManagerIds(prevAssigned =>
                     prevAssigned.filter(managerId => managersInSelectedDepts.some(m => m.id === managerId))
                 );
-
-                // *** REMOVED: Auto-preselection for a single manager. Users will now manually select multiple. ***
-
             } else {
                 setFilteredManagers([]);
                 setAssignedManagerIds([]); // Clear all assigned managers if no departments selected
             }
         }
-    }, [assignedDeptIds, isModalOpen, allManagers]); // No assignedManagerIds in deps, as we are setting it here
+    }, [assignedDeptIds, isModalOpen, allManagers]);
 
 
     const filteredProjects = useMemo(() => {
         return projects.filter((project) => {
             const companyMatch = companyFilter === 'all' || project.companyId === companyFilter;
             const departmentMatch = departmentFilter === 'all' || (project.departmentIds && project.departmentIds.includes(departmentFilter));
-            // *** CHANGE: Filter by if ANY of the project's managers match the selected manager filter ***
             const managerMatch = managerFilter === 'all' || (project.managerIds && project.managerIds.includes(managerFilter));
             const searchMatch =
                 project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -322,7 +304,6 @@ const Projects: React.FC = () => {
         setNewProjectDesc('');
         setNewProjectCompanyId(companies.length > 0 ? companies[0].id : '');
         setAssignedDeptIds([]);
-        // *** CHANGE: Reset to empty array ***
         setAssignedManagerIds([]);
         setNewProjectDeadline('');
         setNewProjectPriority('medium');
@@ -336,7 +317,6 @@ const Projects: React.FC = () => {
         setNewProjectDesc(projectToEdit.description || '');
         setNewProjectCompanyId(projectToEdit.companyId);
         setAssignedDeptIds(projectToEdit.departmentIds || []);
-        // *** CHANGE: Set from projectToEdit.managerIds ***
         setAssignedManagerIds(projectToEdit.managerIds || []);
         setNewProjectDeadline(projectToEdit.deadline || '');
         setNewProjectPriority(projectToEdit.priority || 'medium');
@@ -350,7 +330,6 @@ const Projects: React.FC = () => {
         setNewProjectName('');
         setNewProjectDesc('');
         setNewProjectCompanyId('');
-        // *** CHANGE: Reset to empty array ***
         setAssignedManagerIds([]);
         setNewProjectDeadline('');
         setAssignedDeptIds([]);
@@ -362,7 +341,10 @@ const Projects: React.FC = () => {
 
     const handleCloseRoadmapModal = useCallback(() => {
         setRoadmapProjectId(null);
-    }, []);
+        console.log("[Projects] Roadmap modal closed, forcing loadData to refresh list status.");
+        loadData();
+    }, [loadData]);
+
 
     const handleDeptToggle = (deptId: string) => {
         setAssignedDeptIds((prev) => {
@@ -373,7 +355,6 @@ const Projects: React.FC = () => {
         });
     };
 
-    // *** NEW: Toggle manager selection ***
     const handleManagerToggle = (managerId: string) => {
         setAssignedManagerIds((prev) => {
             const newIds = new Set(prev);
@@ -385,7 +366,6 @@ const Projects: React.FC = () => {
 
     const handleSaveProject = async (e: React.FormEvent) => {
         e.preventDefault();
-        // *** CHANGE: Validate at least one manager is selected ***
         if (!newProjectName.trim() || assignedManagerIds.length === 0 || !newProjectCompanyId || assignedDeptIds.length === 0) {
             showToast('Project name, at least one assigned manager, company, and at least one department are required.', 'error');
             return;
@@ -395,96 +375,33 @@ const Projects: React.FC = () => {
             return;
         }
 
-        const token = AuthService.getToken();
-
-        const baseProjectPayload = {
+        const projectPayload = {
             name: newProjectName,
             description: newProjectDesc,
-            // *** CHANGE: Send managerIds array ***
             managerIds: assignedManagerIds,
             departmentIds: assignedDeptIds,
             deadline: newProjectDeadline,
             priority: newProjectPriority,
             estimatedTime: newProjectEstTime ? parseInt(newProjectEstTime, 10) : undefined,
             companyId: newProjectCompanyId,
-            createdBy: user.id, // Assuming this is part of the Project model or backend handles it
+            createdBy: user.id,
         };
 
         try {
             if (editingProject) {
-                // *** FIX 4: Use editingProject.timestamp for the sort key ***
                 if (!editingProject.id || !editingProject.timestamp) {
                     showToast("Cannot edit project: Missing project ID or timestamp.", "error");
                     return;
                 }
-
-                const updateFields: Partial<Project> = {
-                    ...baseProjectPayload,
-                    roadmap: editingProject.roadmap || [],
-                };
-                // Ensure 'timestamp' is not sent in updateFields, as it's part of the key
-                delete (updateFields as any).timestamp; 
-
-                const requestBodyForLambda = {
-                    id: editingProject.id,
-                    // *** FIX 5: Use editingProject.timestamp ***
-                    timestamp: editingProject.timestamp,
-                    updateFields: updateFields, // Will include managerIds array
-                };
-
-                console.log('Attempting to update project. URL:', PROJECTS_UPDATE_BASE_URL);
-                console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
-
-                const response = await fetch(`${PROJECTS_UPDATE_BASE_URL}/${editingProject.id}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token && { 'Authorization': `Bearer ${token}` })
-                    },
-                    body: JSON.stringify(requestBodyForLambda),
+                console.log("[Projects] Calling DataService.updateProject for editing...");
+                await DataService.updateProject(editingProject.id, editingProject.timestamp, {
+                    ...projectPayload,
+                    roadmap: editingProject.roadmap || []
                 });
-
-                if (!response.ok) {
-                    let errorMessage = `Failed to update project ${editingProject.id}. Status: ${response.status} ${response.statusText}.`;
-                    try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.message || JSON.stringify(errorData);
-                    } catch (jsonError) {
-                        errorMessage = await response.text();
-                    }
-                    throw new Error(errorMessage);
-                }
                 showToast('Project updated successfully!', 'success');
             } else {
-                const createPayload = {
-                    ...baseProjectPayload,
-                    // *** FIX 6: Use 'timestamp' for creation ***
-                    timestamp: new Date().toISOString(),
-                    roadmap: [],
-                };
-
-                console.log('Attempting to create project. URL:', PROJECTS_CREATE_API_URL);
-                console.log('Create payload:', JSON.stringify(createPayload, null, 2));
-
-                const response = await fetch(PROJECTS_CREATE_API_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token && { 'Authorization': `Bearer ${token}` })
-                    },
-                    body: JSON.stringify(createPayload),
-                });
-
-                if (!response.ok) {
-                    let errorMessage = `Failed to create project. Status: ${response.status} ${response.statusText}.`;
-                    try {
-                        const errorData = await response.json();
-                        errorMessage = errorData.message || JSON.stringify(errorData);
-                    } catch (jsonError) {
-                        errorMessage = await response.text();
-                    }
-                    throw new Error(errorMessage);
-                }
+                console.log("[Projects] Calling DataService.createProject for new project...");
+                await DataService.createProject(projectPayload);
                 showToast('Project created successfully!', 'success');
             }
         } catch (error) {
@@ -492,12 +409,11 @@ const Projects: React.FC = () => {
             showToast(`Failed to save project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
             return;
         }
-        await loadData(); // Reload data to reflect changes and fetch new timestamps
+        await loadData();
         handleCloseModal();
     };
 
     const handleDeleteProject = (projectToDelete: ProjectDisplayData) => {
-        // *** FIX 7: Use projectToDelete.timestamp for validation ***
         if (!projectToDelete.id || !projectToDelete.timestamp) {
             showToast('Cannot delete project: Missing ID or timestamp.', 'error');
             console.error('Deletion attempt failed due to missing ID or timestamp:', projectToDelete);
@@ -512,133 +428,106 @@ const Projects: React.FC = () => {
         const projectToDelete = confirmDeleteProject;
         setConfirmDeleteProject(null);
 
-        const token = AuthService.getToken();
+        const token = AuthService.getToken(); 
         try {
-            const deletePayload = {
-                id: projectToDelete.id,
-                // *** FIX 8: Use projectToDelete.timestamp for deletion payload ***
-                timestamp: projectToDelete.timestamp,
-            };
-
-            const response = await fetch(PROJECTS_DELETE_API_URL, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token && { 'Authorization': `Bearer ${token}` })
-                },
-                body: JSON.stringify(deletePayload),
-            });
-
-            if (!response.ok) {
-                let errorMessage = `Failed to delete project ${projectToDelete.name}. Status: ${response.status} ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.message || JSON.stringify(errorData);
-                } catch (jsonError) {
-                    errorMessage = await response.text();
-                }
-                throw new Error(errorMessage);
-            }
+            // Corrected: Use DataService.deleteProject
+            await DataService.deleteProject(projectToDelete.id, projectToDelete.timestamp, token); 
             showToast('Project deleted successfully!', 'success');
-            await loadData(); // Reload data to reflect changes
+            await loadData(); 
         } catch (error) {
             console.error('[Projects] Failed to delete project:', error instanceof Error ? error.message : error);
             showToast(`Failed to delete project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
         }
     };
 
+    // This is for ProjectCard directly updating overall status (e.g., mark complete)
     const handleUpdateProjectStatus = useCallback(async (projectId: string, newStatus: string) => {
-        const projectToUpdateIndex = projects.findIndex(p => p.id === projectId);
-        if (projectToUpdateIndex === -1) {
-            showToast('Failed to update project status: Project not found.', 'error');
+        const projectToUpdate = projects.find(p => p.id === projectId);
+        if (!projectToUpdate || !projectToUpdate.timestamp) {
+            showToast('Failed to update project status: Project not found or timestamp missing.', 'error');
             return;
         }
 
-        const projectToUpdate = projects[projectToUpdateIndex];
-        // *** FIX 9: Use projectToUpdate.timestamp for validation ***
-        if (!projectToUpdate.timestamp) {
-            showToast('Failed to update project status: Timestamp not found.', 'error');
-            return;
-        }
+        // --- FIX for error: `overallStatus` does not exist in type `Partial<Project>` ---
+        // `overallStatus` is a derived frontend property. It cannot be directly sent to the backend.
+        // If the intention is to mark a project as "Completed", you should update its roadmap.
+        // If your backend *does* have a 'status' field, you'd send that, not 'overallStatus'.
+        // Assuming 'overallStatus' means to imply completion of all milestones:
+        let updatesToSend: Partial<Project> = {};
+        if (newStatus === 'Completed') {
+            const updatedRoadmap = (projectToUpdate.roadmap || []).map(milestone => ({
+                ...milestone,
+                status: MilestoneStatus.COMPLETED
+            }));
+            updatesToSend.roadmap = updatedRoadmap;
+        } 
+        // If newStatus is not 'Completed' but some other direct status,
+        // you would need a dedicated `status` field in your `Project` interface
+        // and backend API to support it. For now, we'll only handle 'Completed' via roadmap.
+        // If the UI is just showing a custom status, without backend update:
+        // You could just optimistically update the UI and not call the API.
+        // But assuming you want a backend effect:
 
-        const originalStatus = projectToUpdate.overallStatus;
-        const token = AuthService.getToken();
-
-        // Optimistic update
+        // Optimistic update of the main projects list for all derived properties
         setProjects(prevProjects => {
-            const updatedProjects = [...prevProjects];
-            updatedProjects[projectToUpdateIndex] = {
-                ...updatedProjects[projectToUpdateIndex],
-                overallStatus: newStatus,
-            };
-            return updatedProjects;
+            return prevProjects.map(p => {
+                if (p.id === projectId) {
+                    const tempProjectForCalc: Project = { 
+                        ...p, 
+                        // Apply optimistic changes to roadmap if it was part of the update
+                        roadmap: newStatus === 'Completed' ? updatesToSend.roadmap : p.roadmap 
+                    }; 
+                    // Recalculate full display data locally for optimistic update
+                    const { overallStatus: recalculatedStatus, progress: recalculatedProgress } = 
+                        // Must be synchronous for optimistic, or simplified.
+                        // For a full refresh, loadData() is better.
+                        // For this direct update, only update the status field if it's not derived, 
+                        // or trigger full loadData.
+                        // The safest approach for `onUpdateStatus` that *doesn't* directly map to roadmap is to force a loadData.
+                        // If it *does* map to roadmap, then construct the roadmap update here.
+                        { overallStatus: newStatus, progress: (newStatus === 'Completed' ? 100 : p.progress) }; // Simplified optimistic
+
+                    return { 
+                        ...p, 
+                        overallStatus: recalculatedStatus, 
+                        progress: recalculatedProgress 
+                    };
+                }
+                return p;
+            });
         });
         console.log(`[Projects] Optimistically updated project ${projectId} overall status to ${newStatus}.`);
 
         try {
-            const requestBodyForLambda = {
-                id: projectToUpdate.id,
-                // *** FIX 10: Use projectToUpdate.timestamp ***
-                timestamp: projectToUpdate.timestamp,
-                updateFields: {
-                    overallStatus: newStatus,
-                },
-            };
-
-            console.log(`[Projects] Attempting to update project ${projectId} overall status to ${newStatus} via API.`);
-            const response = await fetch(
-                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token && { 'Authorization': `Bearer ${token}` })
-                    },
-                    body: JSON.stringify(requestBodyForLambda),
-                }
-            );
-
-            if (!response.ok) {
-                let errorMessage = `Failed to update project status. Status: ${response.status} ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.message || JSON.stringify(errorData);
-                } catch (jsonError) {
-                    errorMessage = await response.text();
-                }
-                throw new Error(errorMessage);
+            if (Object.keys(updatesToSend).length > 0) { // Only call API if there are actual Project field updates
+                await DataService.updateProject(
+                    projectId,
+                    projectToUpdate.timestamp,
+                    updatesToSend // Send the actual Project fields to update
+                );
+                showToast(`Project status updated to ${newStatus} successfully!`, 'success');
+                await loadData(); // Full reload to ensure all derived properties are refreshed
+            } else {
+                // If newStatus couldn't be mapped to a backend update,
+                // perhaps it's a display-only status change or an invalid one.
+                showToast(`Project status changed to ${newStatus} (display only).`, 'info');
+                // Even for display-only, a full reload might be needed to re-evaluate all state.
+                await loadData(); 
             }
-
-            // *** IMPORTANT: After successful update, reload data to get the new timestamp from backend ***
-            await loadData();
-            showToast(`Project status updated to ${newStatus} successfully!`, 'success');
-
         } catch (error) {
             console.error('[Projects] Failed to update project status:', error instanceof Error ? error.message : error);
             showToast(`Failed to update project status: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
-
-            // Revert optimistic update on error
-            setProjects(prevProjects => {
-                const revertedProjects = [...prevProjects];
-                revertedProjects[projectToUpdateIndex] = {
-                    ...revertedProjects[projectToUpdateIndex],
-                    overallStatus: originalStatus,
-                };
-                return revertedProjects;
-            });
-            console.log(`[Projects] Reverted project ${projectId} status to ${originalStatus} due to API error.`);
+            await loadData(); // Revert optimistic update by reloading
         }
     }, [projects, loadData, showToast]);
 
+
     const handleUpdateMilestoneStatus = useCallback(async (projectId: string, milestoneId: string, newStatus: TaskStatus) => {
         const projectToUpdate = projects.find(p => p.id === projectId);
-        // *** FIX 11: Use projectToUpdate.timestamp for validation ***
         if (!projectToUpdate || !projectToUpdate.roadmap || !projectToUpdate.timestamp) {
             showToast('Failed to update roadmap: Project, roadmap, or timestamp not found.', 'error');
             return;
         }
-
-        const token = AuthService.getToken();
 
         const mappedNewStatus: MilestoneStatus =
             newStatus === TaskStatus.COMPLETED ? MilestoneStatus.COMPLETED :
@@ -650,66 +539,37 @@ const Projects: React.FC = () => {
             ms.id === milestoneId ? { ...ms, status: mappedNewStatus } : ms
         );
 
-        // Optimistically update the roadmap status in the UI
+        // Optimistically update the roadmap status in the UI (within the modal and list)
         setProjects(prevProjects => {
-            return prevProjects.map(p =>
-                p.id === projectId
-                    ? { ...p, roadmap: updatedRoadmap }
-                    : p
-            );
+            return prevProjects.map(p => {
+                if (p.id === projectId) {
+                    // Only update the roadmap portion for optimistic update
+                    // Derived properties will be fully re-calculated after loadData()
+                    return { ...p, roadmap: updatedRoadmap }; 
+                }
+                return p;
+            });
         });
         console.log(`[Projects] Optimistically updated milestone ${milestoneId} in project ${projectId} to ${mappedNewStatus}.`);
 
-
         try {
-            const requestBodyForLambda = {
-                id: projectToUpdate.id,
-                // *** FIX 12: Use projectToUpdate.timestamp ***
-                timestamp: projectToUpdate.timestamp,
-                updateFields: {
-                    roadmap: updatedRoadmap,
-                },
-            };
-
-            console.log('Attempting to update roadmap milestone. URL:', PROJECTS_UPDATE_BASE_URL);
-            console.log('Update payload for Lambda:', JSON.stringify(requestBodyForLambda, null, 2));
-
-            const response = await fetch(
-                `${PROJECTS_UPDATE_BASE_URL}/${projectId}`,
-                {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(token && { 'Authorization': `Bearer ${token}` })
-                    },
-                    body: JSON.stringify(requestBodyForLambda),
-                }
+            await DataService.updateProject(
+                projectId,
+                projectToUpdate.timestamp,
+                { roadmap: updatedRoadmap }
             );
-
-            if (!response.ok) {
-                let errorMessage = `Failed to update roadmap. Status: ${response.status} ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.message || JSON.stringify(errorData);
-                } catch (jsonError) {
-                    errorMessage = await response.text();
-                }
-                throw new Error(errorMessage);
-            }
             
-            // *** IMPORTANT: After successful update, reload data to get the new timestamp from backend ***
-            await loadData();
             showToast('Roadmap updated successfully!', 'success');
+            // CRITICAL: After a successful update, perform a FULL reload via loadData()
+            // This ensures all derived properties for ALL projects are re-evaluated from the latest backend data.
+            await loadData(); 
 
         } catch (error) {
             console.error('[Projects] Failed to update roadmap milestone:', error instanceof Error ? error.message : error);
             showToast(`Failed to update roadmap: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
 
-            // Revert optimistic update on error by reloading old data
-            // Or if you want to be purely optimistic (less robust, but faster)
-            // you'd save the original roadmap state and revert to that.
-            // For now, loadData() will effectively revert if the backend is the source of truth.
-            await loadData(); // Force a reload to revert if optimistic failed and backend isn't updated.
+            // On error, revert by performing a full reload to get the true state from the backend.
+            await loadData(); 
         }
     }, [projects, loadData, showToast]);
 
