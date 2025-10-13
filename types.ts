@@ -81,6 +81,7 @@ export interface User {
   role: UserRole;
   companyId?: string;
   managerId?: string; // Keep managerId here for User if it's their direct manager, but Project uses managerIds
+  managerIds?: string[];
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';

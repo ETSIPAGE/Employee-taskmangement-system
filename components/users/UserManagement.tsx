@@ -10,6 +10,7 @@ import Input from '../shared/Input';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
+import { useToast } from '../../context/ToastContext';
 
 const getInitials = (name: string) => {
     const names = name.split(' ');
@@ -154,12 +155,14 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
 const UserManagement: React.FC = () => {
     const { user: currentUser, impersonateUser } = useAuth();
     const navigate = useNavigate();
+    const toast = useToast();
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [view, setView] = useState<'card' | 'table'>('card');
 
@@ -172,17 +175,22 @@ const UserManagement: React.FC = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
-    const [managerId, setManagerId] = useState<string | undefined>(undefined);
+    const [managerIds, setManagerIds] = useState<string[]>([]);
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
     const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [rating, setRating] = useState(0);
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            setUsers(AuthService.getUsers());
-            setManagers(AuthService.getManagers());
-            setCompanies(DataService.getCompanies());
+            const [apiUsers, apiManagers, companyList] = await Promise.all([
+                DataService.getUsers(),
+                DataService.getManagers(),
+                DataService.getCompanies(),
+            ]);
+            setUsers(apiUsers);
+            setManagers(apiManagers);
+            setCompanies(companyList);
         } catch (error) {
             console.error("Failed to load user data", error);
         } finally {
@@ -214,12 +222,17 @@ const UserManagement: React.FC = () => {
         });
     }, [users, searchTerm, roleFilter]);
 
+    const filteredManagers = useMemo(() => {
+        if (!departmentIds || departmentIds.length === 0) return managers;
+        return managers.filter(m => Array.isArray(m.departmentIds) && m.departmentIds.some(d => departmentIds.includes(d)));
+    }, [managers, departmentIds]);
+
     const resetForm = useCallback(() => {
         setName('');
         setEmail('');
         setPassword('');
         setRole(UserRole.EMPLOYEE);
-        setManagerId(managers.length > 0 ? managers[0].id : undefined);
+        setManagerIds([]);
         setEditingUser(null);
         setDepartmentIds([]);
         setCompanyId(companies.length > 0 ? companies[0].id : undefined);
@@ -237,7 +250,7 @@ const UserManagement: React.FC = () => {
         setEmail(userToEdit.email);
         setPassword(''); // Don't show password
         setRole(userToEdit.role);
-        setManagerId(userToEdit.managerId);
+        setManagerIds(userToEdit.managerIds || (userToEdit.managerId ? [userToEdit.managerId] : []));
         setDepartmentIds(userToEdit.departmentIds || []);
         setCompanyId(userToEdit.companyId);
         setRating(userToEdit.rating || 0);
@@ -250,9 +263,22 @@ const UserManagement: React.FC = () => {
     };
     
     const handleDeleteUser = (userId: string) => {
-        if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            AuthService.deleteUser(userId);
-            loadData();
+        setConfirmDeleteId(userId);
+    };
+
+    const confirmDelete = async () => {
+        if (!confirmDeleteId) return;
+        try {
+            const tId = toast.loading('Deleting employee...');
+            await DataService.deleteUser(confirmDeleteId);
+            toast.update(tId, { type: 'success', message: 'User deleted successfully.', duration: 2500 });
+            setConfirmDeleteId(null);
+            await loadData();
+        } catch (error) {
+            console.error("Failed to delete user", error);
+            const msg = error instanceof Error ? error.message : 'Failed to delete user.';
+            toast.error(msg, 3500);
+            setConfirmDeleteId(null);
         }
     };
 
@@ -278,41 +304,57 @@ const UserManagement: React.FC = () => {
         });
     };
     
+    const handleManagerToggle = (mgrId: string) => {
+        setManagerIds(prev => {
+            const newIds = new Set(prev);
+            if (newIds.has(mgrId)) {
+                newIds.delete(mgrId);
+            } else {
+                newIds.add(mgrId);
+            }
+            return Array.from(newIds);
+        });
+    };
+    
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             if (editingUser) {
+                const tId = toast.loading('Updating employee...');
                 const updates: Partial<User> = { 
                     name, 
                     role, 
                     departmentIds,
                     companyId,
-                    managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                    // Keep legacy managerId (first) and new managerIds list for multi-manager support
+                    managerId: role === UserRole.EMPLOYEE && managerIds.length > 0 ? managerIds[0] : undefined,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
                     rating: rating,
                 };
-                AuthService.updateUser(editingUser.id, updates);
+                await DataService.updateUser(editingUser.id, updates);
+                toast.update(tId, { type: 'success', message: 'Successfully updated the employee.', duration: 2500 });
             } else {
                 if (!password) {
-                    alert("Password is required for new users.");
+                    toast.error('Password is required for new users.', 3000);
                     return;
                 }
-                // Register first, which creates a default user
-                await AuthService.register({ name, email, password });
-                // Then, find that user and update them with the details from the form
-                const newUser = AuthService.getUsers().find(u => u.email === email);
-                if (newUser) {
-                    AuthService.updateUser(newUser.id, {
-                        role,
-                        departmentIds,
-                        companyId,
-                        managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
-                    });
-                }
+                const tId = toast.loading('Creating employee...');
+                await DataService.createUser({
+                    name,
+                    email,
+                    password,
+                    role,
+                    departmentIds,
+                    companyId,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
+                });
+                toast.update(tId, { type: 'success', message: 'Successfully created the employee.', duration: 2500 });
             }
-            loadData();
+            await loadData();
             handleCloseModal();
         } catch(err) {
-            alert(err instanceof Error ? err.message : 'An error occurred');
+            const msg = err instanceof Error ? err.message : 'An error occurred';
+            toast.error(msg, 3500);
         }
     };
 
@@ -463,14 +505,27 @@ const UserManagement: React.FC = () => {
 
                     {role === UserRole.EMPLOYEE && (
                         <div>
-                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                            <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                <option value="">No Manager</option>
-                                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
+                            <label className="block text-sm font-medium text-slate-700">Assign Managers</label>
+                            <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-40 overflow-y-auto">
+                                {filteredManagers.length > 0 ? filteredManagers.map(m => (
+                                    <div key={m.id} className="flex items-center">
+                                        <input
+                                            id={`mgr-${m.id}`}
+                                            type="checkbox"
+                                            checked={managerIds.includes(m.id)}
+                                            onChange={() => handleManagerToggle(m.id)}
+                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                        />
+                                        <label htmlFor={`mgr-${m.id}`} className="ml-2 block text-sm text-slate-800">
+                                            {m.name}
+                                        </label>
+                                    </div>
+                                )) : <p className="text-sm text-slate-500">No managers for selected departments.</p>}
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">Managers list is filtered by the selected departments.</p>
                         </div>
                     )}
-                    
+
                     {editingUser && (
                         <Input
                             id="rating"
@@ -483,12 +538,20 @@ const UserManagement: React.FC = () => {
                             step="0.1"
                         />
                     )}
-
                     <div className="pt-4 flex justify-end space-x-3">
                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
                         <Button type="submit">{editingUser ? "Save Changes" : "Create Employee"}</Button>
                     </div>
                 </form>
+            </Modal>
+            <Modal title="Delete Employee" isOpen={!!confirmDeleteId} onClose={() => setConfirmDeleteId(null)}>
+                <div className="space-y-4">
+                    <p className="text-slate-700">Are you sure you want to delete this user? This action cannot be undone.</p>
+                    <div className="pt-2 flex justify-end space-x-3">
+                        <button type="button" onClick={() => setConfirmDeleteId(null)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
+                        <Button type="button" onClick={confirmDelete}>Delete</Button>
+                    </div>
+                </div>
             </Modal>
         </div>
     );
