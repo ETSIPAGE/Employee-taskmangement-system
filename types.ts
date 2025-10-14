@@ -138,6 +138,7 @@ export interface Project {
   roadmap?: ProjectMilestone[];
   // If a separate `createdAt` is needed apart from `timestamp`, add it here.
   // createdAt?: string;
+  createdBy?: string; // <--- THIS IS THE ADDED LINE TO RESOLVE THE ERRORS
 }
 
 export interface TaskDependency {

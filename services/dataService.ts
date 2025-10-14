@@ -496,9 +496,15 @@ export const getAllProjects = async (): Promise<Project[]> => {
             description: proj.description,
             managerIds: Array.isArray(proj.manager_ids)
                         ? proj.manager_ids.map((id: string) => String(id).trim())
-                        : (typeof proj.manager_id === 'string' && proj.manager_id)
-                            ? [String(proj.manager_id).trim()]
-                            : [],
+                        : Array.isArray(proj.managerIds)
+                            ? proj.managerIds.map((id: string) => String(id).trim())
+                            : Array.isArray(proj.managers)
+                                ? proj.managers.map((id: string) => String(id).trim())
+                                : (typeof proj.manager_id === 'string' && proj.manager_id)
+                                    ? [String(proj.manager_id).trim()]
+                                    : (typeof proj.manager === 'string' && proj.manager)
+                                        ? [String(proj.manager).trim()]
+                                        : [],
             departmentIds: (Array.isArray(proj.departmentIds) && proj.departmentIds.length > 0
                             ? proj.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(proj.department_ids) && proj.department_ids.length > 0
@@ -522,7 +528,7 @@ export const getAllProjects = async (): Promise<Project[]> => {
 };
 
 export const getProjectById = async (id: string, attempt = 0): Promise<Project | undefined> => {
-    const projects = await getAllProjects(); // This call will use/update the cache as necessary
+    const projects = await getAllProjects();
     const foundProject = projects.find(p => p.id === id);
 
     if (foundProject) {
@@ -531,9 +537,9 @@ export const getProjectById = async (id: string, attempt = 0): Promise<Project |
 
     if (attempt < MAX_RETRIES) {
         console.warn(`[DataService] Project ${id} not found on attempt ${attempt + 1}. Retrying in ${RETRY_DELAY_MS}ms...`);
-        cachedProjects = null; // Invalidate cache before next attempt to force a fresh fetch
+        cachedProjects = null;
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-        return getProjectById(id, attempt + 1); // Recursive retry with incremented attempt
+        return getProjectById(id, attempt + 1);
     }
 
     console.error(`[DataService] Project ${id} not found after ${MAX_RETRIES} attempts.`);
@@ -554,6 +560,8 @@ export const getProjectsByDepartment = async (departmentId: string): Promise<Pro
     const projects = await getAllProjects();
     return projects.filter(p => p.departmentIds && p.departmentIds.includes(departmentId));
 };
+
+// ... (rest of the code remains the same)
 
 export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp'>): Promise<Project> => {
     const newProjectTimestamp = new Date().toISOString(); 
@@ -587,9 +595,15 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
         description: createdProjectData.description,
         managerIds: Array.isArray(createdProjectData.manager_ids)
                     ? createdProjectData.manager_ids.map((id: string) => String(id).trim())
-                    : (typeof createdProjectData.manager_id === 'string' && createdProjectData.manager_id)
-                        ? [String(createdProjectData.manager_id).trim()]
-                        : [],
+                    : Array.isArray(createdProjectData.managerIds)
+                        ? createdProjectData.managerIds.map((id: string) => String(id).trim())
+                        : Array.isArray(createdProjectData.managers)
+                            ? createdProjectData.managers.map((id: string) => String(id).trim())
+                            : (typeof createdProjectData.manager_id === 'string' && createdProjectData.manager_id)
+                                ? [String(createdProjectData.manager_id).trim()]
+                                : (typeof createdProjectData.manager === 'string' && createdProjectData.manager)
+                                    ? [String(createdProjectData.manager).trim()]
+                                    : [],
         departmentIds: (Array.isArray(createdProjectData.departmentIds) && createdProjectData.departmentIds.length > 0
                             ? createdProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(createdProjectData.department_ids) && createdProjectData.department_ids.length > 0
@@ -608,6 +622,8 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
     
     return newProject;
 };
+
+// ... (rest of the code remains the same)
 
 export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
     const updateFields: any = {};
@@ -656,9 +672,15 @@ export const updateProject = async (projectId: string, projectTimestamp: string,
         description: updatedProjectData.description,
         managerIds: Array.isArray(updatedProjectData.manager_ids)
                     ? updatedProjectData.manager_ids.map((id: string) => String(id).trim())
-                    : (typeof updatedProjectData.manager_id === 'string' && updatedProjectData.manager_id)
-                        ? [String(updatedProjectData.manager_id).trim()]
-                        : [],
+                    : Array.isArray(updatedProjectData.managerIds)
+                        ? updatedProjectData.managerIds.map((id: string) => String(id).trim())
+                        : Array.isArray(updatedProjectData.managers)
+                            ? updatedProjectData.managers.map((id: string) => String(id).trim())
+                            : (typeof updatedProjectData.manager_id === 'string' && updatedProjectData.manager_id)
+                                ? [String(updatedProjectData.manager_id).trim()]
+                                : (typeof updatedProjectData.manager === 'string' && updatedProjectData.manager)
+                                    ? [String(updatedProjectData.manager).trim()]
+                                    : [],
         departmentIds: (Array.isArray(updatedProjectData.departmentIds) && updatedProjectData.departmentIds.length > 0
                             ? updatedProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(updatedProjectData.department_ids) && updatedProjectData.department_ids.length > 0
