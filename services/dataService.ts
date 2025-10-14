@@ -144,7 +144,7 @@ const mapApiUserToUser = (apiUser: any): User => {
         email: apiUser.email,
         role: role,
         companyId: apiUser.companyId,
-        managerId: apiUser.managerId,
+        managerId: apiUser.managerId || (Array.isArray(apiUser.managerIds) && apiUser.managerIds.length > 0 ? apiUser.managerIds[0] : undefined),
         departmentIds: apiUser.departmentIds || [],
         jobTitle: apiUser.jobTitle,
         status: apiUser.status || 'Offline',

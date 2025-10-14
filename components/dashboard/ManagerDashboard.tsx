@@ -138,6 +138,7 @@ const ManagerDashboard: React.FC = () => {
             setTeamMembers(team);
 
             const managerProjects = await DataService.getProjectsByManager(user.id);
+
             const projectsWithProgressPromises = managerProjects.map(async p => {
                 const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
@@ -155,7 +156,10 @@ const ManagerDashboard: React.FC = () => {
             setProjects(projectsWithProgress);
 
             const teamMemberIds = team.map(tm => tm.id);
-            const teamTasks = await DataService.getTasksByTeam(teamMemberIds);
+            const allTasks = await DataService.getAllTasks();
+            const managerAndTeamIds = new Set([user.id, ...teamMemberIds]);
+            const teamTasks = allTasks.filter(t => (t.assign_by === user.id) || (t.assigneeIds?.some(id => managerAndTeamIds.has(id))));
+
             const counts = {
                 todo: teamTasks.filter(t => t.status === TaskStatus.TODO).length,
                 inProgress: teamTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
