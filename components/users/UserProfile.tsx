@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, Navigate } from 'react-router-dom';
-import * as AuthService from '../../services/authService';
+import * as AuthService from '../../services/authService'; // Keep if needed for local user data
 import * as DataService from '../../services/dataService';
 import { User, Task, Project, TaskStatus, UserRole, Department } from '../../types';
 import { MailIcon, CalendarIcon, BriefcaseIcon, ClockIcon, CheckCircleIcon, ExclamationTriangleIcon, TrendingUpIcon } from '../../constants';
@@ -51,20 +51,20 @@ const UserProfile: React.FC = () => {
                     userTasks, 
                     allProjects, 
                     allDepts, 
-                    allUsersFromApi
+                    allUsers // CORRECTED: Use DataService.getUsers()
                 ] = await Promise.all([
-                    DataService.getUserByIdFromApi(userId),
+                    DataService.getUserById(userId), // CORRECTED: Use DataService.getUserById()
                     DataService.getTasksByAssignee(userId),
                     DataService.getAllProjects(),
                     DataService.getDepartments(),
-                    DataService.getAllUsersFromApi()
+                    DataService.getUsers() // CORRECTED: Use DataService.getUsers()
                 ]);
 
                 if (fetchedUser) {
                     setUser(fetchedUser);
 
                     if (fetchedUser.managerId) {
-                        setManager(allUsersFromApi.find(u => u.id === fetchedUser.managerId) || null);
+                        setManager(allUsers.find(u => u.id === fetchedUser.managerId) || null);
                     }
                     
                     setTasks(userTasks);
@@ -100,8 +100,12 @@ const UserProfile: React.FC = () => {
         return <div className="text-center p-10">User not found.</div>;
     }
     
+    // Authorization check: Only Admin can view *any* profile for now.
+    // You might want to extend this to allow managers to view their team, or employees to view their own.
     if (currentUser?.role !== UserRole.ADMIN) {
-        return <Navigate to="/" />;
+        // Redirect if not authorized.
+        // You could also show a "Access Denied" message here.
+        return <Navigate to="/" />; 
     }
 
     return (
@@ -136,7 +140,7 @@ const UserProfile: React.FC = () => {
                         <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Contact & Role</h3>
                         <div className="space-y-3 text-sm">
                             <div className="flex items-center"><MailIcon className="h-4 w-4 mr-3 text-slate-400" /> <span className="text-slate-700">{user.email}</span></div>
-                            <div className="flex items-center"><CalendarIcon className="h-4 w-4 mr-3 text-slate-400" /> <span className="text-slate-700">Joined on {new Date(user.joinedDate!).toLocaleDateString()}</span></div>
+                            <div className="flex items-center"><CalendarIcon className="h-4 w-4 mr-3 text-slate-400" /> <span className="text-slate-700">Joined on {user.joinedDate ? new Date(user.joinedDate).toLocaleDateString() : 'N/A'}</span></div>
                             <div className="flex items-center"><BriefcaseIcon className="h-4 w-4 mr-3 text-slate-400" /> <span className="text-slate-700">Role: {user.role}</span></div>
                              {manager && <div className="flex items-center"><span className="font-semibold w-24">Manager:</span> <span className="text-slate-700">{manager.name}</span></div>}
                             <div>
@@ -145,6 +149,7 @@ const UserProfile: React.FC = () => {
                                     {user.departmentIds?.map(id => departments[id] && (
                                         <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">{departments[id].name}</span>
                                     ))}
+                                    {(!user.departmentIds || user.departmentIds.length === 0) && <p className="text-sm text-slate-500">No departments assigned.</p>}
                                 </div>
                             </div>
                         </div>
@@ -168,6 +173,7 @@ const UserProfile: React.FC = () => {
                         <StatCard icon={<ExclamationTriangleIcon />} value={taskStats.overdue} label="Tasks Overdue" />
                     </div>
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* These stats are currently hardcoded, consider replacing with actual data if available */}
                         <StatCard icon={<TrendingUpIcon />} value="94%" label="On-Time Rate (Month)" />
                         <StatCard icon={<ClockIcon />} value="2.5 Days" label="Avg. Completion Time" />
                         <StatCard icon={<CalendarIcon className="h-6 w-6" />} value="152 Hrs" label="Avg. Login Hours (Month)" />
@@ -194,7 +200,8 @@ const UserProfile: React.FC = () => {
                                                 <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                                                     task.status === TaskStatus.COMPLETED ? 'bg-green-100 text-green-800' :
                                                     task.status === TaskStatus.IN_PROGRESS ? 'bg-blue-100 text-blue-800' :
-                                                    'bg-yellow-100 text-yellow-800'
+                                                    task.status === TaskStatus.ON_HOLD ? 'bg-yellow-100 text-yellow-800' : // Added ON_HOLD
+                                                    'bg-red-100 text-red-800' // Default/Overdue style
                                                 }`}>
                                                     {task.status}
                                                 </span>
