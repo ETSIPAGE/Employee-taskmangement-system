@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { UserRole } from '../../types';
 import { CogIcon, ChatBubbleLeftRightIcon } from '../../constants';
+import * as DataService from '../../services/dataService';
 
 interface HeaderProps {
   onToggleChat: () => void;
@@ -13,6 +14,38 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
   const navigate = useNavigate();
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [isPunchedIn, setIsPunchedIn] = useState(false);
+  const [isPunchingIn, setIsPunchingIn] = useState(false);
+  const [punchInLoading, setPunchInLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchTodaysAttendance = async () => {
+      setPunchInLoading(true);
+      try {
+        const today = new Date();
+        const year = today.getFullYear();
+        const month = today.getMonth() + 1;
+        const attendanceForMonth = await DataService.getAttendanceForUserByMonth(user.id, year, month, user.id);
+        
+        const todayString = today.toISOString().split('T')[0];
+        const todayRecord = attendanceForMonth.find(rec => rec.date === todayString);
+
+        if (todayRecord && todayRecord.punchInTime && !todayRecord.punchOutTime) {
+            setIsPunchedIn(true);
+        } else {
+            setIsPunchedIn(false);
+        }
+      } catch (error) {
+          console.error("Failed to fetch today's attendance status", error);
+          setIsPunchedIn(false);
+      } finally {
+          setPunchInLoading(false);
+      }
+    };
+
+    fetchTodaysAttendance();
+  }, [user]);
 
   const handleLogout = () => {
     logout();
@@ -23,8 +56,21 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
       setIsOnBreak(!isOnBreak);
   }
 
-  const togglePunchIn = () => {
-    setIsPunchedIn(!isPunchedIn);
+  const togglePunchIn = async () => {
+    if (!user || isPunchingIn || punchInLoading) return;
+
+    setIsPunchingIn(true);
+    const action = isPunchedIn ? 'PUNCH_OUT' : 'PUNCH_IN';
+
+    try {
+        await DataService.recordAttendanceAction(user.id, action);
+        setIsPunchedIn(!isPunchedIn);
+    } catch (error) {
+        console.error(`Failed to ${action}`, error);
+        alert(`Error: ${error instanceof Error ? error.message : 'An unknown error occurred.'}`);
+    } finally {
+        setIsPunchingIn(false);
+    }
   }
 
   const commonButtons = (
@@ -42,13 +88,14 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
   const punchButton = (
     <button 
       onClick={togglePunchIn}
-      className={`px-4 py-2 text-sm font-medium rounded-md transition-colors shadow-sm ${
+      disabled={isPunchingIn || punchInLoading}
+      className={`px-4 py-2 text-sm font-medium rounded-md transition-colors shadow-sm disabled:opacity-75 disabled:cursor-wait ${
           isPunchedIn 
           ? 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-300' 
           : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
       }`}
     >
-        {isPunchedIn ? 'Punch Out' : 'Punch In'}
+      {punchInLoading ? 'Loading...' : isPunchingIn ? 'Processing...' : isPunchedIn ? 'Punch Out' : 'Punch In'}
     </button>
   );
 

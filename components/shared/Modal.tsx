@@ -11,20 +11,20 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
 
   return (
-    <div 
-      className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-center" 
-      aria-modal="true" 
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 z-40 flex justify-center items-start overflow-y-auto p-4"
+      aria-modal="true"
       role="dialog"
       onClick={onClose}
     >
-      <div 
-        className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 relative z-50 transform transition-all" 
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-2xl relative z-50 transform transition-all my-6 max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+        <div className="flex justify-between items-center border-b border-slate-200 p-6">
           <h3 className="text-xl font-semibold text-slate-800">{title}</h3>
-          <button 
-            onClick={onClose} 
+          <button
+            onClick={onClose}
             className="text-slate-400 hover:text-slate-600 transition-colors"
             aria-label="Close modal"
           >
@@ -33,7 +33,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             </svg>
           </button>
         </div>
-        <div className="mt-4">
+        <div className="p-6 overflow-y-auto">
           {children}
         </div>
       </div>

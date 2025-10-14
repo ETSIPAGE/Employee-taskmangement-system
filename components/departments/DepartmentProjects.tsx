@@ -1,164 +1,55 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import { Department, Project, TaskStatus, Company, MilestoneStatus } from '../../types'; // Ensure MilestoneStatus is imported
+import { Department, Project, TaskStatus, Company } from '../../types';
 import ProjectCard from '../projects/ProjectCard';
 
 const DepartmentProjects: React.FC = () => {
     const { departmentId } = useParams<{ departmentId: string }>();
     const [department, setDepartment] = useState<Department | null>(null);
     const [company, setCompany] = useState<Company | null>(null);
-    // ProjectDisplayData is the type expected by ProjectCard (from Projects.tsx)
-    interface ProjectDisplayData extends Project {
-        progress: number;
-        overallStatus: string;
-        departmentNames: string;
-        companyName: string;
-    }
-    const [projects, setProjects] = useState<ProjectDisplayData[]>([]); 
+    const [projects, setProjects] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     const loadData = useCallback(async () => {
-        if (!departmentId) {
-            console.log("[DepartmentProjects] No departmentId found in URL parameters.");
-            setIsLoading(false);
-            return;
-        }
+        if (!departmentId) return;
         setIsLoading(true);
-        // Normalize the departmentId from URL params for consistent comparison
-        const normalizedDepartmentIdFromParams = String(departmentId).toLowerCase().trim();
-
-        console.log(`[DepartmentProjects] Loading data for department ID from URL: "${departmentId}" (Normalized: "${normalizedDepartmentIdFromParams}")`);
         try {
             const currentDepartment = await DataService.getDepartmentById(departmentId);
             if (!currentDepartment) {
-                console.log(`[DepartmentProjects] Department not found in DataService for ID: ${departmentId}`);
                 setDepartment(null);
-                setIsLoading(false);
                 return;
             }
             setDepartment(currentDepartment);
-            console.log("[DepartmentProjects] Fetched Department:", currentDepartment);
-            // CRITICAL CHECK: Does the fetched department's ID match the URL ID?
-            console.log(`[DepartmentProjects] Fetched Dept ID: "${currentDepartment.id}" (Should match URL ID: "${normalizedDepartmentIdFromParams}")`);
 
-
-            // Fetch all companies, all projects, all departments, and all tasks in parallel
-            const [allCompanies, allProjectsFetched, allDeptsFetched, allTasksFetched] = await Promise.all([
-                DataService.getCompanies(),
-                DataService.getAllProjects(),
-                DataService.getDepartments(),
-                DataService.getAllTasks(), // Fetch all tasks once for efficient status calculation
-            ]);
-            console.log("[DepartmentProjects] All Companies fetched:", allCompanies);
-            console.log("[DepartmentProjects] All Projects fetched (raw from DataService):", allProjectsFetched);
-            console.log("[DepartmentProjects] All Departments fetched (raw from DataService):", allDeptsFetched);
-            console.log("[DepartmentProjects] All Tasks fetched (raw from DataService):", allTasksFetched);
-
-
-            // Set the company for the department display (currentDepartment.companyId is already normalized)
+            const allCompanies = DataService.getCompanies(); // Mocked
             const currentCompany = allCompanies.find(c => c.id === currentDepartment.companyId);
             setCompany(currentCompany || null);
-            console.log("[DepartmentProjects] Matched Company for Department:", currentCompany);
 
+            const [departmentProjects, allDepts] = await Promise.all([
+                DataService.getProjectsByDepartment(departmentId),
+                DataService.getDepartments()
+            ]);
 
-            // --- CRITICAL FILTERING LOGIC ---
-            const departmentProjects = allProjectsFetched.filter(p => {
-                const projectDepartmentIds = Array.isArray(p.departmentIds) ? p.departmentIds : [];
-                
-                const matches = projectDepartmentIds.some(projDeptId => 
-                    // CRITICAL: Both sides of comparison must be normalized
-                    String(projDeptId).toLowerCase().trim() === normalizedDepartmentIdFromParams
-                );
-                // --- Uncomment for extremely detailed per-project debugging ---
-                // if (!matches) {
-                //     console.log(`  Project filter: "${p.name || p.id}" -- NO MATCH. ProjectDeptIDs: ${JSON.stringify(projectDepartmentIds.map(id => String(id).toLowerCase().trim()))}, TargetDeptID: "${normalizedDepartmentIdFromParams}"`);
-                // } else {
-                //     console.log(`  Project filter: "${p.name || p.id}" -- MATCH FOUND! ProjectDeptIDs: ${JSON.stringify(projectDepartmentIds.map(id => String(id).toLowerCase().trim()))}, TargetDeptID: "${normalizedDepartmentIdFromParams}"`);
-                // }
-                // -----------------------------------------------------------
-                return matches;
-            });
-            console.log("[DepartmentProjects] Projects filtered for current department:", departmentProjects);
-            // --- END CRITICAL FILTERING LOGIC ---
-
-
-            const projectsWithDetailsPromises = departmentProjects.map(p => { // Removed 'async' as it's no longer awaiting inside map
-                // Use the already fetched allTasksFetched for efficient status calculation
-                const projectTasks = allTasksFetched.filter(task => task.projectId === p.id);
-                
-                let projectProgress = 0;
-                let projectOverallStatus: string = 'Pending'; // This will be the actual status string
-
-                if (p.roadmap && p.roadmap.length > 0) {
-                    const totalMilestones = p.roadmap.length;
-                    const completedMilestones = p.roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
-                    const inProgressMilestones = p.roadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
-                    const onHoldMilestones = p.roadmap.filter(m => m.status === MilestoneStatus.ON_HOLD).length;
-
-                    if (totalMilestones > 0) {
-                        projectProgress = Math.round(((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100);
-                        if (projectProgress === 100) projectOverallStatus = 'Completed';
-                        else if (onHoldMilestones > 0) projectOverallStatus = 'On Hold';
-                        else if (inProgressMilestones > 0 || completedMilestones > 0) projectOverallStatus = 'In Progress';
-                        else projectOverallStatus = 'Pending';
-                    }
-                } else {
-                    // Derive from tasks if no roadmap
-                    if (projectTasks.length === 0) {
-                        // If no tasks and no roadmap, check deadline for overdue
-                        if (p.deadline && new Date(p.deadline) < new Date()) {
-                            projectOverallStatus = 'Overdue';
-                        } else {
-                            projectOverallStatus = 'Pending';
-                        }
-                    } else {
-                        const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                        const totalTasks = projectTasks.length;
-                        const inProgressTasks = projectTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length;
-                        const onHoldTasks = projectTasks.filter(t => t.status === TaskStatus.ON_HOLD).length;
-
-                        projectProgress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0; // Calculate progress based on tasks
-
-                        if (completedTasks === totalTasks) {
-                            projectOverallStatus = 'Completed';
-                        } else if (onHoldTasks > 0) {
-                            projectOverallStatus = 'On Hold';
-                        } else if (inProgressTasks > 0 || completedTasks > 0) {
-                            projectOverallStatus = 'In Progress';
-                        } else {
-                            projectOverallStatus = 'Pending';
-                        }
-                    }
-                }
-                
-                // Override status if overdue, if not already completed
-                if (projectOverallStatus !== 'Completed' && p.deadline && new Date(p.deadline) < new Date()) {
-                    projectOverallStatus = 'Overdue';
-                }
-
-                const departmentNames = (p.departmentIds || [])
-                                        .map(id => allDeptsFetched.find(d => String(d.id || '').toLowerCase().trim() === String(id || '').toLowerCase().trim())?.name)
-                                        .filter(Boolean).join(', ');
-                
-                const projCompany = allCompanies.find(c => c.id === p.companyId); // p.companyId is already normalized
+            const projectsWithDetailsPromises = departmentProjects.map(async p => {
+                const projectTasks = await DataService.getTasksByProject(p.id);
+                const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
+                const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
+                const departmentNames = p.departmentIds.map(id => allDepts.find(d => d.id === id)?.name).filter(Boolean).join(', ');
+                const projCompany = allCompanies.find(c => c.id === p.companyId);
                 
                 return {
                     ...p,
-                    progress: projectProgress, // Add calculated progress
-                    overallStatus: projectOverallStatus, // Add overallStatus
+                    progress,
                     departmentNames,
                     companyName: projCompany?.name || 'N/A',
                 };
             });
-            // No need for Promise.all here if map is not async
-            setProjects(projectsWithDetailsPromises); // renamed to projectsWithDetails for consistency
-            console.log("[DepartmentProjects] Projects with Details (final state for rendering):", projectsWithDetailsPromises);
+            const projectsWithDetails = await Promise.all(projectsWithDetailsPromises);
+            setProjects(projectsWithDetails);
 
         } catch (error) {
-            console.error("[DepartmentProjects] Failed to load department projects:", error);
-            setDepartment(null);
-            setProjects([]);
+            console.error("Failed to load department projects:", error);
         } finally {
             setIsLoading(false);
         }
@@ -193,6 +84,9 @@ const DepartmentProjects: React.FC = () => {
                         <ProjectCard 
                             key={project.id} 
                             project={project} 
+                            progress={project.progress} 
+                            departmentNames={project.departmentNames}
+                            companyName={project.companyName}
                         />
                     ))}
                 </div>
