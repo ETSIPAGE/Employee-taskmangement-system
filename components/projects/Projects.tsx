@@ -928,3 +928,6 @@ const Projects: React.FC = () => {
 };
 
 export default Projects;
+
+// project from pz
+// types.ts from pz 
