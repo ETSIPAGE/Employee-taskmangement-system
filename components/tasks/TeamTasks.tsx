@@ -13,7 +13,7 @@ import Input from '../shared/Input';
 
 interface HydratedTask extends Task {
     projectName: string;
-    assigneeName: string;
+    assigneeNames: string[];
 }
 
 const TeamTasks: React.FC = () => {
@@ -30,6 +30,7 @@ const TeamTasks: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [apiDepartments, setApiDepartments] = useState<Department[]>([]);
     const [apiProjects, setApiProjects] = useState<Project[]>([]);
+    const [allUsersFromApi, setAllUsersFromApi] = useState<User[]>([]);
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
     const [newTaskData, setNewTaskData] = useState({
@@ -40,7 +41,7 @@ const TeamTasks: React.FC = () => {
         due_date: '',
         priority: 'medium' as 'low' | 'medium' | 'high',
         est_time: '',
-        assign_to: ''
+        assign_to: [] as string[]
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -51,6 +52,19 @@ const TeamTasks: React.FC = () => {
     const [assigneeFilter, setAssigneeFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
+    const eligibleEmployees = (deptId?: string): User[] => {
+        const departmentId = deptId ?? newTaskData.department;
+        if (!user) return [];
+        const employees = allUsersFromApi.filter(u => 
+            u.role === UserRole.EMPLOYEE && 
+            u.managerId === user.id && 
+            (!departmentId || (Array.isArray(u.departmentIds) && u.departmentIds.includes(departmentId)))
+        );
+        const mgr = allUsersFromApi.find(u => u.id === user.id);
+        const hasMgr = mgr ? employees.some(e => e.id === mgr.id) : true;
+        return hasMgr ? employees : [...employees, mgr!];
+    };
+
     const loadData = useCallback(async () => {
         if (!user || user.role !== UserRole.MANAGER) return;
         setIsLoading(true);
@@ -58,33 +72,31 @@ const TeamTasks: React.FC = () => {
             const allUsers = AuthService.getUsers();
             const team = allUsers.filter(u => u.managerId === user.id);
             setTeamMembers(team);
-    
-            if (team.length === 0) {
-                setHydratedTasks([]);
-                setAllProjects([]);
-                setIsLoading(false);
-                return;
-            }
-            
+
             const teamMemberIds = team.map(tm => tm.id);
-    
-            const [projects, teamTasks] = await Promise.all([
+
+            const [projects, allTasks] = await Promise.all([
                 DataService.getAllProjects(),
-                DataService.getTasksByTeam(teamMemberIds),
+                DataService.getAllTasks(),
             ]);
-            
+
             setAllProjects(projects);
-            
+
+            const managerAndTeamIds = new Set([user.id, ...teamMemberIds]);
+            const managerContextTasks = allTasks.filter(t => (t.assign_by === user.id) || (t.assigneeIds?.some(id => managerAndTeamIds.has(id))));
+
             const projectsMap = new Map(projects.map(p => [p.id, p]));
             const usersMap = new Map(allUsers.map(u => [u.id, u]));
-    
-            const newHydratedTasks = teamTasks.map(task => ({
+
+            const newHydratedTasks = managerContextTasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
-                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+                assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
+
             
+
         } catch (error) {
             console.error("Failed to load team task data:", error);
             setHydratedTasks([]); // Clear tasks on error
@@ -102,14 +114,16 @@ const TeamTasks: React.FC = () => {
             const fetchDropdownData = async () => {
                 setDropdownsLoading(true);
                 try {
-                    const [depts, projs] = await Promise.all([
+                    const [depts, projs, users] = await Promise.all([
                         DataService.getDepartments(),
-                        DataService.getAllProjects()
+                        DataService.getAllProjects(),
+                        DataService.getAllUsersFromApi(),
                     ]);
                     setApiDepartments(depts);
                     setApiProjects(projs);
+                    setAllUsersFromApi(users);
                     if (depts.length > 0) {
-                        setNewTaskData(prev => ({ ...prev, department: depts[0].name }));
+                        setNewTaskData(prev => ({ ...prev, department: depts[0].id }));
                     }
                     if (projs.length > 0) {
                         setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
@@ -124,12 +138,6 @@ const TeamTasks: React.FC = () => {
         }
     }, [isModalOpen]);
 
-    useEffect(() => {
-        if (teamMembers.length > 0 && !newTaskData.assign_to) {
-            setNewTaskData(prev => ({...prev, assign_to: teamMembers[0].id}));
-        }
-    }, [teamMembers, newTaskData.assign_to]);
-
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
         setIsModalOpen(false);
@@ -138,7 +146,14 @@ const TeamTasks: React.FC = () => {
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
-        setNewTaskData(prev => ({ ...prev, [name]: value }));
+        setNewTaskData(prev => {
+            const next = { ...prev, [name]: value } as typeof prev;
+            if (name === 'department') {
+                const eligibleIds = new Set(eligibleEmployees(value).map(u => u.id).concat(user ? [user.id] : []));
+                next.assign_to = next.assign_to.filter(id => eligibleIds.has(id));
+            }
+            return next;
+        });
     };
 
     const handleCreateTask = async (e: React.FormEvent) => {
@@ -150,8 +165,10 @@ const TeamTasks: React.FC = () => {
         setSubmitError('');
         setIsSubmitting(true);
         try {
+            const departmentName = apiDepartments.find(d => d.id === newTaskData.department)?.name || newTaskData.department;
             const payload = {
                 ...newTaskData,
+                department: departmentName,
                 currentUserId: user.id
             };
             await DataService.createTask(payload);
@@ -188,7 +205,7 @@ const TeamTasks: React.FC = () => {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
-            const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
+            const assigneeMatch = assigneeFilter === 'all' || task.assigneeIds?.includes(assigneeFilter);
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
@@ -249,7 +266,7 @@ const TeamTasks: React.FC = () => {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            assigneeName={task.assigneeName}
+                            assigneeNames={task.assigneeNames}
                             projectName={task.projectName}
                             onDelete={handleRequestDelete}
                         />
@@ -278,7 +295,7 @@ const TeamTasks: React.FC = () => {
                                     <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeNames.join(', ')}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
@@ -317,22 +334,19 @@ const TeamTasks: React.FC = () => {
             <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateTask} className="space-y-4">
                     {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
-                    
                     <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
-                    
                     <div>
                         <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
                         <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
                             className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                         />
                     </div>
-
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
                             <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.name}>{d.name}</option>) : <option value="">No departments found</option>}
+                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
                             </select>
                         </div>
                         <div>
@@ -343,9 +357,7 @@ const TeamTasks: React.FC = () => {
                             </select>
                         </div>
                     </div>
-
                     <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
-
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
@@ -357,18 +369,36 @@ const TeamTasks: React.FC = () => {
                         </div>
                         <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
                     </div>
-
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                             {teamMembers.map(employee => (
-                                <option key={employee.id} value={employee.id}>{employee.name}</option>
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                            {eligibleEmployees().map(employee => (
+                                <div key={employee.id} className="flex items-center">
+                                    <input
+                                        id={`assignee-${employee.id}`}
+                                        type="checkbox"
+                                        value={employee.id}
+                                        checked={newTaskData.assign_to.includes(employee.id)}
+                                        onChange={(e) => {
+                                            const { value, checked } = e.target as HTMLInputElement;
+                                            setNewTaskData(prev => ({
+                                                ...prev,
+                                                assign_to: checked
+                                                    ? [...prev.assign_to, value]
+                                                    : prev.assign_to.filter(id => id !== value)
+                                            }));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`assignee-${employee.id}`} className="ml-3 block text-sm text-slate-800">
+                                        {employee.name}
+                                    </label>
+                                </div>
                             ))}
-                        </select>
+                        </div>
                     </div>
-
                     <div className="pt-4 flex justify-end space-x-3">
-                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                        <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
                         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Creating...' : 'Create Task'}</Button>

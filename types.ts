@@ -15,7 +15,7 @@ export interface Company {
 export interface Department {
   id: string;
   name: string;
-  companyId: string; // Assuming Department has a single companyId
+  companyId: string;
 }
 
 export interface UserStats {
@@ -80,7 +80,7 @@ export interface User {
   email: string;
   role: UserRole;
   companyId?: string;
-  managerId?: string; // Keep managerId here for User if it's their direct manager, but Project uses managerIds
+  managerId?: string;
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';
@@ -109,7 +109,6 @@ export enum TaskStatus {
 export enum MilestoneStatus {
     PENDING = 'Pending',
     IN_PROGRESS = 'In Progress',
-    ON_HOLD = 'On Hold',
     COMPLETED = 'Completed',
 }
 
@@ -123,21 +122,16 @@ export interface ProjectMilestone {
 }
 
 export interface Project {
-  id: string;          // This is the Partition Key (PK)
-  timestamp: string;   // This must be the Sort Key (SK) as your backend expects it.
-                       // Your previous errors explicitly mentioned 'timestamp (sort key) mismatch'.
+  id: string;
   name: string;
   description?: string;
-  managerIds: string[]; // This must be an array now for multiple managers
+  managerId: string;
   departmentIds: string[];
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
-  // If you also need a 'createdAt' field *separate* from the 'timestamp' sort key,
-  // then add it here. Otherwise, 'timestamp' will serve both purposes.
-  // createdAt?: string; // Optional: if you need a separate field for creation date
 }
 
 export interface TaskDependency {
@@ -166,7 +160,7 @@ export interface Task {
   description?: string;
   dueDate?: string;
   projectId: string;
-  assigneeId?: string;
+  assigneeIds?: string[];
   assign_by?: string;
   status: TaskStatus;
   category?: string;

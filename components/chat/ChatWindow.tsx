@@ -20,7 +20,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBa
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const usersMap = new Map(allUsers.map(u => [u.id, u]));
+    // FIX: Explicitly type usersMap to resolve issues where its values are inferred as 'unknown'.
+    const usersMap: Map<string, User> = new Map(allUsers.map(u => [u.id, u]));
 
     useEffect(() => {
         const conversationMessages = DataService.getMessagesForConversation(conversation.id);
@@ -41,7 +42,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBa
     };
     
     const getConversationName = () => {
-        if (conversation.type === 'group') return conversation.name;
+        // FIX: Handle case where a group conversation name may be undefined.
+        if (conversation.type === 'group') return conversation.name || 'Group Chat';
         const otherUserId = conversation.participantIds.find(id => id !== currentUser.id);
         return usersMap.get(otherUserId || '')?.name || 'Chat';
     };

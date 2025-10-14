@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
@@ -39,12 +39,17 @@ const TaskDetail: React.FC = () => {
     const [saveSuccess, setSaveSuccess] = useState(false);
 
 
-    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeId?: string }>({});
+    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[] }>({});
     
     const isDirty = useMemo(() => {
         if (!task) return false;
         const hasStatusChanged = editedTask.status !== undefined && editedTask.status !== task.status;
-        const hasAssigneeChanged = editedTask.assigneeId !== undefined && editedTask.assigneeId !== (task.assigneeId || '');
+        
+        const originalAssignees = new Set(task.assigneeIds || []);
+        const editedAssignees = new Set(editedTask.assigneeIds || []);
+        const hasAssigneeChanged = originalAssignees.size !== editedAssignees.size || 
+                                 ![...originalAssignees].every(id => editedAssignees.has(id));
+
         return hasStatusChanged || hasAssigneeChanged;
     }, [task, editedTask]);
 
@@ -60,11 +65,11 @@ const TaskDetail: React.FC = () => {
                 return;
             }
             setTask(currentTask);
-            setEditedTask({ status: currentTask.status, assigneeId: currentTask.assigneeId || '' });
+            setEditedTask({ status: currentTask.status, assigneeIds: currentTask.assigneeIds || [] });
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
-                DataService.getUsers() // Corrected: Use DataService.getUsers()
+                DataService.getAllUsersFromApi()
             ]);
 
             setProject(taskProject || null);
@@ -88,7 +93,7 @@ const TaskDetail: React.FC = () => {
         
         const isAdmin = currentUser.role === UserRole.ADMIN;
         const isProjectManager = currentUser.id === project.managerId;
-        const isAssignee = currentUser.id === task.assigneeId;
+        const isAssignee = (task.assigneeIds || []).includes(currentUser.id);
 
         // Admins and Project Managers have broad permissions over the task.
         const canManageTask = isAdmin || isProjectManager;
@@ -126,15 +131,21 @@ const TaskDetail: React.FC = () => {
         setSaveSuccess(false);
 
         try {
-            const updates: { status?: TaskStatus; assigneeId?: string | undefined } = {};
+            const updates: { status?: TaskStatus; assigneeIds?: string[] } = {};
             if (editedTask.status !== task?.status) {
                 updates.status = editedTask.status;
             }
-             if (editedTask.assigneeId !== (task?.assigneeId || '')) {
-                updates.assigneeId = editedTask.assigneeId === '' ? undefined : editedTask.assigneeId;
+            const originalAssignees = new Set(task?.assigneeIds || []);
+            const editedAssignees = new Set(editedTask.assigneeIds || []);
+            const assigneesChanged = originalAssignees.size !== editedAssignees.size || ![...originalAssignees].every(id => editedAssignees.has(id));
+            if (assigneesChanged) {
+                updates.assigneeIds = editedTask.assigneeIds;
             }
 
-            await DataService.updateTask(taskId, updates, currentUser.id);
+            if (Object.keys(updates).length > 0) {
+                await DataService.updateTask(taskId, updates, currentUser.id);
+            }
+            
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
             await loadData();
@@ -240,16 +251,49 @@ const TaskDetail: React.FC = () => {
                                      {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                  </select>
                             </DetailItem>
-                             <DetailItem icon={<UserCircleIcon />} label="Assignee">
-                                 <select 
-                                    value={editedTask.assigneeId} 
-                                    onChange={(e) => setEditedTask(prev => ({ ...prev, assigneeId: e.target.value || undefined }))}
-                                    disabled={!canChangeAssignee}
-                                    className="w-full p-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed transition-colors"
-                                >
-                                     <option value="">Unassigned</option>
-                                     {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                 </select>
+                             <DetailItem icon={<UserCircleIcon />} label="Assignees">
+                                {canChangeAssignee ? (
+                                    <div className="mt-1 max-h-48 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1">
+                                        {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => (
+                                            <div key={u.id} className="flex items-center p-1 rounded hover:bg-slate-100">
+                                                <input
+                                                    id={`detail-assignee-${u.id}`}
+                                                    type="checkbox"
+                                                    value={u.id}
+                                                    checked={(editedTask.assigneeIds || []).includes(u.id)}
+                                                    onChange={(e) => {
+                                                        const { value, checked } = e.target;
+                                                        setEditedTask(prev => ({
+                                                            ...prev,
+                                                            assigneeIds: checked
+                                                                ? [...(prev.assigneeIds || []), value]
+                                                                : (prev.assigneeIds || []).filter(id => id !== value)
+                                                        }));
+                                                    }}
+                                                    className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                />
+                                                <label htmlFor={`detail-assignee-${u.id}`} className="ml-3 block text-sm text-slate-800">
+                                                    {u.name}
+                                                </label>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                        {(task.assigneeIds && task.assigneeIds.length > 0) ? (
+                                            task.assigneeIds.map(id => {
+                                                const assignee = allUsers.find(u => u.id === id);
+                                                return (
+                                                    <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                                                        {assignee?.name || 'Unknown'}
+                                                    </span>
+                                                );
+                                            })
+                                        ) : (
+                                            <span className="text-slate-500">Unassigned</span>
+                                        )}
+                                    </div>
+                                )}
                             </DetailItem>
                             <DetailItem icon={<ClockIcon />} label="Due Date">
                                 {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}
