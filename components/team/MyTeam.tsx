@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types';
-import * as DataService from '../../services/dataService';
+import * as DataService from '../../services/dataService'; // Ensure this import is correct
 import { Navigate } from 'react-router-dom';
 import StarRating from '../shared/StarRating';
 
@@ -14,7 +14,9 @@ const getInitials = (name: string) => {
 }
 
 const EmployeeCard: React.FC<{ employee: User }> = ({ employee }) => {
-    const isOnline = useMemo(() => Math.random() > 0.5, []); // Randomize status for visual demo
+    // Note: DataService.isUserOnline(employee.id) would be better here for real-time status.
+    // For now, keeping the random logic as in your original code.
+    const isOnline = useMemo(() => Math.random() > 0.5, []); 
 
     return (
         <div className="bg-white rounded-lg shadow-md p-6 flex flex-col items-center text-center transition-transform transform hover:-translate-y-1 hover:shadow-lg">
@@ -51,12 +53,19 @@ const MyTeam: React.FC = () => {
             if (user && user.role === UserRole.MANAGER) {
                 setLoading(true);
                 try {
-                    const apiUsers = await DataService.getAllUsersFromApi();
+                    // CORRECTED: Use DataService.getUsers() as per dataService.ts
+                    const apiUsers = await DataService.getUsers(); 
+                    
+                    // Filter to find the current manager (if present in the API users)
+                    // and employees who report to this manager.
                     const me = apiUsers.find(u => u.id === user.id);
                     const members = apiUsers.filter(u => u.role === UserRole.EMPLOYEE && u.managerId === user.id);
+                    
+                    // Include the manager themselves at the beginning of the list, if found.
                     setTeamMembers(me ? [me, ...members] : members);
                 } catch (error) {
                     console.error("Failed to fetch team members", error);
+                    // Optionally, add a toast notification here
                 } finally {
                     setLoading(false);
                 }

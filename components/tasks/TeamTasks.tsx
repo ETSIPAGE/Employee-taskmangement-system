@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
-import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
+import * as DataService from '../../services/dataService';
 import { Project, Task, TaskStatus, User, UserRole, Department } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
@@ -16,12 +16,12 @@ interface HydratedTask extends Task {
     assigneeNames: string[];
 }
 
-const TeamTasks: React.FC = () => {
+export default function AdminTasks() {
     const { user } = useAuth();
     const navigate = useNavigate();
 
     const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
-    const [teamMembers, setTeamMembers] = useState<User[]>([]);
+    const [allEmployees, setAllEmployees] = useState<User[]>([]);
     const [allProjects, setAllProjects] = useState<Project[]>([]);
     
     const [isLoading, setIsLoading] = useState(true);
@@ -30,7 +30,6 @@ const TeamTasks: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [apiDepartments, setApiDepartments] = useState<Department[]>([]);
     const [apiProjects, setApiProjects] = useState<Project[]>([]);
-    const [allUsersFromApi, setAllUsersFromApi] = useState<User[]>([]);
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
     const [newTaskData, setNewTaskData] = useState({
@@ -52,54 +51,32 @@ const TeamTasks: React.FC = () => {
     const [assigneeFilter, setAssigneeFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
 
-    const eligibleEmployees = (deptId?: string): User[] => {
-        const departmentId = deptId ?? newTaskData.department;
-        if (!user) return [];
-        const employees = allUsersFromApi.filter(u => 
-            u.role === UserRole.EMPLOYEE && 
-            u.managerId === user.id && 
-            (!departmentId || (Array.isArray(u.departmentIds) && u.departmentIds.includes(departmentId)))
-        );
-        const mgr = allUsersFromApi.find(u => u.id === user.id);
-        const hasMgr = mgr ? employees.some(e => e.id === mgr.id) : true;
-        return hasMgr ? employees : [...employees, mgr!];
-    };
-
     const loadData = useCallback(async () => {
-        if (!user || user.role !== UserRole.MANAGER) return;
+        if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const allUsers = AuthService.getUsers();
-            const team = allUsers.filter(u => u.managerId === user.id);
-            setTeamMembers(team);
-
-            const teamMemberIds = team.map(tm => tm.id);
-
-            const [projects, allTasks] = await Promise.all([
-                DataService.getAllProjects(),
+            const [tasks, projects, allUsersFromApi] = await Promise.all([
                 DataService.getAllTasks(),
+                DataService.getAllProjects(),
+                DataService.getAllUsersFromApi(),
             ]);
-
+            
             setAllProjects(projects);
-
-            const managerAndTeamIds = new Set([user.id, ...teamMemberIds]);
-            const managerContextTasks = allTasks.filter(t => (t.assign_by === user.id) || (t.assigneeIds?.some(id => managerAndTeamIds.has(id))));
-
+            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
+            setAllEmployees(employees);
+            
             const projectsMap = new Map(projects.map(p => [p.id, p]));
-            const usersMap = new Map(allUsers.map(u => [u.id, u]));
-
-            const newHydratedTasks = managerContextTasks.map(task => ({
+            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
+    
+            const newHydratedTasks = tasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
                 assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
-
             
-
         } catch (error) {
-            console.error("Failed to load team task data:", error);
-            setHydratedTasks([]); // Clear tasks on error
+            console.error("Failed to load admin task data:", error);
         } finally {
             setIsLoading(false);
         }
@@ -114,16 +91,14 @@ const TeamTasks: React.FC = () => {
             const fetchDropdownData = async () => {
                 setDropdownsLoading(true);
                 try {
-                    const [depts, projs, users] = await Promise.all([
+                    const [depts, projs] = await Promise.all([
                         DataService.getDepartments(),
-                        DataService.getAllProjects(),
-                        DataService.getAllUsersFromApi(),
+                        DataService.getAllProjects()
                     ]);
                     setApiDepartments(depts);
                     setApiProjects(projs);
-                    setAllUsersFromApi(users);
-                    if (depts.length > 0) {
-                        setNewTaskData(prev => ({ ...prev, department: depts[0].id }));
+                     if (depts.length > 0) {
+                        setNewTaskData(prev => ({ ...prev, department: depts[0].name }));
                     }
                     if (projs.length > 0) {
                         setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
@@ -137,7 +112,7 @@ const TeamTasks: React.FC = () => {
             fetchDropdownData();
         }
     }, [isModalOpen]);
-
+    
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
         setIsModalOpen(false);
@@ -146,14 +121,7 @@ const TeamTasks: React.FC = () => {
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
-        setNewTaskData(prev => {
-            const next = { ...prev, [name]: value } as typeof prev;
-            if (name === 'department') {
-                const eligibleIds = new Set(eligibleEmployees(value).map(u => u.id).concat(user ? [user.id] : []));
-                next.assign_to = next.assign_to.filter(id => eligibleIds.has(id));
-            }
-            return next;
-        });
+        setNewTaskData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleCreateTask = async (e: React.FormEvent) => {
@@ -165,15 +133,13 @@ const TeamTasks: React.FC = () => {
         setSubmitError('');
         setIsSubmitting(true);
         try {
-            const departmentName = apiDepartments.find(d => d.id === newTaskData.department)?.name || newTaskData.department;
             const payload = {
                 ...newTaskData,
-                department: departmentName,
                 currentUserId: user.id
             };
             await DataService.createTask(payload);
             handleCloseModal();
-            loadData(); // Refresh the task list
+            loadData();
         } catch (error) {
             setSubmitError(error instanceof Error ? error.message : 'An unknown error occurred.');
         } finally {
@@ -182,12 +148,12 @@ const TeamTasks: React.FC = () => {
     };
     
     const handleRequestDelete = (taskId: string) => {
-        const task = filteredTasks.find(t => t.id === taskId);
+        const task = hydratedTasks.find(t => t.id === taskId);
         if (task) {
             setTaskToDelete({ id: task.id, name: task.name });
         }
     };
-    
+
     const handleConfirmDelete = async () => {
         if (!taskToDelete || !user) return;
         try {
@@ -200,7 +166,8 @@ const TeamTasks: React.FC = () => {
             setTaskToDelete(null);
         }
     };
-    
+
+
     const filteredTasks = useMemo(() => {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -211,26 +178,27 @@ const TeamTasks: React.FC = () => {
         });
     }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
-    if (user?.role !== UserRole.MANAGER) {
+    if (user?.role !== UserRole.ADMIN) {
         return <Navigate to="/" />;
     }
 
     if (isLoading) {
-        return <div className="text-center p-8">Loading team tasks...</div>;
+        return <div className="text-center p-8">Loading all tasks...</div>;
     }
 
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-slate-800">Team Tasks</h1>
+                <h1 className="text-3xl font-bold text-slate-800">All Tasks</h1>
                 <Button onClick={handleOpenModal}>Create New Task</Button>
             </div>
-            <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <div className="w-full md:w-auto md:flex-1"></div>
                 <div className="w-full md:w-64">
                     <ViewSwitcher view={view} setView={setView} />
                 </div>
             </div>
+
             <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <input
@@ -246,7 +214,7 @@ const TeamTasks: React.FC = () => {
                     </select>
                     <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Assignees</option>
-                        {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        {allEmployees.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Statuses</option>
@@ -256,9 +224,9 @@ const TeamTasks: React.FC = () => {
             </div>
 
             {filteredTasks.length === 0 ? (
-                 <div className="text-center py-8 text-slate-500 col-span-full">
+                <div className="text-center py-8 text-slate-500 col-span-full">
                     <h3 className="text-xl font-semibold text-slate-700">No Tasks Found</h3>
-                    <p className="text-slate-500 mt-2">No tasks were found for your team or there was an issue fetching them.</p>
+                    <p className="text-slate-500 mt-2">No tasks were found or there was an issue fetching them.</p>
                 </div>
             ) : view === 'card' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -331,7 +299,7 @@ const TeamTasks: React.FC = () => {
                     </table>
                 </div>
             )}
-            <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
+             <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateTask} className="space-y-4">
                     {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
                     <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
@@ -346,7 +314,7 @@ const TeamTasks: React.FC = () => {
                             <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
                             <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
+                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.name}>{d.name}</option>) : <option value="">No departments found</option>}
                             </select>
                         </div>
                         <div>
@@ -361,7 +329,7 @@ const TeamTasks: React.FC = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={e => setNewTaskData(prev => ({...prev, priority: e.target.value as 'low' | 'medium' | 'high'}))} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
                                 <option value="high">High</option>
@@ -372,15 +340,15 @@ const TeamTasks: React.FC = () => {
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
                         <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
-                            {eligibleEmployees().map(employee => (
+                            {allEmployees.map(employee => (
                                 <div key={employee.id} className="flex items-center">
                                     <input
-                                        id={`assignee-${employee.id}`}
+                                        id={`assignee-admin-${employee.id}`}
                                         type="checkbox"
                                         value={employee.id}
                                         checked={newTaskData.assign_to.includes(employee.id)}
                                         onChange={(e) => {
-                                            const { value, checked } = e.target as HTMLInputElement;
+                                            const { value, checked } = e.target;
                                             setNewTaskData(prev => ({
                                                 ...prev,
                                                 assign_to: checked
@@ -390,7 +358,7 @@ const TeamTasks: React.FC = () => {
                                         }}
                                         className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
                                     />
-                                    <label htmlFor={`assignee-${employee.id}`} className="ml-3 block text-sm text-slate-800">
+                                    <label htmlFor={`assignee-admin-${employee.id}`} className="ml-3 block text-sm text-slate-800">
                                         {employee.name}
                                     </label>
                                 </div>
@@ -398,7 +366,7 @@ const TeamTasks: React.FC = () => {
                         </div>
                     </div>
                     <div className="pt-4 flex justify-end space-x-3">
-                        <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
                             Cancel
                         </button>
                         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Creating...' : 'Create Task'}</Button>
@@ -422,6 +390,4 @@ const TeamTasks: React.FC = () => {
             </Modal>
         </div>
     );
-};
-
-export default TeamTasks;
+}

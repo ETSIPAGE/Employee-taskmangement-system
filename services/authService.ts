@@ -388,7 +388,6 @@ export const getManagers = (): User[] => {
     return users.filter(user => user.role === UserRole.MANAGER);
 };
 
-export const getToken = (): string | null => { // Added getToken function
+export const getToken = (): string | null => { 
     return localStorage.getItem(TOKEN_KEY);
 };
-//pz

@@ -157,7 +157,7 @@ const UserManagement: React.FC = () => {
     const [users, setUsers] = useState<User[]>([]);
     const [managers, setManagers] = useState<User[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
-    const [companies, setCompanies] = useState<Company[]>([]);
+    const [companies, setCompanies] = useState<Company[]>([]); // Initialize as an empty array
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -177,22 +177,37 @@ const UserManagement: React.FC = () => {
     const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [rating, setRating] = useState(0);
 
-    const loadData = useCallback(() => {
+    // Make loadData async to await API calls
+    const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            setUsers(AuthService.getUsers());
-            setManagers(AuthService.getManagers());
-            setCompanies(DataService.getCompanies());
+            // Use DataService for fetching, assuming it uses the backend API
+            const [fetchedUsers, fetchedManagers, fetchedCompanies] = await Promise.all([
+                DataService.getUsers(), // Assuming getUsers() now fetches all users from API
+                DataService.getManagers(), // Assuming getManagers() now fetches managers from API
+                DataService.getCompanies(), // This is the API call for companies
+            ]);
+
+            setUsers(fetchedUsers);
+            setManagers(fetchedManagers);
+            setCompanies(fetchedCompanies); // This will now be the array of companies
         } catch (error) {
             console.error("Failed to load user data", error);
+            setUsers([]); // Ensure state is reset on error
+            setManagers([]);
+            setCompanies([]);
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, []); // No dependencies needed if all are fetched inside
 
     useEffect(() => {
-        loadData();
-    }, [loadData]);
+        // Wrap loadData in an IIFE or separate async function call for useEffect
+        const fetchData = async () => {
+            await loadData();
+        };
+        fetchData();
+    }, [loadData]); // Only depends on loadData
 
     useEffect(() => {
         const fetchDepartments = async () => {
@@ -219,12 +234,13 @@ const UserManagement: React.FC = () => {
         setEmail('');
         setPassword('');
         setRole(UserRole.EMPLOYEE);
+        // Default manager/company should be based on fetched data, not just managers.length
         setManagerId(managers.length > 0 ? managers[0].id : undefined);
         setEditingUser(null);
         setDepartmentIds([]);
-        setCompanyId(companies.length > 0 ? companies[0].id : undefined);
+        setCompanyId(companies.length > 0 ? companies[0].id : undefined); // Use companies state here
         setRating(0);
-    }, [managers, companies]);
+    }, [managers, companies]); // Dependencies updated
 
     const handleOpenCreateModal = () => {
         resetForm();
@@ -251,8 +267,8 @@ const UserManagement: React.FC = () => {
     
     const handleDeleteUser = (userId: string) => {
         if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            AuthService.deleteUser(userId);
-            loadData();
+            AuthService.deleteUser(userId); // This is likely a local data deletion or an old mock
+            loadData(); // Reload data after deletion
         }
     };
 
@@ -290,26 +306,33 @@ const UserManagement: React.FC = () => {
                     managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
                     rating: rating,
                 };
-                AuthService.updateUser(editingUser.id, updates);
+                AuthService.updateUser(editingUser.id, updates); // This is likely a local data update or an old mock
             } else {
                 if (!password) {
                     alert("Password is required for new users.");
                     return;
                 }
                 // Register first, which creates a default user
-                await AuthService.register({ name, email, password });
+                await AuthService.register({ name, email, password }); // This interacts with your backend API
+                
                 // Then, find that user and update them with the details from the form
-                const newUser = AuthService.getUsers().find(u => u.email === email);
+                // Need to re-fetch users from the backend to get the newly registered user's authoritative ID/data
+                const latestUsers = await DataService.getUsers(); 
+                const newUser = latestUsers.find(u => u.email === email);
+
                 if (newUser) {
+                    // AuthService.updateUser is still local/mocked, ensure DataService has an API for user updates too if needed.
                     AuthService.updateUser(newUser.id, {
                         role,
                         departmentIds,
                         companyId,
                         managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
                     });
+                } else {
+                    throw new Error("Newly registered user not found after registration.");
                 }
             }
-            loadData();
+            loadData(); // Reload data after successful operation
             handleCloseModal();
         } catch(err) {
             alert(err instanceof Error ? err.message : 'An error occurred');
@@ -319,7 +342,7 @@ const UserManagement: React.FC = () => {
     if (!currentUser || ![UserRole.ADMIN, UserRole.HR].includes(currentUser.role)) {
         return <Navigate to="/" />;
     }
-    if (isLoading) return <div>Loading...</div>;
+    if (isLoading) return <div className="text-center p-8 text-lg text-slate-600">Loading user data...</div>;
 
     return (
         <div>

@@ -1,3 +1,5 @@
+// types.ts - Merged and Corrected
+
 export enum UserRole {
   ADMIN = 'Admin',
   MANAGER = 'Manager',
@@ -9,13 +11,13 @@ export interface Company {
   id: string;
   name: string;
   ownerId: string;
-  createdAt: string;
+  createdAt: string; // ISO string
 }
 
 export interface Department {
   id: string;
   name: string;
-  companyId: string;
+  companyId: string; // Department should have a single companyId
 }
 
 export interface UserStats {
@@ -80,7 +82,7 @@ export interface User {
   email: string;
   role: UserRole;
   companyId?: string;
-  managerId?: string;
+  managerId?: string; // This is the user's direct manager. Project has 'managerIds' for project-level managers.
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';
@@ -109,6 +111,7 @@ export enum TaskStatus {
 export enum MilestoneStatus {
     PENDING = 'Pending',
     IN_PROGRESS = 'In Progress',
+    ON_HOLD = 'On Hold', // Added from your local branch
     COMPLETED = 'Completed',
 }
 
@@ -122,16 +125,19 @@ export interface ProjectMilestone {
 }
 
 export interface Project {
-  id: string;
+  id: string;          // Partition Key (PK)
+  timestamp: string;   // Sort Key (SK) - Crucial for DynamoDB
   name: string;
   description?: string;
-  managerId: string;
+  managerIds?: string[]; // Multiple managers per project (aligned with dataService)
   departmentIds: string[];
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
+  // If a separate `createdAt` is needed apart from `timestamp`, add it here.
+  // createdAt?: string;
 }
 
 export interface TaskDependency {
@@ -160,7 +166,7 @@ export interface Task {
   description?: string;
   dueDate?: string;
   projectId: string;
-  assigneeIds?: string[];
+  assigneeIds?: string[]; // Allowing multiple assignees for tasks (aligned with dataService)
   assign_by?: string;
   status: TaskStatus;
   category?: string;
@@ -236,4 +242,3 @@ export interface OnboardingSubmission {
     status: OnboardingStatus;
     steps?: OnboardingStep[];
 }
-//pz
