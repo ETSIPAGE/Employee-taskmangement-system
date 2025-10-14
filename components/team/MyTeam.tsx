@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types';
-import * as AuthService from '../../services/authService';
+import * as DataService from '../../services/dataService';
 import { Navigate } from 'react-router-dom';
 import StarRating from '../shared/StarRating';
 
@@ -47,13 +47,14 @@ const MyTeam: React.FC = () => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetchTeamMembers = () => {
+        const fetchTeamMembers = async () => {
             if (user && user.role === UserRole.MANAGER) {
                 setLoading(true);
                 try {
-                    const allUsers = AuthService.getUsers();
-                    const members = allUsers.filter(u => u.managerId === user.id);
-                    setTeamMembers(members);
+                    const apiUsers = await DataService.getAllUsersFromApi();
+                    const me = apiUsers.find(u => u.id === user.id);
+                    const members = apiUsers.filter(u => u.role === UserRole.EMPLOYEE && u.managerId === user.id);
+                    setTeamMembers(me ? [me, ...members] : members);
                 } catch (error) {
                     console.error("Failed to fetch team members", error);
                 } finally {

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+
 import { Task, TaskStatus } from '../../types';
 import { ClockIcon, EditIcon, TrashIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
 
@@ -17,6 +18,7 @@ const TaskCard: React.FC<{
     onDelete?: (taskId: string) => void;
     onEdit?: (task: Task) => void;
 }> = ({ task, projectName, assigneeNames, onDelete, onEdit }) => {
+    const navigate = useNavigate();
 
     const statusStyles: Record<TaskStatus, string> = {
         [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800',
@@ -31,12 +33,21 @@ const TaskCard: React.FC<{
         high: 'bg-red-100 text-red-800',
     };
     
-    const handleDelete = () => {
+    const handleDelete = (e: React.MouseEvent) => {
+        e.stopPropagation();
         onDelete?.(task.id);
     };
 
+    const handleEdit = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onEdit?.(task);
+    };
+
     return (
-        <div className="bg-white rounded-lg shadow p-4 border border-slate-200 flex flex-col space-y-3">
+        <div
+            className="bg-white rounded-lg shadow p-4 border border-slate-200 flex flex-col space-y-3 cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => navigate(`/tasks/${task.id}`)}
+        >
             {/* Top Row */}
             <div className="flex justify-between items-center">
                 <span className="text-xs font-semibold text-slate-500">{projectName || task.category || 'General'}</span>
@@ -45,7 +56,7 @@ const TaskCard: React.FC<{
                         {task.status}
                     </span>
                      {onEdit && (
-                        <button onClick={() => onEdit(task)} className="text-slate-400 hover:text-slate-600">
+                        <button onClick={handleEdit} className="text-slate-400 hover:text-slate-600">
                             <EditIcon />
                         </button>
                     )}
@@ -54,7 +65,7 @@ const TaskCard: React.FC<{
 
             {/* Title & Description */}
             <div>
-                 <Link to={`/tasks/${task.id}`} className="hover:text-indigo-600 transition-colors">
+                <Link to={`/tasks/${task.id}`} className="hover:text-indigo-600 transition-colors">
                     <h4 className="font-bold text-slate-800 text-lg">{task.name}</h4>
                 </Link>
                 <p className="text-sm text-slate-600 mt-1 line-clamp-2">{task.description}</p>
