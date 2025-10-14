@@ -13,7 +13,7 @@ import Input from '../shared/Input';
 
 interface HydratedTask extends Task {
     projectName: string;
-    assigneeName: string;
+    assigneeNames: string[];
 }
 
 const TeamTasks: React.FC = () => {
@@ -40,7 +40,7 @@ const TeamTasks: React.FC = () => {
         due_date: '',
         priority: 'medium' as 'low' | 'medium' | 'high',
         est_time: '',
-        assign_to: ''
+        assign_to: [] as string[]
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -81,7 +81,7 @@ const TeamTasks: React.FC = () => {
             const newHydratedTasks = teamTasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
-                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+                assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
             
@@ -123,12 +123,6 @@ const TeamTasks: React.FC = () => {
             fetchDropdownData();
         }
     }, [isModalOpen]);
-
-    useEffect(() => {
-        if (teamMembers.length > 0 && !newTaskData.assign_to) {
-            setNewTaskData(prev => ({...prev, assign_to: teamMembers[0].id}));
-        }
-    }, [teamMembers, newTaskData.assign_to]);
 
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
@@ -188,7 +182,7 @@ const TeamTasks: React.FC = () => {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
-            const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
+            const assigneeMatch = assigneeFilter === 'all' || task.assigneeIds?.includes(assigneeFilter);
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
@@ -249,7 +243,7 @@ const TeamTasks: React.FC = () => {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            assigneeName={task.assigneeName}
+                            assigneeNames={task.assigneeNames}
                             projectName={task.projectName}
                             onDelete={handleRequestDelete}
                         />
@@ -278,7 +272,7 @@ const TeamTasks: React.FC = () => {
                                     <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeNames.join(', ')}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
@@ -360,11 +354,31 @@ const TeamTasks: React.FC = () => {
 
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                             {teamMembers.map(employee => (
-                                <option key={employee.id} value={employee.id}>{employee.name}</option>
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                            {(user ? [...teamMembers, user] : teamMembers).map(employee => (
+                                <div key={employee.id} className="flex items-center">
+                                    <input
+                                        id={`assignee-${employee.id}`}
+                                        type="checkbox"
+                                        value={employee.id}
+                                        checked={newTaskData.assign_to.includes(employee.id)}
+                                        onChange={(e) => {
+                                            const { value, checked } = e.target;
+                                            setNewTaskData(prev => ({
+                                                ...prev,
+                                                assign_to: checked
+                                                    ? [...prev.assign_to, value]
+                                                    : prev.assign_to.filter(id => id !== value)
+                                            }));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`assignee-${employee.id}`} className="ml-3 block text-sm text-slate-800">
+                                        {employee.name} {employee.id === user?.id && '(Me)'}
+                                    </label>
+                                </div>
                             ))}
-                        </select>
+                        </div>
                     </div>
 
                     <div className="pt-4 flex justify-end space-x-3">

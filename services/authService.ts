@@ -387,7 +387,3 @@ export const getManagers = (): User[] => {
     const users = getUsers();
     return users.filter(user => user.role === UserRole.MANAGER);
 };
-
-export const getToken = (): string | null => { // Added getToken function
-    return localStorage.getItem(TOKEN_KEY);
-};

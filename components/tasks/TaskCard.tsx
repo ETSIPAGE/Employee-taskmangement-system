@@ -1,15 +1,22 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Task, TaskStatus, User } from '../../types';
+import { Task, TaskStatus } from '../../types';
 import { ClockIcon, EditIcon, TrashIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
+
+const getInitials = (name: string) => {
+    if (!name) return '?';
+    const names = name.split(' ');
+    if (names.length > 1) return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
+    return name.substring(0, 2).toUpperCase();
+};
 
 const TaskCard: React.FC<{
     task: Task;
     projectName?: string;
-    assigneeName?: string;
+    assigneeNames?: string[];
     onDelete?: (taskId: string) => void;
     onEdit?: (task: Task) => void;
-}> = ({ task, projectName, assigneeName, onDelete, onEdit }) => {
+}> = ({ task, projectName, assigneeNames, onDelete, onEdit }) => {
 
     const statusStyles: Record<TaskStatus, string> = {
         [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800',
@@ -87,11 +94,24 @@ const TaskCard: React.FC<{
 
             {/* Bottom Row */}
             <div className="flex justify-between items-center">
-                <div className="flex items-center">
-                    <UserCircleIcon className="h-5 w-5 text-slate-400" />
-                    <span className="ml-2 text-sm font-medium text-slate-700">
-                        {assigneeName || 'Unassigned'}
-                    </span>
+                <div className="flex items-center -space-x-2">
+                    {(assigneeNames && assigneeNames.length > 0) ? (
+                        assigneeNames.slice(0, 3).map((name, index) => (
+                            <div key={index} title={name} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs ring-2 ring-white">
+                                {getInitials(name)}
+                            </div>
+                        ))
+                    ) : (
+                        <div className="flex items-center">
+                            <UserCircleIcon className="h-5 w-5 text-slate-400" />
+                            <span className="ml-2 text-sm font-medium text-slate-700">Unassigned</span>
+                        </div>
+                    )}
+                    {assigneeNames && assigneeNames.length > 3 && (
+                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xs ring-2 ring-white">
+                            +{assigneeNames.length - 3}
+                        </div>
+                    )}
                 </div>
                 
                 <div className="flex items-center space-x-2">

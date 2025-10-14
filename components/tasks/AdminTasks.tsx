@@ -13,7 +13,7 @@ import Input from '../shared/Input';
 
 interface HydratedTask extends Task {
     projectName: string;
-    assigneeName: string;
+    assigneeNames: string[];
 }
 
 export default function AdminTasks() {
@@ -38,9 +38,9 @@ export default function AdminTasks() {
         title: '',
         description: '',
         due_date: '',
-        priority: 'medium',
+        priority: 'medium' as 'low' | 'medium' | 'high',
         est_time: '',
-        assign_to: ''
+        assign_to: [] as string[]
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -55,23 +55,23 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const [tasks, projects, allUsers] = await Promise.all([ // Renamed to allUsers here
+            const [tasks, projects, allUsersFromApi] = await Promise.all([
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
-                DataService.getUsers(), // Corrected: Use DataService.getUsers()
+                DataService.getAllUsersFromApi(),
             ]);
             
             setAllProjects(projects);
-            const employees = allUsers.filter(u => u.role === UserRole.EMPLOYEE);
+            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
             setAllEmployees(employees);
             
             const projectsMap = new Map(projects.map(p => [p.id, p]));
-            const usersMap = new Map(allUsers.map(u => [u.id, u]));
+            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
     
             const newHydratedTasks = tasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
-                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+                assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
             
@@ -113,12 +113,6 @@ export default function AdminTasks() {
         }
     }, [isModalOpen]);
     
-     useEffect(() => {
-        if (allEmployees.length > 0 && !newTaskData.assign_to) {
-            setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
-        }
-    }, [allEmployees, newTaskData.assign_to]);
-
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
         setIsModalOpen(false);
@@ -178,7 +172,7 @@ export default function AdminTasks() {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
-            const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
+            const assigneeMatch = assigneeFilter === 'all' || task.assigneeIds?.includes(assigneeFilter);
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
@@ -220,7 +214,7 @@ export default function AdminTasks() {
                     </select>
                     <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Assignees</option>
-                        {allEmployees.map((m: User) => <option key={m.id} value={m.id}>{m.name}</option>)} {/* Explicitly cast to User */}
+                        {allEmployees.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Statuses</option>
@@ -240,7 +234,7 @@ export default function AdminTasks() {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            assigneeName={task.assigneeName}
+                            assigneeNames={task.assigneeNames}
                             projectName={task.projectName}
                             onDelete={handleRequestDelete}
                         />
@@ -269,7 +263,7 @@ export default function AdminTasks() {
                                     <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
-                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeNames.join(', ')}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                             <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>{task.status}</span>
@@ -335,7 +329,7 @@ export default function AdminTasks() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
-                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={e => setNewTaskData(prev => ({...prev, priority: e.target.value as 'low' | 'medium' | 'high'}))} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
                                 <option value="low">Low</option>
                                 <option value="medium">Medium</option>
                                 <option value="high">High</option>
@@ -345,11 +339,31 @@ export default function AdminTasks() {
                     </div>
                     <div>
                         <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                            {allEmployees.map((employee: User) => ( // Explicitly cast to User
-                                <option key={employee.id} value={employee.id}>{employee.name}</option>
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                            {allEmployees.map(employee => (
+                                <div key={employee.id} className="flex items-center">
+                                    <input
+                                        id={`assignee-admin-${employee.id}`}
+                                        type="checkbox"
+                                        value={employee.id}
+                                        checked={newTaskData.assign_to.includes(employee.id)}
+                                        onChange={(e) => {
+                                            const { value, checked } = e.target;
+                                            setNewTaskData(prev => ({
+                                                ...prev,
+                                                assign_to: checked
+                                                    ? [...prev.assign_to, value]
+                                                    : prev.assign_to.filter(id => id !== value)
+                                            }));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`assignee-admin-${employee.id}`} className="ml-3 block text-sm text-slate-800">
+                                        {employee.name}
+                                    </label>
+                                </div>
                             ))}
-                        </select>
+                        </div>
                     </div>
                     <div className="pt-4 flex justify-end space-x-3">
                          <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">

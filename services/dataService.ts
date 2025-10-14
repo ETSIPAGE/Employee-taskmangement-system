@@ -1,17 +1,11 @@
-// services/dataService.ts
+
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
-import { getToken } from './authService';
 
-const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
-const ATTENDANCE_GET_BY_DATE_URL = 'https://onp8l5se9i.execute-api.ap-south-1.amazonaws.com/dev/get-attendance-by-date';
-const ATTENDANCE_GET_BY_USER_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-user';
-const ATTENDANCE_RECORD_ACTION_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/ETS-record-attendance-action';
-
-// Project API Endpoints (as defined in Projects.tsx initially, centralized here)
-const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
-const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects';
-const PROJECTS_DELETE_API_URL = 'https://xiwwdxpjx4.execute-api.ap-south-1.amazonaws.com/det/del-project';
-const PROJECTS_UPDATE_API_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.amazonaws.com/udt/updt-project'; // NO {id} here
+// --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
+// Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
+let COMPANIES: Company[] = [
+    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
+];
 
 let CONVERSATIONS: ChatConversation[] = [
     { id: 'conv-1', type: 'group', name: 'Project Marketing', participantIds: ['2', '3', '4', '5'], adminIds: ['2'] },
@@ -39,50 +33,68 @@ let ONBOARDING_SUBMISSIONS: OnboardingSubmission[] = [
 ];
 export const DEFAULT_ONBOARDING_STEPS: string[] = [ 'Review Application', 'Verify Documents', 'Background Check', 'Send Offer Letter', 'Prepare Welcome Kit', 'Assign Manager & Team', 'Setup IT Accounts', ];
 
-const today = new Date();
-const year = today.getFullYear();
-const month = (today.getMonth() + 1).toString().padStart(2, '0');
-const ATTENDANCE_DATA: Record<string, string[]> = {
-    [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
-};
+// --- API BASED DATA SERVICE ---
+const ATTENDANCE_API_BASE_URL = 'https://onp8l5se9i.execute-api.ap-south-1.amazonaws.com/dev';
 
-// --- MODIFIED: authenticatedFetch, remains as is, as it's already correct ---
+// Helper to add auth token to requests
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-    const token = getToken(); // Gets the token here
+    const token = localStorage.getItem('ets_token');
     const headers = new Headers(options.headers || {});
-    if (!headers.has('Content-Type')) {
+    if (!headers.has('Content-Type') && options.method !== 'GET' && options.method !== 'HEAD') {
         headers.set('Content-Type', 'application/json');
     }
     if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
+        headers.set('Authorization', token);
     }
     return fetch(url, { ...options, headers });
 };
 
+
+// Helper to parse AWS API Gateway responses more robustly
 const parseApiResponse = async (response: Response) => {
+    const responseText = await response.text();
     if (!response.ok) {
-        let errorText = await response.text();
+        // Try to parse the error response as JSON, but fall back to text.
+        let errorMessage = responseText;
         try {
-            const errorJson = JSON.parse(errorText);
-            errorText = errorJson.message || JSON.stringify(errorJson);
+            const errorJson = JSON.parse(responseText);
+            errorMessage = errorJson.message || JSON.stringify(errorJson);
         } catch (e) {
-            // Not JSON, use raw text
+            // Not a JSON error response, use the text.
         }
-        console.error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
-        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorMessage}`);
     }
-    const data = await response.json();
-    if (typeof data.body === 'string') {
-        try {
-            return JSON.parse(data.body);
-        } catch (e) {
-            console.error("Failed to parse API response body:", e);
-            throw new Error("Invalid JSON in API response body.");
+    
+    // Handle empty successful responses
+    if (!responseText) {
+        return null;
+    }
+
+    try {
+        const data = JSON.parse(responseText);
+        
+        // This logic is to handle AWS Lambda Proxy integration responses where the actual content is in a stringified `body`.
+        if (data && typeof data.body === 'string') {
+            try {
+                // If body is a string, it's likely JSON that needs to be parsed again.
+                return JSON.parse(data.body);
+            } catch (e) {
+                // If parsing the body fails, it might just be a simple string message.
+                return data.body;
+            }
         }
+        
+        // This handles cases where the API returns a direct JSON object (not wrapped in a proxy response).
+        return data;
+    } catch (e) {
+        // This handles cases where the API returns a non-JSON string response on success (e.g., just "OK").
+        console.warn("API response was not valid JSON, returning as text:", responseText);
+        return responseText;
     }
-    return data;
 };
 
+
+// Helper to robustly extract an array from a potentially nested API response.
 const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
     if (Array.isArray(data)) {
         return data;
@@ -94,26 +106,24 @@ const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
                 return data[key];
             }
         }
+        // Fallback: find first array property in the object
         const arrayValue = Object.values(data).find(value => Array.isArray(value));
         if (arrayValue && Array.isArray(arrayValue)) {
             return arrayValue;
         }
     }
     console.warn(`Could not extract array from API response for key "${primaryKey}". Response was:`, data);
-    return [];
+    return []; // Return empty array to prevent crashes
 }
 
+
+// Caching mechanism
 let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
 let cachedAllUsers: User[] | null = null;
-let cachedManagers: User[] | null = null;
-let cachedCompanies: Company[] | null = null;
 
-// Retry constants for eventual consistency
-const MAX_RETRIES = 3; 
-const RETRY_DELAY_MS = 500; // milliseconds
-
+// Helper to map API user to frontend User
 const mapApiUserToUser = (apiUser: any): User => {
     const roleString = apiUser.role || 'employee';
     let role: UserRole;
@@ -133,17 +143,14 @@ const mapApiUserToUser = (apiUser: any): User => {
         name: apiUser.name,
         email: apiUser.email,
         role: role,
-        companyId: (Array.isArray(apiUser.companyIds) && apiUser.companyIds.length > 0
-                    ? String(apiUser.companyIds[0])
-                    : String(apiUser.companyId || apiUser.company_id || apiUser.company || apiUser.organizationId || 'default-company-id')
-                   ).toLowerCase().trim(),
+        companyId: apiUser.companyId,
         managerId: apiUser.managerId,
-        departmentIds: Array.isArray(apiUser.departmentIds) ? apiUser.departmentIds : (typeof apiUser.departmentIds === 'string' ? [apiUser.departmentIds] : []),
+        departmentIds: apiUser.departmentIds || [],
         jobTitle: apiUser.jobTitle,
         status: apiUser.status || 'Offline',
         joinedDate: apiUser.joinedDate || new Date().toISOString(),
         skills: apiUser.skills || [],
-        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' },
+        stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' }, // Default stats
         rating: apiUser.rating,
         personalDetails: apiUser.personalDetails,
         contactNumber: apiUser.contactNumber,
@@ -155,140 +162,118 @@ const mapApiUserToUser = (apiUser: any): User => {
     };
 };
 
-export const getUsers = async (): Promise<User[]> => {
+export const getAllUsersFromApi = async (): Promise<User[]> => {
     if (cachedAllUsers) return cachedAllUsers;
 
-    try {
-        const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
-        const data = await parseApiResponse(response);
-        const usersFromApi = extractArrayFromApiResponse(data, 'users');
-        
-        cachedAllUsers = usersFromApi.map(mapApiUserToUser);
-        return cachedAllUsers;
-    } catch (error) {
-        console.error("Failed to fetch all users:", error);
-        return [];
-    }
+    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+    const data = await parseApiResponse(response);
+    const usersFromApi = extractArrayFromApiResponse(data, 'users');
+    
+    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+    return cachedAllUsers;
 };
 
-export const getUserById = async (userId: string): Promise<User | undefined> => {
-    const allUsers = await getUsers();
+export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
+    const allUsers = await getAllUsersFromApi();
     return allUsers.find(u => u.id === userId);
 };
 
-export const getEmployees = async (): Promise<User[]> => {
-    const allUsers = await getUsers();
+// --- EMPLOYEES from API ---
+export const getEmployeesFromApi = async (): Promise<User[]> => {
+    const allUsers = await getAllUsersFromApi();
     return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
 };
 
-export const getManagers = async (): Promise<User[]> => {
-    if (cachedManagers) return cachedManagers;
 
-    const allUsers = await getUsers();
-    cachedManagers = allUsers.filter(user => user.role === UserRole.MANAGER);
-    return cachedManagers;
-};
-
-export const getManagersByDepartments = async (departmentIds: string[]): Promise<User[]> => {
-    if (departmentIds.length === 0) return [];
-    
-    try {
-        const allUsers = await getUsers();
-
-        const managersInDepts = allUsers.filter(user => 
-            user.role === UserRole.MANAGER && 
-            user.departmentIds &&
-            user.departmentIds.some(deptId => departmentIds.includes(deptId))
-        );
-        return managersInDepts;
-    } catch (error) {
-        console.error("Failed to fetch managers by departments:", error);
-        return [];
-    }
-};
-
+// --- TASKS ---
+/**
+ * Maps an API status string to the application's TaskStatus enum.
+ * This is designed to be flexible and handle variations in the API response.
+ * @param apiStatus The status string from the API (e.g., "In Progress", "in-progress", "todo").
+ * @returns The corresponding TaskStatus enum value.
+ */
 const mapApiStatusToTaskStatus = (apiStatus?: string): TaskStatus => {
-    if (!apiStatus) {
-        return TaskStatus.TODO;
-    }
+    if (!apiStatus) return TaskStatus.TODO;
+    
+    // Normalize by removing spaces and hyphens, and converting to lowercase.
     const normalized = apiStatus.toLowerCase().replace(/[\s-]+/g, '');
 
-    if (normalized.includes('inprogress')) {
-        return TaskStatus.IN_PROGRESS;
-    }
-    if (normalized.includes('onhold')) {
-        return TaskStatus.ON_HOLD;
-    }
-    if (normalized.includes('completed')) {
-        return TaskStatus.COMPLETED;
-    }
-    if (normalized.includes('todo')) {
-        return TaskStatus.TODO;
-    }
+    if (normalized.includes('inprogress')) return TaskStatus.IN_PROGRESS;
+    if (normalized.includes('onhold')) return TaskStatus.ON_HOLD;
+    if (normalized.includes('completed')) return TaskStatus.COMPLETED;
+    if (normalized.includes('todo')) return TaskStatus.TODO;
     
     console.warn(`Unknown task status from API: "${apiStatus}". Defaulting to To-Do.`);
     return TaskStatus.TODO;
 };
 
+/**
+ * Fetches all tasks from the API.
+ * This implementation is robustly designed to handle various AWS API Gateway response formats.
+ */
 export const getAllTasks = async (): Promise<Task[]> => {
+    // Return cached tasks if available to improve performance and avoid redundant API calls.
+    if (cachedTasks) return cachedTasks;
+
     try {
-        const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
+        // Use a standard fetch for this public endpoint to avoid potential header issues.
+        const response = await fetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks');
+
         if (!response.ok) {
             const errorText = await response.text();
+            console.error("Task API Error Response:", errorText);
             throw new Error(`API request for tasks failed: ${response.status} ${response.statusText}`);
         }
 
         const responseData = await response.json();
         
         let tasksFromApi: any[];
+
+        // Handle different possible response structures from AWS API Gateway.
         if (responseData.body && typeof responseData.body === 'string') {
-            try {
-                tasksFromApi = JSON.parse(responseData.body);
-            } catch (e) {
-                tasksFromApi = [];
-            }
+            // Case 1: Body is a stringified JSON array.
+            tasksFromApi = JSON.parse(responseData.body);
         } else if (Array.isArray(responseData.body)) {
+            // Case 2: Body is already a JSON array.
             tasksFromApi = responseData.body;
         } else if (Array.isArray(responseData)) {
+            // Case 3: The entire response is the JSON array.
             tasksFromApi = responseData;
         } else if (responseData.Tasks && Array.isArray(responseData.Tasks)) {
+             // Case 4: The response is an object with a "Tasks" key
             tasksFromApi = responseData.Tasks;
         } else {
+            // Fallback: Try to find any array within the response object.
             tasksFromApi = extractArrayFromApiResponse(responseData, 'Tasks');
         }
 
         if (!Array.isArray(tasksFromApi)) {
-            return [];
-        }
-
-        if (tasksFromApi.length === 0) {
-            return [];
+            console.error("Final processed task data is not an array:", tasksFromApi);
+            return []; // Return an empty array to prevent crashes.
         }
         
-        const mappedTasks = tasksFromApi.map((task: any): Task => {
-            const mappedTaskStatus = mapApiStatusToTaskStatus(task.status);
-            return ({
-                id: task.id,
-                name: task.title,
-                description: task.description,
-                dueDate: task.due_date,
-                projectId: task.project,
-                assigneeId: task.assign_to,
-                assign_by: task.assign_by,
-                status: mappedTaskStatus,
-                priority: task.priority,
-                estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
-            });
-        });
+        // Map the raw API task objects to the application's Task type.
+        cachedTasks = tasksFromApi.map((task: any): Task => ({
+            id: task.id,
+            name: task.title,
+            description: task.description,
+            dueDate: task.due_date,
+            projectId: task.project,
+            assigneeIds: Array.isArray(task.assign_to) ? task.assign_to : (task.assign_to ? [task.assign_to] : []),
+            assign_by: task.assign_by,
+            status: mapApiStatusToTaskStatus(task.status),
+            priority: task.priority,
+            estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
+        }));
         
-        cachedTasks = mappedTasks;
-        return mappedTasks;
+        return cachedTasks;
 
     } catch (error) {
-        console.error("DataService: A critical error occurred while fetching tasks:", error);
-        return [];
+        console.error("A critical error occurred while fetching tasks:", error);
+        return []; // Return an empty array on failure to prevent the app from crashing.
     }
 };
+
 
 export const createTask = async (taskData: any): Promise<Task> => {
     const response = await authenticatedFetch('https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task', {
@@ -300,6 +285,7 @@ export const createTask = async (taskData: any): Promise<Task> => {
         throw new Error(errorData.message || 'Failed to create task.');
     }
     
+    // Invalidate cache
     cachedTasks = null;
     const responseData = await response.json();
     const createdTaskData = responseData.Task.Item;
@@ -310,9 +296,9 @@ export const createTask = async (taskData: any): Promise<Task> => {
         description: createdTaskData.description,
         dueDate: createdTaskData.due_date,
         projectId: createdTaskData.project,
-        assigneeId: createdTaskData.assign_to,
+        assigneeIds: createdTaskData.assign_to,
         assign_by: createdTaskData.assign_by,
-        status: mapApiStatusToTaskStatus(createdTaskData.status),
+        status: createdTaskData.status,
         priority: createdTaskData.priority,
         estimatedTime: createdTaskData.est_time ? parseInt(createdTaskData.est_time, 10) : undefined,
     };
@@ -333,23 +319,23 @@ export const getTasksByProject = async (projectId: string): Promise<Task[]> => {
 export const getTasksByTeam = async (teamMemberIds: string[]): Promise<Task[]> => {
     const tasks = await getAllTasks();
     const teamSet = new Set(teamMemberIds);
-    return tasks.filter(t => (t.assigneeId && teamSet.has(t.assigneeId)));
+    return tasks.filter(t => t.assigneeIds?.some(id => teamSet.has(id)));
 };
 
 export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> => {
     const tasks = await getAllTasks();
-    return tasks.filter(t => t.assigneeId === assigneeId);
+    return tasks.filter(t => t.assigneeIds?.includes(assigneeId));
 };
 
-export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeId?: string | undefined }, currentUserId: string): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string } = {
+export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeIds?: string[] }, currentUserId: string): Promise<Task> => {
+    const payload: { currentUserId: string; status?: TaskStatus; assign_to?: string[] } = {
         currentUserId: currentUserId,
     };
     if (updates.status) {
         payload.status = updates.status;
     }
-    if (updates.hasOwnProperty('assigneeId')) {
-        payload.assign_to = updates.assigneeId || '';
+    if (updates.hasOwnProperty('assigneeIds')) {
+        payload.assign_to = updates.assigneeIds || [];
     }
 
     const endpointUrl = `https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task/${taskId}`;
@@ -366,11 +352,12 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
             const errorJson = JSON.parse(errorBody);
             errorMessage = errorJson.message || errorBody;
         } catch (e) {
+            // The response was not JSON, which is fine. The text itself might be the error.
         }
         throw new Error(errorMessage);
     }
     
-    cachedTasks = null; // Invalidate cache after update
+    cachedTasks = null; // Invalidate cache to force a refresh on next load
     
     const responseData = await response.json();
     const updatedTaskData = responseData.Task;
@@ -381,9 +368,9 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         description: updatedTaskData.description,
         dueDate: updatedTaskData.due_date,
         projectId: updatedTaskData.project,
-        assigneeId: updatedTaskData.assign_to,
+        assigneeIds: Array.isArray(updatedTaskData.assign_to) ? updatedTaskData.assign_to : (updatedTaskData.assign_to ? [updatedTaskData.assign_to] : []),
         assign_by: updatedTaskData.assign_by,
-        status: mapApiStatusToTaskStatus(updatedTaskData.status),
+        status: updatedTaskData.status,
         priority: updatedTaskData.priority,
         estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
         notes: updatedTaskData.notes,
@@ -396,6 +383,7 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
     return mappedTask;
 };
 
+// Optimistic local update for data not handled by the API, e.g., notes.
 export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task | undefined => {
     if (cachedTasks) {
         const taskIndex = cachedTasks.findIndex(t => t.id === taskId);
@@ -406,6 +394,7 @@ export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task 
     }
     return undefined;
 };
+
 
 export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
     const response = await authenticatedFetch(`https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task/${taskId}`, {
@@ -425,70 +414,40 @@ export const deleteTask = async (taskId: string, currentUserId: string): Promise
         throw new Error(errorMessage);
     }
     
+    // Invalidate cache
     cachedTasks = null;
 };
 
+
+// --- PROJECTS ---
 export const getAllProjects = async (): Promise<Project[]> => {
     if (cachedProjects) return cachedProjects;
-    try {
-        const response = await authenticatedFetch(PROJECTS_GET_ALL_API_URL); // Use centralized URL
-        const data = await parseApiResponse(response);
-        const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
-        cachedProjects = projectsFromApi.map((proj: any): Project => ({
-            id: proj.id,
-            name: proj.name,
-            description: proj.description,
-            managerIds: Array.isArray(proj.manager_ids)
-                        ? proj.manager_ids.map((id: string) => String(id).trim())
-                        : (typeof proj.manager_id === 'string' && proj.manager_id)
-                            ? [String(proj.manager_id).trim()]
-                            : [],
-            departmentIds: (Array.isArray(proj.departmentIds) && proj.departmentIds.length > 0
-                            ? proj.departmentIds.map((id: string) => String(id).toLowerCase().trim())
-                            : Array.isArray(proj.department_ids) && proj.department_ids.length > 0
-                                ? proj.department_ids.map((id: string) => String(id).toLowerCase().trim())
-                                : (typeof proj.departmentId === 'string' && proj.departmentId)
-                                    ? [String(proj.departmentId).toLowerCase().trim()]
-                                    : []
-                           ),
-            deadline: proj.deadline,
-            priority: proj.priority,
-            estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
-            companyId: String(proj.companyId || proj.company_id || proj.company || 'default-company-id').toLowerCase().trim(),
-            roadmap: proj.roadmap || [],
-            timestamp: proj.timestamp || new Date().toISOString(),
-        }));
-        return cachedProjects;
-    } catch (error) {
-        console.error("Failed to fetch all projects:", error);
-        return [];
-    }
+    const response = await authenticatedFetch('https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects');
+    const data = await parseApiResponse(response);
+    const projectsFromApi = extractArrayFromApiResponse(data, 'projects');
+    cachedProjects = projectsFromApi.map((proj: any): Project => ({
+        id: proj.id,
+        name: proj.name,
+        description: proj.description,
+        managerId: proj.manager_id,
+        departmentIds: Array.isArray(proj.department_ids) ? proj.department_ids : [],
+        deadline: proj.deadline,
+        priority: proj.priority,
+        estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
+        companyId: proj.company_id || 'comp-1',
+        roadmap: proj.roadmap || [],
+    }));
+    return cachedProjects;
 };
 
-// --- Modified getProjectById with retry logic ---
-export const getProjectById = async (id: string, attempt = 0): Promise<Project | undefined> => {
-    const projects = await getAllProjects(); // This call will use/update the cache as necessary
-    const foundProject = projects.find(p => p.id === id);
-
-    if (foundProject) {
-        return foundProject;
-    }
-
-    if (attempt < MAX_RETRIES) {
-        console.warn(`[DataService] Project ${id} not found on attempt ${attempt + 1}. Retrying in ${RETRY_DELAY_MS}ms...`);
-        cachedProjects = null; // Invalidate cache before next attempt to force a fresh fetch
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-        return getProjectById(id, attempt + 1); // Recursive retry with incremented attempt
-    }
-
-    console.error(`[DataService] Project ${id} not found after ${MAX_RETRIES} attempts.`);
-    return undefined;
+export const getProjectById = async (id: string): Promise<Project | undefined> => {
+    const projects = await getAllProjects();
+    return projects.find(p => p.id === id);
 };
 
-// --- Important: This getProjectsByManager is fine as it filters from cached/all projects ---
 export const getProjectsByManager = async (managerId: string): Promise<Project[]> => {
-    const projects = await getAllProjects(); // Fetches all then filters
-    return projects.filter(p => p.managerIds && p.managerIds.includes(managerId));
+    const projects = await getAllProjects();
+    return projects.filter(p => p.managerId === managerId);
 };
 
 export const getProjectsByCompany = async (companyId: string): Promise<Project[]> => {
@@ -498,191 +457,45 @@ export const getProjectsByCompany = async (companyId: string): Promise<Project[]
 
 export const getProjectsByDepartment = async (departmentId: string): Promise<Project[]> => {
     const projects = await getAllProjects();
-    return projects.filter(p => p.departmentIds && p.departmentIds.includes(departmentId));
+    return projects.filter(p => p.departmentIds.includes(departmentId));
 };
 
-export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp'>): Promise<Project> => {
-    const newProjectTimestamp = new Date().toISOString(); 
-
-    const payload = {
-        ...projectData,
-        manager_ids: projectData.managerIds,
-        department_ids: projectData.departmentIds,
-        company_id: projectData.companyId, 
-        id: `proj-${Date.now()}`, 
-        timestamp: newProjectTimestamp, 
-    };
-    
-    const response = await authenticatedFetch(PROJECTS_CREATE_API_URL, { // Use centralized URL
-        method: 'POST',
-        body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create project.');
+export const createProject = (projectData: Omit<Project, 'id'>): Project => {
+    // Optimistic update as no API provided
+    const newProject: Project = { ...projectData, id: `proj-${Date.now()}`};
+    if (cachedProjects) {
+        cachedProjects.unshift(newProject);
+    } else {
+        cachedProjects = [newProject];
     }
-
-    cachedProjects = null; // Ensure cache is invalidated after creation
-    const responseData = await parseApiResponse(response);
-    const createdProjectData = responseData.Project?.Item || responseData.Item || responseData; // More robust parsing
-
-    const newProject: Project = {
-        id: createdProjectData.id,
-        name: createdProjectData.name,
-        description: createdProjectData.description,
-        managerIds: Array.isArray(createdProjectData.manager_ids)
-                    ? createdProjectData.manager_ids.map((id: string) => String(id).trim())
-                    : (typeof createdProjectData.manager_id === 'string' && createdProjectData.manager_id)
-                        ? [String(createdProjectData.manager_id).trim()]
-                        : [],
-        departmentIds: (Array.isArray(createdProjectData.departmentIds) && createdProjectData.departmentIds.length > 0
-                            ? createdProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
-                            : Array.isArray(createdProjectData.department_ids) && createdProjectData.department_ids.length > 0
-                                ? createdProjectData.department_ids.map((id: string) => String(id).toLowerCase().trim())
-                                : (typeof createdProjectData.departmentId === 'string' && createdProjectData.departmentId)
-                                    ? [String(createdProjectData.departmentId).toLowerCase().trim()]
-                                    : []
-                           ),
-        deadline: createdProjectData.deadline,
-        priority: createdProjectData.priority,
-        estimatedTime: createdProjectData.estimated_time ? parseInt(createdProjectData.estimated_time, 10) : undefined,
-        companyId: String(createdProjectData.companyId || createdProjectData.company_id || createdProjectData.company || 'default-company-id').toLowerCase().trim(),
-        roadmap: createdProjectData.roadmap || [],
-        timestamp: createdProjectData.timestamp,
-    };
-    
     return newProject;
 };
 
-// --- MODIFIED updateProject in dataService.ts (removed token param) ---
-export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
-    // No need to get token here, authenticatedFetch handles it.
-
-    // Map frontend Project fields to backend API expected fields
-    const updateFields: any = {};
-    if (updates.name !== undefined) updateFields.name = updates.name;
-    if (updates.description !== undefined) updateFields.description = updates.description;
-    if (updates.managerIds !== undefined) updateFields.manager_ids = updates.managerIds; // Backend expects manager_ids
-    if (updates.departmentIds !== undefined) updateFields.department_ids = updates.departmentIds; // Backend expects department_ids
-    if (updates.deadline !== undefined) updateFields.deadline = updates.deadline;
-    if (updates.priority !== undefined) updateFields.priority = updates.priority;
-    if (updates.estimatedTime !== undefined) updateFields.estimated_time = updates.estimatedTime; // Backend expects estimated_time
-    if (updates.companyId !== undefined) updateFields.company_id = updates.companyId; // Backend expects company_id
-    if (updates.roadmap !== undefined) updateFields.roadmap = updates.roadmap;
-    // If your backend has a dedicated 'status' field that corresponds to overallStatus, add it here:
-    // For example: if ((updates as any).status !== undefined) updateFields.status = (updates as any).status;
-
-    const requestBodyForLambda = {
-        id: projectId,
-        timestamp: projectTimestamp, // Crucial for DynamoDB conditional update
-        updateFields: updateFields,
-    };
-
-    console.log(`[DataService] Calling updateProject API for ${projectId}. Payload:`, JSON.stringify(requestBodyForLambda));
-
-    // Authenticated fetch will automatically add the token
-    const response = await authenticatedFetch(`${PROJECTS_UPDATE_API_BASE_URL}/${projectId}`, {
-        method: 'PUT',
-        body: JSON.stringify(requestBodyForLambda),
-    });
-
-    if (!response.ok) {
-        let errorMessage = `Failed to update project ${projectId}. Status: ${response.status} ${response.statusText}.`;
-        try {
-            const errorData = await response.json();
-            errorMessage = errorData.message || JSON.stringify(errorData);
-        } catch (jsonError) {
-            errorMessage = await response.text();
+export const updateProject = (projectId: string, updates: Partial<Project>): Project | undefined => {
+    // Optimistic update
+    if (cachedProjects) {
+        const projectIndex = cachedProjects.findIndex(p => p.id === projectId);
+        if (projectIndex > -1) {
+            cachedProjects[projectIndex] = { ...cachedProjects[projectIndex], ...updates };
+            return cachedProjects[projectIndex];
         }
-        throw new Error(errorMessage);
     }
-
-    cachedProjects = null; // Invalidate cache after server update
-
-    const responseData = await parseApiResponse(response);
-    const updatedProjectData = responseData.updatedItem || responseData; // Assuming it returns `updatedItem` or the item directly
-
-    // Map backend response back to frontend Project type
-    const updatedProject: Project = {
-        id: updatedProjectData.id,
-        name: updatedProjectData.name,
-        description: updatedProjectData.description,
-        managerIds: Array.isArray(updatedProjectData.manager_ids)
-                    ? updatedProjectData.manager_ids.map((id: string) => String(id).trim())
-                    : (typeof updatedProjectData.manager_id === 'string' && updatedProjectData.manager_id)
-                        ? [String(updatedProjectData.manager_id).trim()]
-                        : [],
-        departmentIds: (Array.isArray(updatedProjectData.departmentIds) && updatedProjectData.departmentIds.length > 0
-                            ? updatedProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
-                            : Array.isArray(updatedProjectData.department_ids) && updatedProjectData.department_ids.length > 0
-                                ? updatedProjectData.department_ids.map((id: string) => String(id).toLowerCase().trim())
-                                : (typeof updatedProjectData.departmentId === 'string' && updatedProjectData.departmentId)
-                                    ? [String(updatedProjectData.departmentId).toLowerCase().trim()]
-                                    : []
-                           ),
-        deadline: updatedProjectData.deadline,
-        priority: updatedProjectData.priority,
-        estimatedTime: updatedProjectData.estimated_time ? parseInt(updatedProjectData.estimated_time, 10) : undefined,
-        companyId: String(updatedProjectData.companyId || updatedProjectData.company_id || updatedProjectData.company || 'default-company-id').toLowerCase().trim(),
-        roadmap: updatedProjectData.roadmap || [],
-        timestamp: updatedProjectData.timestamp,
-    };
-    
-    return updatedProject;
+    return undefined;
 };
 
 
-// --- MODIFIED deleteProject function (removed token parameter) ---
-export const deleteProject = async (projectId: string, projectTimestamp: string): Promise<void> => {
-    const deletePayload = {
-        id: projectId,
-        timestamp: projectTimestamp,
-    };
-
-    // Authenticated fetch will automatically add the token
-    const response = await authenticatedFetch(PROJECTS_DELETE_API_URL, {
-        method: 'DELETE',
-        body: JSON.stringify(deletePayload),
-    });
-
-    if (!response.ok) {
-        let errorMessage = `Failed to delete project ${projectId}. Status: ${response.status} ${response.statusText}.`;
-        try {
-            const errorData = await response.json();
-            errorMessage = errorData.message || JSON.stringify(errorData);
-        } catch (jsonError) {
-            errorMessage = await response.text();
-        }
-        throw new Error(errorMessage);
-    }
-    cachedProjects = null; // Invalidate cache after deletion
-};
-
+// --- DEPARTMENTS ---
 export const getDepartments = async (): Promise<Department[]> => {
     if (cachedDepartments) return cachedDepartments;
-    try {
-        const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
-        const data = await parseApiResponse(response);
-        const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
-        cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
-            id: dept.id,
-            name: dept.name,
-            companyId: (Array.isArray(dept.companyIds) && dept.companyIds.length > 0
-                        ? String(dept.companyIds[0])
-                        : String(dept.companyId || dept.company_id || dept.company || 'default-company-id')
-                       ).toLowerCase().trim(),
-        }));
-        return cachedDepartments;
-    } catch (error) {
-        console.error("Failed to fetch all departments:", error);
-        return [];
-    }
-};
-
-export const getDepartmentsByCompany = async (companyId: string): Promise<Department[]> => {
-    const allDepartments = await getDepartments();
-    return allDepartments.filter(dept => dept.companyId === companyId);
+    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/');
+    const data = await parseApiResponse(response);
+    const departmentsFromApi = extractArrayFromApiResponse(data, 'departments');
+    cachedDepartments = departmentsFromApi.map((dept: any): Department => ({
+        id: dept.id,
+        name: dept.name,
+        companyId: dept.company_id || 'comp-1',
+    }));
+    return cachedDepartments;
 };
 
 export const getDepartmentById = async (id: string): Promise<Department | undefined> => {
@@ -690,137 +503,53 @@ export const getDepartmentById = async (id: string): Promise<Department | undefi
     return depts.find(d => d.id === id);
 };
 
-export const createDepartment = async (name: string, companyId: string): Promise<Department> => {
-    const payload = {
-        name,
-        company_id: companyId, 
-        id: `dept-${Date.now()}`
-    };
-    const response = await authenticatedFetch('https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create department.');
+export const createDepartment = (name: string, companyId: string): Department => {
+    // Optimistic update
+    const newDepartment: Department = { id: `dept-${Date.now()}`, name, companyId };
+    if (cachedDepartments) {
+        cachedDepartments.unshift(newDepartment);
+    } else {
+        cachedDepartments = [newDepartment];
     }
-
-    cachedDepartments = null; 
-    const responseData = await response.json();
-    const createdDepartmentData = responseData.Department.Item;
-
-    const newDepartment: Department = { 
-        id: createdDepartmentData.id, 
-        name: createdDepartmentData.name, 
-        companyId: (Array.isArray(createdDepartmentData.companyIds) && createdDepartmentData.companyIds.length > 0
-                    ? String(createdDepartmentData.companyIds[0])
-                    : String(createdDepartmentData.companyId || createdDepartmentData.company_id || createdDepartmentData.company || 'default-company-id')
-                   ).toLowerCase().trim(),
-    };
     return newDepartment;
 };
 
-export const getCompanies = async (): Promise<Company[]> => {
-    if (cachedCompanies) return cachedCompanies;
-
-    try {
-        const response = await authenticatedFetch(COMPANIES_API_URL);
-        const data = await parseApiResponse(response);
-        const companiesFromApi = extractArrayFromApiResponse(data, 'companies');
-
-        cachedCompanies = companiesFromApi.map((company: any): Company => ({
-            id: company.id,
-            name: company.name,
-            ownerId: company.ownerId, 
-            createdAt: company.createdAt || new Date().toISOString(), 
-        }));
-        return cachedCompanies;
-    } catch (error) {
-        console.error("Failed to fetch all companies:", error);
-        return []; 
-    }
+// --- ATTENDANCE ---
+export const getAttendanceByDate = async (date: string, currentUserId: string): Promise<any[]> => {
+    const response = await authenticatedFetch(`${ATTENDANCE_API_BASE_URL}/get-attendence-by-date`, {
+        method: 'POST',
+        body: JSON.stringify({ date, userId: currentUserId })
+    });
+    const data = await parseApiResponse(response);
+    return Array.isArray(data) ? data : [];
 };
 
-export const getCompanyById = async (id: string): Promise<Company | undefined> => {
-    const allCompanies = await getCompanies();
-    return allCompanies.find(c => c.id === id);
+export const getAttendanceForUserByMonth = async (targetUserId: string, year: number, month: number, currentUserId: string): Promise<any[]> => {
+    const url = `${ATTENDANCE_API_BASE_URL}/get-attendence-by-user`;
+    const response = await authenticatedFetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ targetUserId, year, month, userId: currentUserId })
+    });
+    const data = await parseApiResponse(response);
+    return Array.isArray(data) ? data : [];
 };
 
+export const recordAttendanceAction = async (currentUserId: string, action: 'PUNCH_IN' | 'PUNCH_OUT'): Promise<any> => {
+    const response = await authenticatedFetch(`${ATTENDANCE_API_BASE_URL}/record-attendence`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: currentUserId, action })
+    });
+    return parseApiResponse(response);
+};
+
+
+// --- MOCKED FUNCTIONS ---
+export const getCompanies = (): Company[] => [...COMPANIES];
+export const getCompanyById = (id: string): Company | undefined => COMPANIES.find(c => c.id === id);
 export const createCompany = (name: string, ownerId: string): Company => {
     const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
-    if (cachedCompanies) {
-        cachedCompanies.unshift(newCompany);
-    } else {
-        cachedCompanies = [newCompany];
-    }
+    COMPANIES.unshift(newCompany);
     return newCompany;
-};
-
-export const getAttendanceByDate = async (date: string): Promise<string[]> => {
-    try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_DATE_URL, {
-            method: 'POST',
-            body: JSON.stringify({ date }),
-        });
-        const data = await parseApiResponse(response);
-        const attendanceRecords = extractArrayFromApiResponse(data, 'attendance');
-        return attendanceRecords.map((record: any) => record.userId);
-    } catch (error) {
-        console.error(`Failed to fetch attendance for date ${date}:`, error);
-        return ATTENDANCE_DATA[date] || [];
-    }
-};
-
-export const getAttendanceForUserByMonth = async (userId: string, year: number, month: number): Promise<string[]> => {
-    try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_USER_URL, {
-            method: 'POST',
-            body: JSON.stringify({ userId }),
-        });
-        const data = await parseApiResponse(response);
-        const allUserAttendanceRecords = extractArrayFromApiResponse(data, 'attendance');
-
-        const presentDatesInMonth = allUserAttendanceRecords
-            .filter((record: any) => {
-                const recordDate = new Date(record.date);
-                return recordDate.getFullYear() === year && recordDate.getMonth() === month;
-            })
-            .map((record: any) => record.date);
-
-        return presentDatesInMonth;
-
-    } catch (error) {
-        console.error(`Failed to fetch attendance for user ${userId} in month ${month + 1}/${year}:`, error);
-        const monthString = (month + 1).toString().padStart(2, '0');
-        const presentDates: string[] = [];
-        for (const dateKey in ATTENDANCE_DATA) {
-            if (dateKey.startsWith(`${year}-${monthString}`) && ATTENDANCE_DATA[dateKey].includes(userId)) {
-                presentDates.push(dateKey);
-            }
-        }
-        return presentDates;
-    }
-};
-
-export const recordAttendance = async (userId: string, date: string): Promise<boolean> => {
-    try {
-        const response = await authenticatedFetch(ATTENDANCE_RECORD_ACTION_URL, {
-            method: 'POST',
-            body: JSON.stringify({ userId, date }),
-        });
-        
-        if (response.ok) {
-            return true;
-        } else {
-            const errorText = await response.text();
-            console.error(`Failed to record attendance for user ${userId} on ${date}: ${response.status} ${response.statusText} - ${errorText}`);
-            return false;
-        }
-    } catch (error) {
-        console.error(`Error recording attendance for user ${userId} on ${date}:`, error);
-        return false;
-    }
 };
 
 export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
@@ -864,6 +593,7 @@ export const updateOnboardingSubmission = (submissionId: string, updates: Partia
     }
     return undefined;
 };
+// Add placeholder for other functions if they exist in the original file
 export const getNoteById = (id: string): Note | undefined => {
     return undefined;
 }
