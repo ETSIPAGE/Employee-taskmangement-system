@@ -1,15 +1,24 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import { Task, TaskStatus, User } from '../../types';
+import { Link, useNavigate } from 'react-router-dom';
+
+import { Task, TaskStatus } from '../../types';
 import { ClockIcon, EditIcon, TrashIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
+
+const getInitials = (name: string) => {
+    if (!name) return '?';
+    const names = name.split(' ');
+    if (names.length > 1) return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
+    return name.substring(0, 2).toUpperCase();
+};
 
 const TaskCard: React.FC<{
     task: Task;
     projectName?: string;
-    assigneeName?: string;
+    assigneeNames?: string[];
     onDelete?: (taskId: string) => void;
     onEdit?: (task: Task) => void;
-}> = ({ task, projectName, assigneeName, onDelete, onEdit }) => {
+}> = ({ task, projectName, assigneeNames, onDelete, onEdit }) => {
+    const navigate = useNavigate();
 
     const statusStyles: Record<TaskStatus, string> = {
         [TaskStatus.TODO]: 'bg-yellow-100 text-yellow-800',
@@ -24,12 +33,21 @@ const TaskCard: React.FC<{
         high: 'bg-red-100 text-red-800',
     };
     
-    const handleDelete = () => {
+    const handleDelete = (e: React.MouseEvent) => {
+        e.stopPropagation();
         onDelete?.(task.id);
     };
 
+    const handleEdit = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        onEdit?.(task);
+    };
+
     return (
-        <div className="bg-white rounded-lg shadow p-4 border border-slate-200 flex flex-col space-y-3">
+        <div
+            className="bg-white rounded-lg shadow p-4 border border-slate-200 flex flex-col space-y-3 cursor-pointer hover:shadow-md transition-shadow"
+            onClick={() => navigate(`/tasks/${task.id}`)}
+        >
             {/* Top Row */}
             <div className="flex justify-between items-center">
                 <span className="text-xs font-semibold text-slate-500">{projectName || task.category || 'General'}</span>
@@ -38,7 +56,7 @@ const TaskCard: React.FC<{
                         {task.status}
                     </span>
                      {onEdit && (
-                        <button onClick={() => onEdit(task)} className="text-slate-400 hover:text-slate-600">
+                        <button onClick={handleEdit} className="text-slate-400 hover:text-slate-600">
                             <EditIcon />
                         </button>
                     )}
@@ -47,7 +65,7 @@ const TaskCard: React.FC<{
 
             {/* Title & Description */}
             <div>
-                 <Link to={`/tasks/${task.id}`} className="hover:text-indigo-600 transition-colors">
+                <Link to={`/tasks/${task.id}`} className="hover:text-indigo-600 transition-colors">
                     <h4 className="font-bold text-slate-800 text-lg">{task.name}</h4>
                 </Link>
                 <p className="text-sm text-slate-600 mt-1 line-clamp-2">{task.description}</p>
@@ -87,11 +105,24 @@ const TaskCard: React.FC<{
 
             {/* Bottom Row */}
             <div className="flex justify-between items-center">
-                <div className="flex items-center">
-                    <UserCircleIcon className="h-5 w-5 text-slate-400" />
-                    <span className="ml-2 text-sm font-medium text-slate-700">
-                        {assigneeName || 'Unassigned'}
-                    </span>
+                <div className="flex items-center -space-x-2">
+                    {(assigneeNames && assigneeNames.length > 0) ? (
+                        assigneeNames.slice(0, 3).map((name, index) => (
+                            <div key={index} title={name} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs ring-2 ring-white">
+                                {getInitials(name)}
+                            </div>
+                        ))
+                    ) : (
+                        <div className="flex items-center">
+                            <UserCircleIcon className="h-5 w-5 text-slate-400" />
+                            <span className="ml-2 text-sm font-medium text-slate-700">Unassigned</span>
+                        </div>
+                    )}
+                    {assigneeNames && assigneeNames.length > 3 && (
+                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xs ring-2 ring-white">
+                            +{assigneeNames.length - 3}
+                        </div>
+                    )}
                 </div>
                 
                 <div className="flex items-center space-x-2">

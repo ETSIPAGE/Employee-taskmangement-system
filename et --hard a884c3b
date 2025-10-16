@@ -1,0 +1,18 @@
+[33m86e53a3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{0}: pull: Fast-forward
+[33ma884c3b[m HEAD@{1}: commit: conditional project rendering
+[33m5956b02[m HEAD@{2}: commit: status milestone
+[33mca00ef7[m HEAD@{3}: commit: companyprojects
+[33md474f6a[m HEAD@{4}: commit: milestone
+[33m153472f[m HEAD@{5}: commit: project
+[33m889df74[m HEAD@{6}: commit: adding project functionality
+[33m0767f95[m HEAD@{7}: checkout: moving from parwez to main
+[33ma15b98b[m[33m ([m[1;32mparwez[m[33m)[m HEAD@{8}: checkout: moving from main to parwez
+[33m0767f95[m HEAD@{9}: pull: Fast-forward
+[33m804aa3b[m HEAD@{10}: checkout: moving from parwez to main
+[33ma15b98b[m[33m ([m[1;32mparwez[m[33m)[m HEAD@{11}: commit: package
+[33m0767f95[m HEAD@{12}: checkout: moving from parwez to parwez
+[33m0767f95[m HEAD@{13}: pull --rebase origin main: Fast-forward
+[33m8337098[m[33m ([m[1;31morigin/parwez[m[33m)[m HEAD@{14}: commit (merge): Merged main into parwez and resolved conflicts
+[33m63d1103[m HEAD@{15}: checkout: moving from main to parwez
+[33m804aa3b[m HEAD@{16}: checkout: moving from main to main
+[33m804aa3b[m HEAD@{17}: clone: from https://github.com/ETSIPAGE/Employee-taskmangement-system.git

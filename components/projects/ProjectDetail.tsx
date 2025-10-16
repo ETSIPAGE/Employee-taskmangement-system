@@ -41,9 +41,9 @@ const Toast: React.FC<{ message: ToastMessage; onClose: (id: string) => void }> 
 export interface ProjectDisplayData extends Project {
     overallStatus: string;
     progress: number;
-    managerNames?: string;
-    departmentNames?: string;
-    companyName?: string;
+    managerNames?: string; // Not currently used, but kept for future if needed
+    departmentNames?: string; // Not currently used, but kept for future if needed
+    companyName?: string; // Not currently used, but kept for future if needed
 }
 
 const ProjectDetail: React.FC = () => {
@@ -69,7 +69,7 @@ const ProjectDetail: React.FC = () => {
         due_date: '',
         priority: 'medium' as 'low' | 'medium' | 'high',
         est_time: '',
-        assign_to: ''
+        assign_to: '' // This will temporarily hold a single assignee ID
     });
 
     const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -133,7 +133,7 @@ const ProjectDetail: React.FC = () => {
             overallStatus = 'Overdue';
         }
         return { overallStatus, progress };
-    }, []); // Dependencies are just here to satisfy useCallback, logic uses arguments
+    }, []); 
 
 
     const loadData = useCallback(async () => {
@@ -149,16 +149,17 @@ const ProjectDetail: React.FC = () => {
             }
 
             // Fetch tasks for the project
-            const projectTasks = await DataService.getTasksByProject(projectId);
-            setTasks(projectTasks); // Update tasks state with fresh data
+            const projectTasks = await DataService.getAllTasks(); // Fetch all tasks
+            const filteredProjectTasks = projectTasks.filter(task => task.projectId === projectId); // Filter them
+            setTasks(filteredProjectTasks); // Update tasks state with fresh data
 
             // Calculate status and progress using the freshly fetched project and tasks
-            const { overallStatus, progress } = calculateProjectStatus(currentProject, projectTasks);
+            const { overallStatus, progress } = calculateProjectStatus(currentProject, filteredProjectTasks);
 
             // Set the project state with all necessary display data
             const projectWithDisplayData: ProjectDisplayData = {
                 ...currentProject,
-                timestamp: currentProject.timestamp || new Date().toISOString(),
+                timestamp: currentProject.timestamp || new Date().toISOString(), // Ensure timestamp is always present
                 roadmap: currentProject.roadmap ? [...currentProject.roadmap] : [],
                 overallStatus,
                 progress,
@@ -184,6 +185,7 @@ const ProjectDetail: React.FC = () => {
             );
             setAssignableEmployees(employeesInProjectCompany);
 
+            // Set default assignee for new task if not already set
             if (employeesInProjectCompany.length > 0 && !newTaskData.assign_to) {
                  setNewTaskData(prev => ({...prev, assign_to: employeesInProjectCompany[0].id}));
             }
@@ -196,7 +198,7 @@ const ProjectDetail: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [projectId, user, showToast, calculateProjectStatus, newTaskData.assign_to]); // Ensure newTaskData.assign_to dependency
+    }, [projectId, user, showToast, calculateProjectStatus, newTaskData.assign_to]); 
 
 
     useEffect(() => {
@@ -245,7 +247,7 @@ const ProjectDetail: React.FC = () => {
                 description: newTaskData.description,
                 dueDate: newTaskData.due_date || undefined,
                 projectId,
-                assigneeId: newTaskData.assign_to,
+                assigneeIds: newTaskData.assign_to ? [newTaskData.assign_to] : [], // Wrap in array
                 status: TaskStatus.TODO,
                 priority: newTaskData.priority,
                 estimatedTime: newTaskData.est_time ? parseInt(newTaskData.est_time, 10) : undefined,
@@ -271,8 +273,7 @@ const ProjectDetail: React.FC = () => {
 
         setIsSavingRoadmap(true);
         try {
-            // Use the updated DataService.updateProject
-            await DataService.updateProject( // NO LONGER CAPTURE RETURN, rely on loadData
+            await DataService.updateProject(
                 project.id,
                 project.timestamp, 
                 { roadmap: newRoadmap }
@@ -300,7 +301,8 @@ const ProjectDetail: React.FC = () => {
             return;
         }
 
-        const originalRoadmap = project.roadmap; // Store for potential revert
+        // Store for potential revert (though full reload handles this implicitly on error)
+        // const originalRoadmap = project.roadmap; 
 
         const updatedRoadmap = project.roadmap.map(ms =>
             ms.id === milestoneId ? { ...ms, status: newStatus } : ms
@@ -323,7 +325,7 @@ const ProjectDetail: React.FC = () => {
 
         setIsSavingRoadmap(true);
         try {
-            await DataService.updateProject( // NO LONGER CAPTURE RETURN, rely on loadData
+            await DataService.updateProject(
                 project.id,
                 project.timestamp, 
                 { roadmap: updatedRoadmap }
@@ -347,7 +349,9 @@ const ProjectDetail: React.FC = () => {
         if (!projectId || !user) return;
 
         try {
-            await DataService.updateTask(taskId, { assigneeId: newAssigneeId }, user.id); 
+            // DataService.updateTask expects assigneeIds: string[]
+            const assigneeIds = newAssigneeId ? [newAssigneeId] : []; 
+            await DataService.updateTask(taskId, { assigneeIds: assigneeIds }, user.id); // FIXED: Changed to assigneeIds
             showToast("Task assignee updated!", "success");
             await loadData(); // Full reload to get fresh tasks and recalculate project status
         } catch (error) {
@@ -413,17 +417,17 @@ const ProjectDetail: React.FC = () => {
         if (user.role === UserRole.ADMIN) {
             isAuthorized = true;
         } else if (user.role === UserRole.MANAGER) {
-            isAuthorized = true; 
+            // A manager is authorized if they are one of the project's managers
+            isAuthorized = project.managerIds?.includes(user.id) || false;
         } else if (user.role === UserRole.EMPLOYEE) {
-            const isAssignedToTask = tasks.some(task => task.assigneeId === user.id);
-            const isInProjectDepartment = project.departmentIds && project.departmentIds.includes(user.departmentId);
-
-            isAuthorized = (
-                isAssignedToTask ||
-                isInProjectDepartment
-            );
+            // An employee is authorized if they are assigned to any task in the project
+            // OR if they are in a department associated with the project
+            const isAssignedToTask = tasks.some(task => task.assigneeIds?.includes(user.id)); // FIXED: Check assigneeIds array
+            const isInProjectDepartment = project.departmentIds && user.departmentIds && 
+                                         project.departmentIds.some(projDeptId => user.departmentIds?.includes(projDeptId));
+            isAuthorized = isAssignedToTask || isInProjectDepartment;
         } else if (user.role === UserRole.HR) {
-            isAuthorized = true;
+            isAuthorized = true; // HR can view all projects
         }
     }
 

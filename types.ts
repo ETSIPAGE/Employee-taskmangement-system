@@ -1,3 +1,5 @@
+// types.ts - Merged and Corrected
+
 export enum UserRole {
   ADMIN = 'Admin',
   MANAGER = 'Manager',
@@ -9,13 +11,13 @@ export interface Company {
   id: string;
   name: string;
   ownerId: string;
-  createdAt: string;
+  createdAt: string; // ISO string
 }
 
 export interface Department {
   id: string;
   name: string;
-  companyId: string; // Assuming Department has a single companyId
+  companyId: string; // Department should have a single companyId
 }
 
 export interface UserStats {
@@ -80,7 +82,7 @@ export interface User {
   email: string;
   role: UserRole;
   companyId?: string;
-  managerId?: string; // Keep managerId here for User if it's their direct manager, but Project uses managerIds
+  managerId?: string; // This is the user's direct manager. Project has 'managerIds' for project-level managers.
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';
@@ -109,7 +111,7 @@ export enum TaskStatus {
 export enum MilestoneStatus {
     PENDING = 'Pending',
     IN_PROGRESS = 'In Progress',
-    ON_HOLD = 'On Hold',
+    ON_HOLD = 'On Hold', // Added from your local branch
     COMPLETED = 'Completed',
 }
 
@@ -123,21 +125,20 @@ export interface ProjectMilestone {
 }
 
 export interface Project {
-  id: string;          // This is the Partition Key (PK)
-  timestamp: string;   // This must be the Sort Key (SK) as your backend expects it.
-                       // Your previous errors explicitly mentioned 'timestamp (sort key) mismatch'.
+  id: string;          // Partition Key (PK)
+  timestamp: string;   // Sort Key (SK) - Crucial for DynamoDB
   name: string;
   description?: string;
-  managerIds: string[]; // This must be an array now for multiple managers
+  managerIds?: string[]; // Multiple managers per project (aligned with dataService)
   departmentIds: string[];
   deadline?: string;
   priority?: 'low' | 'medium' | 'high';
   estimatedTime?: number; // in hours
   companyId: string;
   roadmap?: ProjectMilestone[];
-  // If you also need a 'createdAt' field *separate* from the 'timestamp' sort key,
-  // then add it here. Otherwise, 'timestamp' will serve both purposes.
-  // createdAt?: string; // Optional: if you need a separate field for creation date
+  // If a separate `createdAt` is needed apart from `timestamp`, add it here.
+  // createdAt?: string;
+  createdBy?: string; // <--- THIS IS THE ADDED LINE TO RESOLVE THE ERRORS
 }
 
 export interface TaskDependency {
@@ -166,7 +167,7 @@ export interface Task {
   description?: string;
   dueDate?: string;
   projectId: string;
-  assigneeId?: string;
+  assigneeIds?: string[]; // Allowing multiple assignees for tasks (aligned with dataService)
   assign_by?: string;
   status: TaskStatus;
   category?: string;

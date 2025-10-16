@@ -5,7 +5,7 @@ import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService'; // Make sure this is imported
 import { Project, User, UserRole, TaskStatus, Department, Company, ProjectMilestone, MilestoneStatus } from '../../types';
 import Button from '../shared/Button';
-import Input from '../shared/Input';
+import Input from '.././shared/Input'; // Assuming your corrected Input.tsx is here
 import Modal from '../shared/Modal';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import ProjectCard from './ProjectCard';
@@ -24,6 +24,8 @@ export interface ProjectDisplayData extends Project {
 // NOTE: parseApiResponse is not used internally by DataService.fetchData
 // and is not directly used in this component's CRUD operations.
 // Keeping it for backward compatibility if other parts of your app use it.
+// Removed as it's not used and DataService has its own robust parsing.
+/*
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
         let errorText = await response.text();
@@ -47,6 +49,7 @@ const parseApiResponse = async (response: Response) => {
     }
     return data;
 };
+*/
 
 
 const Projects: React.FC = () => {
@@ -200,10 +203,9 @@ const Projects: React.FC = () => {
 
             if (user.role === UserRole.ADMIN || user.role === UserRole.HR) {
                 console.log("[Projects] Admin/HR user, fetching all projects.");
-                allProjectsRaw = await DataService.getAllProjects(); // Should now be `DataService.getAllProjects()` (no args)
+                allProjectsRaw = await DataService.getAllProjects();
             } else if (user.role === UserRole.MANAGER) {
                 console.log(`[Projects] Manager user (${user.id}), fetching assigned projects.`);
-                // This calls the new function in dataService.ts
                 allProjectsRaw = await DataService.getProjectsByManager(user.id);
             } else {
                 console.log(`[Projects] User role ${user.role}, no projects fetched.`);
@@ -213,6 +215,7 @@ const Projects: React.FC = () => {
             }
 
             console.log(`[Projects] Fetched ${allProjectsRaw.length} raw projects from API for role ${user.role}.`);
+            console.log("Raw projects fetched:", allProjectsRaw); // Added for debugging
 
             const projectsWithDetails: ProjectDisplayData[] = await Promise.all(
                 allProjectsRaw.map(async (p) => getProjectDisplayData(p, usersData, departmentsData, companiesData))
@@ -221,6 +224,7 @@ const Projects: React.FC = () => {
             projectsWithDetails.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
             console.log("[Projects] Setting projects state. First project's status:", projectsWithDetails[0]?.overallStatus);
             setProjects(projectsWithDetails);
+            console.log("Projects in state after loadData:", projectsWithDetails); // Added for debugging
 
         } catch (error) {
             console.error('[Projects] Failed to load project data:', error instanceof Error ? error.message : error);
@@ -229,7 +233,7 @@ const Projects: React.FC = () => {
             setIsLoading(false);
             console.log("[Projects] Finished loadData.");
         }
-    }, [showToast, newProjectCompanyId, getProjectDisplayData, user]); // Added user to dependencies
+    }, [showToast, newProjectCompanyId, getProjectDisplayData, user]);
 
 
     useEffect(() => {
@@ -290,16 +294,23 @@ const Projects: React.FC = () => {
 
 
     const filteredProjects = useMemo(() => {
-        return projects.filter((project) => {
+        console.log("Filtering projects..."); // Debugging filter
+        console.log("Projects available:", projects.length);
+        console.log("Filters: Search:", searchTerm, "Company:", companyFilter, "Dept:", departmentFilter, "Manager:", managerFilter);
+
+        const result = projects.filter((project) => {
             const companyMatch = companyFilter === 'all' || project.companyId === companyFilter;
             const departmentMatch = departmentFilter === 'all' || (project.departmentIds && project.departmentIds.includes(departmentFilter));
             const managerMatch = managerFilter === 'all' || (project.managerIds && project.managerIds.includes(managerFilter));
             const searchMatch =
                 project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 (project.description || '').toLowerCase().includes(searchTerm.toLowerCase());
-
+            
+            // console.log(`Project ${project.name}: C:${companyMatch} D:${departmentMatch} M:${managerMatch} S:${searchMatch}`); // Detailed project filter log
             return companyMatch && departmentMatch && managerMatch && searchMatch;
         });
+        console.log("Filtered projects count:", result.length);
+        return result;
     }, [projects, searchTerm, companyFilter, departmentFilter, managerFilter]);
 
 
@@ -314,7 +325,12 @@ const Projects: React.FC = () => {
         setNewProjectDesc('');
         setNewProjectCompanyId(companies.length > 0 ? companies[0].id : '');
         setAssignedDeptIds([]);
-        setAssignedManagerIds([]);
+        // --- FIX: Pre-select the current manager if they are creating the project ---
+        setAssignedManagerIds(user && user.role === UserRole.MANAGER ? [user.id] : []);
+        if (user && user.role === UserRole.MANAGER) {
+            console.log("Manager creating project, pre-selecting self:", user.id);
+        }
+        // --- END FIX ---
         setNewProjectDeadline('');
         setNewProjectPriority('medium');
         setNewProjectEstTime('');
@@ -388,14 +404,17 @@ const Projects: React.FC = () => {
         const projectPayload = {
             name: newProjectName,
             description: newProjectDesc,
-            managerIds: assignedManagerIds,
-            departmentIds: assignedDeptIds,
+            managerIds: assignedManagerIds, // Already an array of strings
+            departmentIds: assignedDeptIds, // Already an array of strings
             deadline: newProjectDeadline,
             priority: newProjectPriority,
             estimatedTime: newProjectEstTime ? parseInt(newProjectEstTime, 10) : undefined,
             companyId: newProjectCompanyId,
-            createdBy: user.id,
+            createdBy: user.id, // Ensure createdBy is sent
         };
+
+        console.log("Saving project with payload:", projectPayload); // Debugging log
+        console.log("Assigned Manager IDs in payload:", projectPayload.managerIds); // Debugging log
 
         try {
             if (editingProject) {
@@ -419,7 +438,7 @@ const Projects: React.FC = () => {
             showToast(`Failed to save project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
             return;
         }
-        await loadData();
+        await loadData(); // Reload data after successful save
         handleCloseModal();
     };
 
@@ -465,20 +484,49 @@ const Projects: React.FC = () => {
             updatesToSend.roadmap = updatedRoadmap;
         }
 
+        // Optimistic UI update
         setProjects(prevProjects => {
             return prevProjects.map(p => {
                 if (p.id === projectId) {
-                    const tempProjectForCalc: Project = {
-                        ...p,
-                        roadmap: newStatus === 'Completed' ? updatesToSend.roadmap : p.roadmap
-                    };
-                    const { overallStatus: recalculatedStatus, progress: recalculatedProgress } =
-                        { overallStatus: newStatus, progress: (newStatus === 'Completed' ? 100 : p.progress) };
+                    // Temporarily update roadmap if status is set to Completed
+                    const tempRoadmap = newStatus === 'Completed' ? updatesToSend.roadmap : p.roadmap;
+
+                    // Recalculate progress and overallStatus based on tempRoadmap or direct newStatus
+                    let newProgress = p.progress;
+                    let newOverallStatus = p.overallStatus;
+
+                    if (tempRoadmap && tempRoadmap.length > 0) {
+                        const totalMilestones = tempRoadmap.length;
+                        const completedMilestones = tempRoadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
+                        const inProgressMilestones = tempRoadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
+                        const onHoldMilestones = tempRoadmap.filter(m => m.status === MilestoneStatus.ON_HOLD).length;
+
+                        if (totalMilestones > 0) {
+                            newProgress = Math.round(((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100);
+                            if (newProgress === 100) newOverallStatus = 'Completed';
+                            else if (onHoldMilestones > 0) newOverallStatus = 'On Hold';
+                            else if (inProgressMilestones > 0 || completedMilestones > 0) newOverallStatus = 'In Progress';
+                            else newOverallStatus = 'Pending';
+                        }
+                    } else if (newStatus === 'Completed') {
+                        newProgress = 100;
+                        newOverallStatus = 'Completed';
+                    } else {
+                        // If no roadmap and not explicitly completed, status is still based on tasks
+                        // For simplicity in optimistic update, we can just use newStatus if roadmap logic doesn't apply
+                        newOverallStatus = newStatus;
+                    }
+
+                    // Also check for overdue status if not completed
+                    if (newOverallStatus !== 'Completed' && p.deadline && new Date(p.deadline) < new Date()) {
+                        newOverallStatus = 'Overdue';
+                    }
 
                     return {
                         ...p,
-                        overallStatus: recalculatedStatus,
-                        progress: recalculatedProgress
+                        roadmap: tempRoadmap, // Apply optimistic roadmap update
+                        progress: newProgress,
+                        overallStatus: newOverallStatus,
                     };
                 }
                 return p;
@@ -494,15 +542,15 @@ const Projects: React.FC = () => {
                     updatesToSend
                 );
                 showToast(`Project status updated to ${newStatus} successfully!`, 'success');
-                await loadData();
+                await loadData(); // Full reload to ensure accurate status calculation
             } else {
                 showToast(`Project status changed to ${newStatus} (display only).`, 'info');
-                await loadData();
+                await loadData(); // Full reload to ensure accurate status calculation
             }
         } catch (error) {
             console.error('[Projects] Failed to update project status:', error instanceof Error ? error.message : error);
             showToast(`Failed to update project status: ${error instanceof Error ? error.message : 'An unknown error occurred'}.`, 'error');
-            await loadData();
+            await loadData(); // Revert optimistic update on error
         }
     }, [projects, loadData, showToast]);
 
@@ -524,10 +572,37 @@ const Projects: React.FC = () => {
             ms.id === milestoneId ? { ...ms, status: mappedNewStatus } : ms
         );
 
+        // Optimistic update
         setProjects(prevProjects => {
             return prevProjects.map(p => {
                 if (p.id === projectId) {
-                    return { ...p, roadmap: updatedRoadmap };
+                    // Update the roadmap and recalculate progress/overall status for optimistic UI
+                    const updatedProjectForRecalc: Project = { ...p, roadmap: updatedRoadmap };
+                    const totalMilestones = updatedRoadmap.length;
+                    const completedMilestones = updatedRoadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
+                    const inProgressMilestones = updatedRoadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
+                    const onHoldMilestones = updatedRoadmap.filter(m => m.status === MilestoneStatus.ON_HOLD).length;
+
+                    let newProgress = 0;
+                    let newOverallStatus = 'Pending';
+
+                    if (totalMilestones > 0) {
+                        newProgress = Math.round(((completedMilestones * 1.0 + inProgressMilestones * 0.5) / totalMilestones) * 100);
+                        if (newProgress === 100) newOverallStatus = 'Completed';
+                        else if (onHoldMilestones > 0) newOverallStatus = 'On Hold';
+                        else if (inProgressMilestones > 0 || completedMilestones > 0) newOverallStatus = 'In Progress';
+                        else newOverallStatus = 'Pending';
+                    } else {
+                        // Fallback if roadmap becomes empty or was empty
+                        // This path needs to align with `getProjectDisplayData`'s task-based fallback
+                    }
+
+                    // Check for overdue status if not completed
+                    if (newOverallStatus !== 'Completed' && updatedProjectForRecalc.deadline && new Date(updatedProjectForRecalc.deadline) < new Date()) {
+                        newOverallStatus = 'Overdue';
+                    }
+
+                    return { ...p, roadmap: updatedRoadmap, progress: newProgress, overallStatus: newOverallStatus };
                 }
                 return p;
             });
@@ -542,12 +617,12 @@ const Projects: React.FC = () => {
             );
 
             showToast('Roadmap updated successfully!', 'success');
-            await loadData();
+            await loadData(); // Reload data to re-calculate overall project status
 
         } catch (error) {
             console.error('[Projects] Failed to update roadmap milestone:', error instanceof Error ? error.message : error);
             showToast(`Failed to update roadmap: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
-            await loadData();
+            await loadData(); // Reload to revert optimistic update if error
         }
     }, [projects, loadData, showToast]);
 

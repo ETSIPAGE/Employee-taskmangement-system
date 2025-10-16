@@ -99,12 +99,18 @@ const DonutChart: React.FC<DonutChartProps> = ({ data }) => {
     );
 };
 
-const PriorityTaskItem = ({ task, assignee }: { task: Task, assignee?: User }) => {
+// FIX: Explicitly type component with React.FC to ensure proper handling of React-specific props like 'key'.
+interface PriorityTaskItemProps {
+    task: Task;
+    assignees?: User[];
+}
+
+const PriorityTaskItem: React.FC<PriorityTaskItemProps> = ({ task, assignees }) => {
     return (
         <li className="py-3 flex justify-between items-center">
             <div>
                 <Link to={`/tasks/${task.id}`} className="font-semibold text-slate-700 hover:text-indigo-600">{task.name}</Link>
-                <p className="text-xs text-slate-500">{assignee ? `Assigned to ${assignee.name}` : 'Unassigned'}</p>
+                <p className="text-xs text-slate-500">{(assignees && assignees.length > 0) ? `Assigned to ${assignees.map(a => a.name).join(', ')}` : 'Unassigned'}</p>
             </div>
             {task.dueDate && <span className="text-sm font-medium text-slate-600">{new Date(task.dueDate).toLocaleDateString()}</span>}
         </li>
@@ -132,6 +138,7 @@ const ManagerDashboard: React.FC = () => {
             setTeamMembers(team);
 
             const managerProjects = await DataService.getProjectsByManager(user.id);
+
             const projectsWithProgressPromises = managerProjects.map(async p => {
                 const projectTasks = await DataService.getTasksByProject(p.id);
                 const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
@@ -149,7 +156,10 @@ const ManagerDashboard: React.FC = () => {
             setProjects(projectsWithProgress);
 
             const teamMemberIds = team.map(tm => tm.id);
-            const teamTasks = await DataService.getTasksByTeam(teamMemberIds);
+            const allTasks = await DataService.getAllTasks();
+            const managerAndTeamIds = new Set([user.id, ...teamMemberIds]);
+            const teamTasks = allTasks.filter(t => (t.assign_by === user.id) || (t.assigneeIds?.some(id => managerAndTeamIds.has(id))));
+
             const counts = {
                 todo: teamTasks.filter(t => t.status === TaskStatus.TODO).length,
                 inProgress: teamTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
@@ -248,7 +258,7 @@ const ManagerDashboard: React.FC = () => {
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Team's High-Priority Tasks</h2>
                     {highPriorityTasks.length > 0 ? (
                          <ul className="divide-y divide-slate-200">
-                           {highPriorityTasks.map(task => <PriorityTaskItem key={task.id} task={task} assignee={teamMembers.find(m => m.id === task.assigneeId)} />)}
+                           {highPriorityTasks.map(task => <PriorityTaskItem key={task.id} task={task} assignees={(task.assigneeIds || []).map(id => teamMembers.find(m => m.id === id)).filter(u => u) as User[]} />)}
                         </ul>
                     ) : (
                         <p className="text-center py-4 text-slate-500">No high-priority tasks for your team.</p>

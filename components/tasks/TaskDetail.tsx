@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
@@ -38,13 +38,20 @@ const TaskDetail: React.FC = () => {
     const [saveError, setSaveError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
 
-
-    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeId?: string }>({});
+    // Initial state for editedTask should be based on task, or empty if task is null
+    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[] }>({});
     
     const isDirty = useMemo(() => {
         if (!task) return false;
         const hasStatusChanged = editedTask.status !== undefined && editedTask.status !== task.status;
-        const hasAssigneeChanged = editedTask.assigneeId !== undefined && editedTask.assigneeId !== (task.assigneeId || '');
+        
+        // Compare assigneeIds arrays
+        const originalAssignees = new Set(task.assigneeIds || []);
+        const editedAssignees = new Set(editedTask.assigneeIds || []);
+        
+        const hasAssigneeChanged = originalAssignees.size !== editedAssignees.size || 
+                                 ![...originalAssignees].every(id => editedAssignees.has(id));
+
         return hasStatusChanged || hasAssigneeChanged;
     }, [task, editedTask]);
 
@@ -56,15 +63,18 @@ const TaskDetail: React.FC = () => {
             const currentTask = await DataService.getTaskById(taskId);
             if (!currentTask) {
                 setTask(null);
+                setProject(null); // Clear project as well
+                setAllUsers([]); // Clear users
                 setIsLoading(false);
                 return;
             }
             setTask(currentTask);
-            setEditedTask({ status: currentTask.status, assigneeId: currentTask.assigneeId || '' });
+            // Initialize editedTask state with current task values
+            setEditedTask({ status: currentTask.status, assigneeIds: currentTask.assigneeIds || [] });
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
-                DataService.getUsers() // Corrected: Use DataService.getUsers()
+                DataService.getUsers() // CORRECTED: Use DataService.getUsers()
             ]);
 
             setProject(taskProject || null);
@@ -72,6 +82,7 @@ const TaskDetail: React.FC = () => {
 
         } catch (error) {
             console.error("Failed to load task details:", error);
+            // Optionally set error state or display a toast
         } finally {
             setIsLoading(false);
         }
@@ -87,8 +98,9 @@ const TaskDetail: React.FC = () => {
         }
         
         const isAdmin = currentUser.role === UserRole.ADMIN;
-        const isProjectManager = currentUser.id === project.managerId;
-        const isAssignee = currentUser.id === task.assigneeId;
+        // Project.managerIds is an array, so check if current user is *one of* the managers
+        const isProjectManager = project.managerIds?.includes(currentUser.id); 
+        const isAssignee = (task.assigneeIds || []).includes(currentUser.id);
 
         // Admins and Project Managers have broad permissions over the task.
         const canManageTask = isAdmin || isProjectManager;
@@ -98,7 +110,7 @@ const TaskDetail: React.FC = () => {
             canChangeStatus: canManageTask || isAssignee,
             // Only managers/admins can re-assign tasks.
             canChangeAssignee: canManageTask,
-            // Anyone involved can add a note.
+            // Anyone involved (admin, manager, assignee) can add a note.
             canAddNote: canManageTask || isAssignee
         };
     }, [currentUser, task, project]);
@@ -114,8 +126,11 @@ const TaskDetail: React.FC = () => {
         };
 
         const updatedNotes = [...(task.notes || []), noteToAdd];
-        DataService.updateTaskLocally(taskId, { notes: updatedNotes });
-        loadData();
+        // DataService.updateTaskLocally is for local cache updates if API doesn't support specific fields.
+        // If API does support notes, you'd call DataService.updateTask with notes property.
+        // For now, assuming notes are handled locally or via a separate API call not shown here.
+        DataService.updateTaskLocally(taskId, { notes: updatedNotes }); 
+        setTask(prevTask => prevTask ? { ...prevTask, notes: updatedNotes } : null); // Update local state for immediate feedback
         setNewNote('');
     };
     
@@ -126,18 +141,31 @@ const TaskDetail: React.FC = () => {
         setSaveSuccess(false);
 
         try {
-            const updates: { status?: TaskStatus; assigneeId?: string | undefined } = {};
-            if (editedTask.status !== task?.status) {
+            const updates: { status?: TaskStatus; assigneeIds?: string[] } = {};
+            
+            // Only add status to updates if it has actually changed
+            if (editedTask.status !== undefined && editedTask.status !== task?.status) {
                 updates.status = editedTask.status;
             }
-             if (editedTask.assigneeId !== (task?.assigneeId || '')) {
-                updates.assigneeId = editedTask.assigneeId === '' ? undefined : editedTask.assigneeId;
+            
+            // Compare assigneeIds for changes
+            const originalAssignees = new Set(task?.assigneeIds || []);
+            const editedAssignees = new Set(editedTask.assigneeIds || []);
+            
+            const assigneesChanged = originalAssignees.size !== editedAssignees.size || 
+                                     ![...originalAssignees].every(id => editedAssignees.has(id));
+            
+            if (assigneesChanged) {
+                updates.assigneeIds = editedTask.assigneeIds;
             }
 
-            await DataService.updateTask(taskId, updates, currentUser.id);
+            if (Object.keys(updates).length > 0) {
+                await DataService.updateTask(taskId, updates, currentUser.id);
+            }
+            
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
-            await loadData();
+            await loadData(); // Reload data to get the latest from the backend
         } catch (error) {
             console.error("Failed to save changes:", error);
             setSaveError(error instanceof Error ? error.message : 'An unknown error occurred.');
@@ -149,6 +177,38 @@ const TaskDetail: React.FC = () => {
 
     if (isLoading) return <div className="text-center p-8">Loading task...</div>;
     if (!task) return <div className="text-center p-8">Task not found.</div>;
+
+    // Check if current user is authorized to view this task.
+    // An Admin can view all tasks.
+    // A Project Manager can view tasks in their projects.
+    // An Employee can view tasks they are assigned to, or tasks in departments they belong to.
+    let isAuthorized = false;
+    if (currentUser) {
+        if (currentUser.role === UserRole.ADMIN) {
+            isAuthorized = true;
+        } else if (currentUser.role === UserRole.MANAGER && project && project.managerIds?.includes(currentUser.id)) {
+            isAuthorized = true;
+        } else if (currentUser.role === UserRole.EMPLOYEE) {
+            const isAssigned = (task.assigneeIds || []).includes(currentUser.id);
+            const isInProjectDepartment = project && currentUser.departmentIds && 
+                                         project.departmentIds.some(projDeptId => currentUser.departmentIds?.includes(projDeptId));
+            isAuthorized = isAssigned || isInProjectDepartment;
+        } else if (currentUser.role === UserRole.HR) { // Assuming HR can see all tasks, similar to admin but with less control
+            isAuthorized = true;
+        }
+    }
+
+    if (!isAuthorized) {
+        return (
+            <div className="text-center p-8">
+                <h2 className="text-2xl font-bold text-slate-700">Access Denied</h2>
+                <p className="text-slate-500 mt-2">You are not authorized to view the details of this task.</p>
+                <Link to="/tasks" className="mt-4 inline-block">
+                    <Button>Back to Tasks</Button>
+                </Link>
+            </div>
+        );
+    }
 
     return (
         <div>
@@ -240,16 +300,49 @@ const TaskDetail: React.FC = () => {
                                      {Object.values(TaskStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                  </select>
                             </DetailItem>
-                             <DetailItem icon={<UserCircleIcon />} label="Assignee">
-                                 <select 
-                                    value={editedTask.assigneeId} 
-                                    onChange={(e) => setEditedTask(prev => ({ ...prev, assigneeId: e.target.value || undefined }))}
-                                    disabled={!canChangeAssignee}
-                                    className="w-full p-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed transition-colors"
-                                >
-                                     <option value="">Unassigned</option>
-                                     {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                 </select>
+                             <DetailItem icon={<UserCircleIcon />} label="Assignees">
+                                {canChangeAssignee ? (
+                                    <div className="mt-1 max-h-48 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1">
+                                        {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => (
+                                            <div key={u.id} className="flex items-center p-1 rounded hover:bg-slate-100">
+                                                <input
+                                                    id={`detail-assignee-${u.id}`}
+                                                    type="checkbox"
+                                                    value={u.id}
+                                                    checked={(editedTask.assigneeIds || []).includes(u.id)}
+                                                    onChange={(e) => {
+                                                        const { value, checked } = e.target;
+                                                        setEditedTask(prev => ({
+                                                            ...prev,
+                                                            assigneeIds: checked
+                                                                ? [...(prev.assigneeIds || []), value]
+                                                                : (prev.assigneeIds || []).filter(id => id !== value)
+                                                        }));
+                                                    }}
+                                                    className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                />
+                                                <label htmlFor={`detail-assignee-${u.id}`} className="ml-3 block text-sm text-slate-800">
+                                                    {u.name}
+                                                </label>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                        {(task.assigneeIds && task.assigneeIds.length > 0) ? (
+                                            task.assigneeIds.map(id => {
+                                                const assignee = allUsers.find(u => u.id === id);
+                                                return (
+                                                    <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                                                        {assignee?.name || 'Unknown'}
+                                                    </span>
+                                                );
+                                            })
+                                        ) : (
+                                            <span className="text-slate-500">Unassigned</span>
+                                        )}
+                                    </div>
+                                )}
                             </DetailItem>
                             <DetailItem icon={<ClockIcon />} label="Due Date">
                                 {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'Not set'}

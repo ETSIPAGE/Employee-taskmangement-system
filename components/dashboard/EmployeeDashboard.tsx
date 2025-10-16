@@ -5,12 +5,6 @@ import { Task, TaskStatus, Project } from '../../types';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon } from '../../constants';
 
-const ActionButton = ({ onClick, children, className }: { onClick: () => void, children: React.ReactNode, className: string }) => (
-    <button onClick={onClick} className={`px-4 py-2 text-sm font-medium rounded-md transition-colors shadow-sm w-full sm:w-auto ${className}`}>
-        {children}
-    </button>
-);
-
 const TaskStatCard = ({ title, count, color }: { title: string, count: number, color: string }) => (
     <div className="bg-white rounded-lg shadow p-4 flex flex-col items-center justify-center">
         <span className={`text-3xl font-bold ${color}`}>{count}</span>
@@ -18,7 +12,13 @@ const TaskStatCard = ({ title, count, color }: { title: string, count: number, c
     </div>
 );
 
-const RecentTaskItem = ({ task, projectName }: { task: Task, projectName: string }) => {
+// FIX: Explicitly type component with React.FC to ensure proper handling of React-specific props like 'key'.
+interface RecentTaskItemProps {
+    task: Task;
+    projectName: string;
+}
+
+const RecentTaskItem: React.FC<RecentTaskItemProps> = ({ task, projectName }) => {
      const statusColor = {
         [TaskStatus.TODO]: 'bg-yellow-500',
         [TaskStatus.IN_PROGRESS]: 'bg-blue-500',
@@ -44,8 +44,6 @@ const RecentTaskItem = ({ task, projectName }: { task: Task, projectName: string
 
 const EmployeeDashboard: React.FC = () => {
     const { user } = useAuth();
-    const [isOnBreak, setIsOnBreak] = useState(false);
-    const [isPunchedIn, setIsPunchedIn] = useState(false);
     const [tasks, setTasks] = useState<Task[]>([]);
     const [projectsMap, setProjectsMap] = useState<Map<string, Project>>(new Map());
     const [isLoading, setIsLoading] = useState(true);
@@ -97,24 +95,6 @@ const EmployeeDashboard: React.FC = () => {
                 >
                     <ArrowPathIcon className={`h-6 w-6 ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
-            </div>
-
-            {/* Action Center */}
-            <div className="bg-white rounded-lg shadow-lg p-4 mb-8">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4">
-                     <ActionButton 
-                        onClick={() => setIsPunchedIn(!isPunchedIn)}
-                        className={isPunchedIn ? 'bg-red-100 text-red-800 hover:bg-red-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'}
-                    >
-                        {isPunchedIn ? 'Punch Out' : 'Punch In'}
-                    </ActionButton>
-                     <ActionButton 
-                        onClick={() => setIsOnBreak(!isOnBreak)}
-                        className={isOnBreak ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200' : 'bg-sky-100 text-sky-800 hover:bg-sky-200'}
-                    >
-                        {isOnBreak ? 'End Break' : 'Start Break'}
-                    </ActionButton>
-                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
