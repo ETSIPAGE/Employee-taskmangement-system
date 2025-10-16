@@ -26,10 +26,10 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
         const today = new Date();
         const year = today.getFullYear();
         const month = today.getMonth() + 1;
-        const attendanceForMonth = await DataService.getAttendanceForUserByMonth(user.id, year, month, user.id);
-        
+        const attendanceForMonth = await DataService.getAttendanceForUserByMonth(user.id, year, month);
+
         const todayString = today.toISOString().split('T')[0];
-        const todayRecord = attendanceForMonth.find(rec => rec.date === todayString);
+        const todayRecord = attendanceForMonth.find(rec => typeof rec.date === 'string' && rec.date.startsWith(todayString));
 
         if (todayRecord && todayRecord.punchInTime && !todayRecord.punchOutTime) {
             setIsPunchedIn(true);
@@ -63,8 +63,10 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
     const action = isPunchedIn ? 'PUNCH_OUT' : 'PUNCH_IN';
 
     try {
-        await DataService.recordAttendanceAction(user.id, action);
+        await DataService.recordAttendance(user.id, action);
         setIsPunchedIn(!isPunchedIn);
+        // Notify other parts of the app (e.g., monthly attendance view) to refresh with action detail
+        try { window.dispatchEvent(new CustomEvent('ets-attendance-updated', { detail: { userId: user.id, action } })); } catch {}
     } catch (error) {
         console.error(`Failed to ${action}`, error);
         alert(`Error: ${error instanceof Error ? error.message : 'An unknown error occurred.'}`);

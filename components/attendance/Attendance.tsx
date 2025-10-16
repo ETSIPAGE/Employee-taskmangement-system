@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types';
@@ -12,7 +12,127 @@ const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
 };
 
-const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date; onClose: () => void; }> = ({ employee, monthDate, onClose }) => {
+const ManagerAttendanceView: React.FC = () => {
+    const { user: currentUser } = useAuth();
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
+    const [presentEmployees, setPresentEmployees] = useState<User[]>([]);
+    const [selectedEmployee, setSelectedEmployee] = useState<User | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+        if (!selectedDate || !currentUser) return;
+        const fetchAttendance = async () => {
+            setIsLoading(true);
+            try {
+                const dateString = selectedDate.toISOString().split('T')[0];
+                const attendanceRecords = await DataService.getAttendanceByDate(dateString);
+                const presentIds = attendanceRecords.map(rec => rec.userId);
+                const apiUsers = await DataService.getUsers();
+                const localUsers = AuthService.getUsers();
+                // Merge local and API users by ID. API data overwrites local for freshness, but retain local fields if API lacks them.
+                const merged = new Map<string, User>();
+                for (const u of localUsers) merged.set(u.id, u);
+                for (const u of apiUsers) merged.set(u.id, { ...(merged.get(u.id) || {} as User), ...u });
+
+                const managerDeptIds = currentUser.departmentIds || [];
+
+                const isEligibleForManager = (u: User): boolean => {
+                    const deptEligible = Array.isArray(u.departmentIds) && u.departmentIds.some(d => managerDeptIds.includes(d));
+                    const directReport = u.managerId === currentUser.id;
+                    return (u.role === UserRole.EMPLOYEE) && (deptEligible || directReport);
+                };
+
+                const resolvedUsers: User[] = presentIds.map(id => {
+                    const found = merged.get(id);
+                    if (found) return found as User;
+                    // Fallback minimal user so presence still shows even if user record missing
+                    return { id, name: id, email: '', role: UserRole.EMPLOYEE } as User;
+                });
+
+                const displayUsers = resolvedUsers.filter(isEligibleForManager);
+                setPresentEmployees(displayUsers);
+            } catch (error) {
+                console.error("Failed to fetch manager daily attendance", error);
+                setPresentEmployees([]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchAttendance();
+    }, [selectedDate, currentUser]);
+
+    useEffect(() => {
+        const handler = () => {
+            if (selectedDate) {
+                // trigger refetch by updating date instance
+                setSelectedDate(new Date(selectedDate));
+            }
+        };
+        window.addEventListener('ets-attendance-updated', handler as EventListener);
+        return () => window.removeEventListener('ets-attendance-updated', handler as EventListener);
+    }, [selectedDate]);
+
+    const changeMonth = (offset: number) => {
+        setCurrentDate(prev => {
+            const newDate = new Date(prev);
+            newDate.setMonth(newDate.getMonth() + offset);
+            return newDate;
+        });
+    };
+
+    const previousMonth = useMemo(() => new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1), [currentDate]);
+    const nextMonth = useMemo(() => new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1), [currentDate]);
+
+    return (
+        <div>
+            <div className="flex justify-between items-center mb-4 bg-white p-3 rounded-lg shadow-sm">
+                <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-100">&lt;</button>
+                <h2 className="text-xl font-bold text-slate-800">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
+                <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-100">&gt;</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                <CalendarMonthView date={previousMonth} selectedDate={selectedDate} onDateClick={setSelectedDate} />
+                <CalendarMonthView date={currentDate} selectedDate={selectedDate} onDateClick={setSelectedDate} />
+                <CalendarMonthView date={nextMonth} selectedDate={selectedDate} onDateClick={setSelectedDate} />
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-lg">
+                <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">{selectedDate ? `Team present on ${selectedDate.toLocaleDateString()}` : 'Select a date'}</h3>
+                {isLoading ? <p className="text-slate-500 text-center pt-8">Loading attendance...</p> :
+                    selectedDate ? (
+                        presentEmployees.length > 0 ? (
+                            <ul className="space-y-3">
+                                {presentEmployees.map(emp => (
+                                    <li
+                                        key={emp.id}
+                                        onClick={() => setSelectedEmployee(emp)}
+                                        className="flex items-center space-x-3 p-2 rounded-md hover:bg-slate-100 cursor-pointer"
+                                    >
+                                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold flex-shrink-0">{getInitials(emp.name)}</div>
+                                        <div>
+                                            <p className="font-semibold text-slate-700">{emp.name}</p>
+                                            <p className="text-xs text-slate-500">{emp.email}</p>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : <p className="text-slate-500 text-center pt-8">No attendance records for this day.</p>
+                    ) : <p className="text-slate-500 text-center pt-8">Select a date from the calendar to view attendance.</p>}
+            </div>
+            {selectedEmployee && selectedDate && (
+                <EmployeeAttendanceDetailModal
+                    employee={selectedEmployee}
+                    monthDate={selectedDate}
+                    presentDate={selectedDate}
+                    onClose={() => setSelectedEmployee(null)}
+                />
+            )}
+        </div>
+    );
+};
+
+const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date; presentDate?: Date; onClose: () => void; }> = ({ employee, monthDate, presentDate, onClose }) => {
     const { user: currentUser } = useAuth();
     const [stats, setStats] = useState({ present: 0, absent: 0, percentage: 0 });
     const [presentDates, setPresentDates] = useState<Set<number>>(new Set());
@@ -26,9 +146,57 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
             const month = monthDate.getMonth() + 1; // API uses 1-12
             
             try {
-                const userPresentRecords = await DataService.getAttendanceForUserByMonth(employee.id, year, month, currentUser.id);
-                // The date from DynamoDB might be a full ISO string, so we parse it safely.
-                const presentDays = new Set(userPresentRecords.map(d => new Date(d.date).getUTCDate()));
+                const userPresentRecords = await DataService.getAttendanceForUserByMonth(employee.id, year, month);
+
+                const extractDay = (dateStr: string): number | null => {
+                    const s = String(dateStr);
+                    // ISO or parseable date
+                    const asDate = new Date(s);
+                    if (!isNaN(asDate.getTime())) return asDate.getDate();
+                    const core = s.split('T')[0];
+                    const parts = core.split(/[-\/]/);
+                    if (parts.length >= 3) {
+                        if (parts[0].length === 4) {
+                            // yyyy-mm-dd
+                            const d = parseInt(parts[2], 10);
+                            return isNaN(d) ? null : d;
+                        } else {
+                            // dd-mm-yyyy
+                            const d = parseInt(parts[0], 10);
+                            return isNaN(d) ? null : d;
+                        }
+                    }
+                    return null;
+                };
+
+                const presentDays = new Set<number>();
+                for (const rec of userPresentRecords) {
+                    const core = typeof rec.date === 'string' ? rec.date : '';
+                    const day = core ? extractDay(core) : null;
+                    if (day) presentDays.add(day);
+                }
+                // Fallback: if monthly API returned nothing, check daily endpoint for each day
+                if (presentDays.size === 0) {
+                    const daysInMonth = new Date(year, month, 0).getDate();
+                    const normEmpId = String(employee.id).toLowerCase();
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    for (let day = 1; day <= daysInMonth; day++) {
+                        const date = new Date(year, month - 1, day);
+                        const ds = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+                        try {
+                            const daily = await DataService.getAttendanceByDate(ds);
+                            const ids = new Set(daily.map(r => String(r.userId).toLowerCase()));
+                            if (ids.has(normEmpId)) presentDays.add(day);
+                        } catch {}
+                    }
+                }
+                // Ensure the clicked date (if in same month/year) shows as present
+                if (presentDate) {
+                    const sameMonth = presentDate.getFullYear() === year && (presentDate.getMonth() + 1) === month;
+                    if (sameMonth) {
+                        presentDays.add(presentDate.getDate());
+                    }
+                }
                 setPresentDates(presentDays);
         
                 const daysInMonth = new Date(year, month, 0).getDate();
@@ -54,13 +222,14 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
         };
 
         fetchUserAttendance();
-    }, [employee, monthDate, currentUser]);
+    }, [employee, monthDate, currentUser, presentDate]);
     
     const renderMiniCalendar = () => {
         const year = monthDate.getFullYear();
         const month = monthDate.getMonth();
         const firstDayOfMonth = new Date(year, month, 1).getDay();
         const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const today = new Date();
 
         const blanks = Array(firstDayOfMonth).fill(null);
         const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -77,12 +246,15 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                         const dayOfWeek = date.getDay();
                         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                         const isPresent = presentDates.has(day);
+                        const isFuture = date > today;
 
                         let classes = "w-8 h-8 flex items-center justify-center rounded text-sm";
-                        if (isWeekend) {
-                            classes += " bg-slate-100 text-slate-400";
-                        } else if (isPresent) {
+                        if (isPresent) {
                             classes += " bg-green-500 text-white font-bold";
+                        } else if (isFuture) {
+                            classes += " border-2 border-slate-300 text-slate-600";
+                        } else if (isWeekend) {
+                            classes += " bg-slate-100 text-slate-400";
                         } else {
                             classes += " bg-red-100 text-red-700";
                         }
@@ -175,11 +347,15 @@ const AdminAttendanceView: React.FC = () => {
                 setIsLoading(true);
                 try {
                     const dateString = selectedDate.toISOString().split('T')[0];
-                    const attendanceRecords = await DataService.getAttendanceByDate(dateString, currentUser.id);
+                    const attendanceRecords = await DataService.getAttendanceByDate(dateString);
                     const presentIds = attendanceRecords.map(rec => rec.userId);
-                    const allUsers = AuthService.getUsers();
-                    const employees = allUsers.filter(u => presentIds.includes(u.id));
-                    setPresentEmployees(employees);
+                    const allUsers = await DataService.getUsers();
+                    const userMap = new Map(allUsers.map(u => [u.id, u]));
+                    const displayUsers: User[] = presentIds.map(id => {
+                        const found = userMap.get(id);
+                        return found || { id, name: id, email: '', role: UserRole.EMPLOYEE } as User;
+                    });
+                    setPresentEmployees(displayUsers);
                 } catch (error) {
                     console.error("Failed to fetch daily attendance", error);
                     setPresentEmployees([]);
@@ -240,6 +416,7 @@ const AdminAttendanceView: React.FC = () => {
                 <EmployeeAttendanceDetailModal 
                     employee={selectedEmployee}
                     monthDate={selectedDate}
+                    presentDate={selectedDate}
                     onClose={() => setSelectedEmployee(null)}
                 />
             )}
@@ -251,6 +428,8 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
     const { user: currentUser } = useAuth();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [attendanceStatus, setAttendanceStatus] = useState<Record<string, 'present' | 'absent'>>({});
+    const [refreshKey, setRefreshKey] = useState(0);
+    const optimisticPunchAt = useRef<number | null>(null);
 
      useEffect(() => {
         if (!currentUser) return;
@@ -262,8 +441,31 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
             const newStatus: Record<string, 'present' | 'absent'> = {};
 
             try {
-                const attendanceRecords = await DataService.getAttendanceForUserByMonth(user.id, year, month, currentUser.id);
-                const presentDates = new Set(attendanceRecords.map(rec => new Date(rec.date).getUTCDate()));
+                const attendanceRecords = await DataService.getAttendanceForUserByMonth(user.id, year, month);
+                const extractDay = (dateStr: string): number | null => {
+                    const s = String(dateStr);
+                    const asDate = new Date(s);
+                    if (!isNaN(asDate.getTime())) return asDate.getDate();
+                    const core = s.split('T')[0];
+                    const parts = core.split(/[-\/]/);
+                    if (parts.length >= 3) {
+                        if (parts[0].length === 4) {
+                            const d = parseInt(parts[2], 10);
+                            return isNaN(d) ? null : d;
+                        } else {
+                            const d = parseInt(parts[0], 10);
+                            return isNaN(d) ? null : d;
+                        }
+                    }
+                    return null;
+                };
+
+                const presentDates = new Set<number>();
+                for (const rec of attendanceRecords) {
+                    const core = typeof rec.date === 'string' ? rec.date : '';
+                    const d = core ? extractDay(core) : null;
+                    if (d) presentDates.add(d);
+                }
     
                 for (let day = 1; day <= daysInMonth; day++) {
                     const date = new Date(year, month - 1, day);
@@ -278,13 +480,45 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
                         newStatus[day] = 'absent';
                     }
                 }
+
+                // If backend hasn't indexed today's record yet, keep optimistic green briefly
+                const now = Date.now();
+                const recentPunch = optimisticPunchAt.current && (now - optimisticPunchAt.current) < 5000; // 5s window
+                const isSameMonth = today.getFullYear() === year && (today.getMonth() + 1) === month;
+                if (recentPunch && isSameMonth) {
+                    const dow = today.getDay();
+                    if (dow !== 0 && dow !== 6) {
+                        const d = today.getDate();
+                        newStatus[d] = 'present';
+                    }
+                }
                 setAttendanceStatus(newStatus);
             } catch (error) {
                 console.error("Failed to fetch user's monthly attendance", error);
             }
         };
         fetchAttendance();
-    }, [currentDate, user.id, currentUser]);
+    }, [currentDate, user.id, currentUser, refreshKey]);
+
+    // Refresh monthly data when header punches in/out (optimistic + delayed refetch)
+    useEffect(() => {
+        const handler = () => {
+            const now = new Date();
+            const sameMonth = now.getFullYear() === currentDate.getFullYear() && now.getMonth() === currentDate.getMonth();
+            if (sameMonth) {
+                const dow = now.getDay();
+                if (dow !== 0 && dow !== 6) {
+                    const day = now.getDate();
+                    setAttendanceStatus(prev => ({ ...prev, [day]: 'present' }));
+                }
+            }
+            optimisticPunchAt.current = Date.now();
+            // Delay refetch slightly to allow backend write/indexing
+            setTimeout(() => setRefreshKey(prev => prev + 1), 800);
+        };
+        window.addEventListener('ets-attendance-updated', handler as EventListener);
+        return () => window.removeEventListener('ets-attendance-updated', handler as EventListener);
+    }, [currentDate]);
 
 
     const changeMonth = (offset: number) => {
@@ -361,6 +595,7 @@ const Attendance: React.FC = () => {
             case UserRole.HR:
                 return <AdminAttendanceView />;
             case UserRole.MANAGER:
+                return <ManagerAttendanceView />;
             case UserRole.EMPLOYEE:
                 return <EmployeeAttendanceView user={user} />;
             default:

@@ -18,10 +18,9 @@ const DEPARTMENTS_API_URL = 'https://pp02swd0a8.execute-api.ap-south-1.amazonaws
 
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
 
-const ATTENDANCE_GET_BY_DATE_URL = 'https://onp8l5se9i.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-by-date';
-const ATTENDANCE_GET_BY_USER_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-user';
-const ATTENDANCE_RECORD_ACTION_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/ETS-record-attendance-action';
-
+const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.amazonaws.com/dev/attendance/user';
+const ATTENDANCE_GET_BY_DATE_URL = 'https://rhb8m6a8mg.execute-api.ap-south-1.amazonaws.com/dev/attendance/date';
+const ATTENDANCE_RECORD_ACTION_URL = 'https://q1rltbjzl4.execute-api.ap-south-1.amazonaws.com/dev/attendance/record'; // POST
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIS / FALLBACKS ---
 let CONVERSATIONS: ChatConversation[] = [
@@ -828,59 +827,123 @@ export const createCompany = (name: string, ownerId: string): Company => {
 
 
 // --- ATTENDANCE SERVICE ---
-export const getAttendanceByDate = async (date: string): Promise<string[]> => {
+export const getAttendanceByDate = async (date: string): Promise<Array<{ userId: string; date?: string }>> => {
     try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_DATE_URL, {
-            method: 'POST',
-            body: JSON.stringify({ date }),
-        });
+        // --- THIS IS THE CORRECTED LINE ---
+        const endpoint = `${ATTENDANCE_GET_BY_DATE_URL}?date=${encodeURIComponent(date)}`;
+        // ----------------------------------
+
+        const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
-        const attendanceRecords = extractArrayFromApiResponse(data, 'attendance');
-        return attendanceRecords.map((record: any) => record.userId);
+        const raw = extractArrayFromApiResponse(data, 'attendance');
+        const normalized = raw
+            .map((r: any) => {
+                if (typeof r === 'string') {
+                    return { userId: r, date };
+                }
+                const userId = r.userId || r.user_id || r.user || r.id;
+                const d = r.date || r.timestamp || r.attendanceDate || date;
+                return userId ? { userId: String(userId), date: d } : null;
+            })
+            .filter((x: any) => x);
+        return normalized;
     } catch (error) {
         console.error(`Failed to fetch attendance for date ${date}:`, error);
-        return ATTENDANCE_DATA[date] || []; // Fallback to mock data
+        const fallback = (ATTENDANCE_DATA[date] || []).map(uid => ({ userId: uid, date }));
+        return fallback;
     }
 };
 
-export const getAttendanceForUserByMonth = async (userId: string, year: number, month: number): Promise<string[]> => {
+export const getAttendanceForUserByMonth = async (
+    userId: string,
+    year: number,
+    month: number
+): Promise<Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_USER_URL, {
-            method: 'POST',
-            body: JSON.stringify({ userId }),
-        });
+        // Always use query parameter as backend requires ?userId even if path includes {userId}
+        const baseUserUrl = ATTENDANCE_GET_BY_USER_URL
+            .replace('{userId}', '')
+            .replace(/\/{userId}/g, '')
+            .replace(/\/$/, '');
+        const endpoint = `${baseUserUrl}?userId=${encodeURIComponent(userId)}&year=${encodeURIComponent(String(year))}&month=${encodeURIComponent(String(month))}`;
+        const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
-        const allUserAttendanceRecords = extractArrayFromApiResponse(data, 'attendance');
+        const raw = extractArrayFromApiResponse(data, 'attendance');
 
-        const presentDatesInMonth = allUserAttendanceRecords
-            .filter((record: any) => {
-                const recordDate = new Date(record.date);
-                // Note: month from API might be 1-indexed, JS Date getMonth() is 0-indexed.
-                // Assuming month parameter here is 0-indexed for consistency with JS Date object.
-                return recordDate.getFullYear() === year && recordDate.getMonth() === month;
+        const normalizedAll = raw
+            .map((r: any) => {
+                const uid = (r?.userId || r?.user_id || r?.user || r?.id || userId);
+                const d = r?.date || r?.timestamp || r?.attendanceDate;
+                if (!d) return null;
+                const rec: { userId: string; date: string; punchInTime?: string; punchOutTime?: string } = {
+                    userId: String(uid),
+                    date: String(d),
+                };
+                if (r?.punchInTime) rec.punchInTime = String(r.punchInTime);
+                if (r?.punchOutTime) rec.punchOutTime = String(r.punchOutTime);
+                return rec;
             })
-            .map((record: any) => record.date);
+            .filter((x: any) => x);
 
-        return presentDatesInMonth;
+        // Helper to parse year and month from various date formats
+        const parseYearMonth = (dateStr: string): { y: number; m: number } | null => {
+            const s = String(dateStr);
+            // Try ISO
+            const asDate = new Date(s);
+            if (!isNaN(asDate.getTime())) {
+                return { y: asDate.getFullYear(), m: asDate.getMonth() + 1 };
+            }
+            const core = s.split('T')[0];
+            const parts = core.split(/[-\/]/);
+            if (parts.length >= 3) {
+                // Detect if first part is year (yyyy-mm-dd) or day (dd-mm-yyyy)
+                if (parts[0].length === 4) {
+                    const y = parseInt(parts[0], 10);
+                    const m = parseInt(parts[1], 10);
+                    if (!isNaN(y) && !isNaN(m)) return { y, m };
+                } else {
+                    const d = parseInt(parts[0], 10);
+                    const m = parseInt(parts[1], 10);
+                    const y = parseInt(parts[2], 10);
+                    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) return { y, m };
+                }
+            }
+            return null;
+        };
 
+        const presentThisMonth = normalizedAll.filter((rec: { userId: string; date: string }) => {
+            const parsed = parseYearMonth(rec.date);
+            return parsed ? (parsed.y === year && parsed.m === month) : false;
+        });
+
+        return presentThisMonth;
     } catch (error) {
         console.error(`Failed to fetch attendance for user ${userId} in month ${month + 1}/${year}:`, error);
         const monthString = (month + 1).toString().padStart(2, '0');
-        const presentDates: string[] = [];
+        const presentDates: Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }> = [];
         for (const dateKey in ATTENDANCE_DATA) {
             if (dateKey.startsWith(`${year}-${monthString}`) && ATTENDANCE_DATA[dateKey].includes(userId)) {
-                presentDates.push(dateKey);
+                presentDates.push({ userId, date: dateKey });
             }
         }
         return presentDates; // Fallback to mock data
     }
 };
 
-export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUNCH_OUT'): Promise<any> => {
+const normalizeAttendanceAction = (action: string): string => {
+    const k = action.toUpperCase();
+    if (k === 'PUNCH_IN') return 'punchIn';
+    if (k === 'PUNCH_OUT') return 'punchOut';
+    if (k === 'START_BREAK') return 'startBreak';
+    if (k === 'END_BREAK') return 'endBreak';
+    return action;
+};
+
+export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUNCH_OUT' | 'START_BREAK' | 'END_BREAK'): Promise<any> => {
     try {
         const response = await authenticatedFetch(ATTENDANCE_RECORD_ACTION_URL, {
             method: 'POST',
-            body: JSON.stringify({ userId, action }),
+            body: JSON.stringify({ userId, action: normalizeAttendanceAction(action) }),
         });
         return parseApiResponse(response);
     } catch (error) {
