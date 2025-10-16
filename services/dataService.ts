@@ -316,9 +316,11 @@ export const getAllTasks = async (): Promise<Task[]> => {
             assign_by: task.assign_by,
             status: mapApiStatusToTaskStatus(task.status),
             priority: task.priority,
-            estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
-            // Include other fields if your API returns them
-            notes: task.notes,
+            estimatedTime: (task.est_time ? parseInt(task.est_time, 10) : (task.estimated_time ? parseInt(task.estimated_time, 10) : undefined)),
+            // Prefer backend 'messages' array, map to internal notes structure; fallback to 'notes' if present
+            notes: Array.isArray(task.messages)
+                    ? task.messages.map((m: any) => ({ id: m.messageId || m.id, authorId: m.senderId || m.authorId, content: m.text || m.content, timestamp: m.timestamp }))
+                    : task.notes,
             dependency: task.dependency,
             dependencyLogs: task.dependencyLogs,
             tags: task.tags,
@@ -390,8 +392,12 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
     return tasks.filter(t => t.assigneeIds?.includes(assigneeId));
 };
 
-export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeIds?: string[] }, currentUserId: string): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string[] } = {
+export const updateTask = async (
+    taskId: string,
+    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string },
+    currentUserId: string
+): Promise<Task> => {
+    const payload: { currentUserId: string; status?: string; assign_to?: string[]; due_date?: string; est_time?: number; message?: string } = {
         currentUserId: currentUserId,
     };
     if (updates.status) {
@@ -401,13 +407,31 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
     if (updates.hasOwnProperty('assigneeIds')) {
         payload.assign_to = updates.assigneeIds || [];
     }
+    if (updates.dueDate) {
+        payload.due_date = updates.dueDate;
+    }
+    if (typeof updates.estimatedTime === 'number') {
+        payload.est_time = updates.estimatedTime;
+    }
+    if (updates.message && updates.message.trim() !== '') {
+        payload.message = updates.message.trim();
+    }
 
     const endpointUrl = `${TASKS_UPDATE_API_BASE_URL}/${taskId}`;
 
-    const response = await authenticatedFetch(endpointUrl, {
-        method: 'PUT',
-        body: JSON.stringify(payload)
-    });
+    let response: Response;
+    try {
+        response = await authenticatedFetch(endpointUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    } catch (networkErr) {
+        console.warn('[DataService.updateTask] POST failed, retrying with PUT...', networkErr);
+        response = await authenticatedFetch(endpointUrl, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    }
 
     if (!response.ok) {
         let errorMessage = 'Failed to update task.';
@@ -436,8 +460,10 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         assign_by: updatedTaskData.assign_by,
         status: mapApiStatusToTaskStatus(updatedTaskData.status),
         priority: updatedTaskData.priority,
-        estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
-        notes: updatedTaskData.notes,
+        estimatedTime: (updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : (updatedTaskData.estimated_time ? parseInt(updatedTaskData.estimated_time, 10) : undefined)),
+        notes: Array.isArray(updatedTaskData.messages)
+                ? updatedTaskData.messages.map((m: any) => ({ id: m.messageId || m.id, authorId: m.senderId || m.authorId, content: m.text || m.content, timestamp: m.timestamp }))
+                : updatedTaskData.notes,
         dependency: updatedTaskData.dependency,
         dependencyLogs: updatedTaskData.dependencyLogs,
         tags: updatedTaskData.tags,
