@@ -78,7 +78,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
+  role: UserRole | string; // Allow custom role names
   companyId?: string;
   managerId?: string;
   departmentIds?: string[];
@@ -235,4 +235,14 @@ export interface OnboardingSubmission {
     // New fields for onboarding view
     status: OnboardingStatus;
     steps?: OnboardingStep[];
+}
+
+// Add CustomRole interface at the end
+export interface CustomRole {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  permissions: string[];
+  createdAt: string;
 }
