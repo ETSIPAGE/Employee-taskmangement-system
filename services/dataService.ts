@@ -319,16 +319,18 @@ export const getAllTasks = async (): Promise<Task[]> => {
             return [];
         }
         
-        cachedTasks = tasksFromApi.map((task: any): Task => ({
-            id: task.id,
-            name: task.title,
-            description: task.description,
-            dueDate: task.due_date,
-            projectId: task.project,
-            assigneeIds: Array.isArray(task.assign_to) ? task.assign_to : (task.assign_to ? [task.assign_to] : []),
-            assign_by: task.assign_by,
-            status: mapApiStatusToTaskStatus(task.status),
-            priority: task.priority,
+        cachedTasks = tasksFromApi.map((task: any, idx: number): Task => ({
+            id: String(task.id ?? task.taskId ?? `task-${idx}-${Date.now()}`),
+            name: String(task.title ?? task.name ?? 'Untitled Task'),
+            description: typeof task.description === 'string' ? task.description : '',
+            dueDate: task.due_date ?? task.dueDate ?? '',
+            projectId: String(task.project ?? task.projectId ?? ''),
+            assigneeIds: Array.isArray(task.assign_to)
+                ? task.assign_to
+                : (task.assign_to ? [task.assign_to] : []),
+            assign_by: task.assign_by ?? task.created_by ?? task.creatorId,
+            status: mapApiStatusToTaskStatus(String(task.status || 'To-Do')),
+            priority: task.priority ?? 'medium',
             estimatedTime: (task.est_time ? parseInt(task.est_time, 10) : (task.estimated_time ? parseInt(task.estimated_time, 10) : undefined)),
             // Prefer backend 'messages' array, map to internal notes structure; fallback to 'notes' if present
             notes: Array.isArray(task.messages)
