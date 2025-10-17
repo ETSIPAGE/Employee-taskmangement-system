@@ -13,34 +13,48 @@ const getInitials = (name: string) => {
 };
 
 const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date; onClose: () => void; }> = ({ employee, monthDate, onClose }) => {
+    const { user: currentUser } = useAuth();
     const [stats, setStats] = useState({ present: 0, absent: 0, percentage: 0 });
     const [presentDates, setPresentDates] = useState<Set<number>>(new Set());
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        const year = monthDate.getFullYear();
-        const month = monthDate.getMonth();
+        const fetchUserAttendance = async () => {
+            if (!currentUser) return;
+            setIsLoading(true);
+            const year = monthDate.getFullYear();
+            const month = monthDate.getMonth() + 1; // API uses 1-12
+            
+            try {
+                const userPresentRecords = await DataService.getAttendanceForUserByMonth(employee.id, year, month, currentUser.id);
+                // The date from DynamoDB might be a full ISO string, so we parse it safely.
+                const presentDays = new Set(userPresentRecords.map(d => new Date(d.date).getUTCDate()));
+                setPresentDates(presentDays);
         
-        const userPresentDates = DataService.getAttendanceForUserByMonth(employee.id, year, month);
-        const presentDays = new Set(userPresentDates.map(d => new Date(d).getUTCDate()));
-        setPresentDates(presentDays);
-
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        let workingDays = 0;
-        for (let day = 1; day <= daysInMonth; day++) {
-            const date = new Date(year, month, day);
-            const dayOfWeek = date.getDay();
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday or Saturday
-                workingDays++;
+                const daysInMonth = new Date(year, month, 0).getDate();
+                let workingDays = 0;
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const date = new Date(year, month - 1, day);
+                    const dayOfWeek = date.getDay();
+                    if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday or Saturday
+                        workingDays++;
+                    }
+                }
+        
+                const presentCount = presentDays.size;
+                const absentCount = workingDays - presentCount;
+                const percentage = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 0;
+        
+                setStats({ present: presentCount, absent: absentCount, percentage });
+            } catch (error) {
+                console.error("Failed to load user attendance details", error);
+            } finally {
+                setIsLoading(false);
             }
-        }
+        };
 
-        const presentCount = presentDays.size;
-        const absentCount = workingDays - presentCount;
-        const percentage = workingDays > 0 ? Math.round((presentCount / workingDays) * 100) : 0;
-
-        setStats({ present: presentCount, absent: absentCount, percentage });
-
-    }, [employee, monthDate]);
+        fetchUserAttendance();
+    }, [employee, monthDate, currentUser]);
     
     const renderMiniCalendar = () => {
         const year = monthDate.getFullYear();
@@ -54,7 +68,7 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
         return (
              <div className="mt-4">
                  <div className="grid grid-cols-7 gap-1 text-center text-xs text-slate-500 font-semibold mb-2">
-                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(day => <div key={day}>{day}</div>)}
+                    {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, i) => <div key={i}>{day}</div>)}
                 </div>
                 <div className="grid grid-cols-7 gap-1">
                     {blanks.map((_, i) => <div key={`blank-${i}`}></div>)}
@@ -89,13 +103,17 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                     <p className="text-slate-500">{employee.jobTitle}</p>
                  </div>
             </div>
-            <h4 className="font-semibold text-slate-700">Stats for {monthDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h4>
-             <div className="grid grid-cols-3 gap-4 my-4 text-center">
-                <div className="bg-green-50 p-3 rounded-lg"><p className="text-2xl font-bold text-green-700">{stats.present}</p><p className="text-xs text-green-600">Present</p></div>
-                <div className="bg-red-50 p-3 rounded-lg"><p className="text-2xl font-bold text-red-700">{stats.absent}</p><p className="text-xs text-red-600">Absent</p></div>
-                <div className="bg-indigo-50 p-3 rounded-lg"><p className="text-2xl font-bold text-indigo-700">{stats.percentage}%</p><p className="text-xs text-indigo-600">Percentage</p></div>
-            </div>
-            {renderMiniCalendar()}
+            {isLoading ? <p>Loading details...</p> : (
+                <>
+                    <h4 className="font-semibold text-slate-700">Stats for {monthDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h4>
+                    <div className="grid grid-cols-3 gap-4 my-4 text-center">
+                        <div className="bg-green-50 p-3 rounded-lg"><p className="text-2xl font-bold text-green-700">{stats.present}</p><p className="text-xs text-green-600">Present</p></div>
+                        <div className="bg-red-50 p-3 rounded-lg"><p className="text-2xl font-bold text-red-700">{stats.absent}</p><p className="text-xs text-red-600">Absent</p></div>
+                        <div className="bg-indigo-50 p-3 rounded-lg"><p className="text-2xl font-bold text-indigo-700">{stats.percentage}%</p><p className="text-xs text-indigo-600">Percentage</p></div>
+                    </div>
+                    {renderMiniCalendar()}
+                </>
+            )}
         </Modal>
     );
 };
@@ -119,7 +137,7 @@ const CalendarMonthView: React.FC<{
         <div className="bg-white p-4 rounded-lg shadow-md">
             <h3 className="text-lg font-bold text-center text-slate-800 mb-3">{date.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
             <div className="grid grid-cols-7 gap-1 text-center text-sm text-slate-500 font-semibold mb-2">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day}>{day}</div>)}
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day,i) => <div key={i}>{day}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-1">
                 {blanks.map((_, i) => <div key={`blank-${i}`}></div>)}
@@ -144,22 +162,36 @@ const CalendarMonthView: React.FC<{
 };
 
 const AdminAttendanceView: React.FC = () => {
+    const { user: currentUser } = useAuth();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
     const [presentEmployees, setPresentEmployees] = useState<User[]>([]);
     const [selectedEmployee, setSelectedEmployee] = useState<User | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
     useEffect(() => {
-        if (selectedDate) {
-            const dateString = selectedDate.toISOString().split('T')[0];
-            const presentIds = DataService.getAttendanceByDate(dateString);
-            const allUsers = AuthService.getUsers();
-            const employees = allUsers.filter(u => presentIds.includes(u.id));
-            setPresentEmployees(employees);
+        if (selectedDate && currentUser) {
+            const fetchAttendance = async () => {
+                setIsLoading(true);
+                try {
+                    const dateString = selectedDate.toISOString().split('T')[0];
+                    const attendanceRecords = await DataService.getAttendanceByDate(dateString, currentUser.id);
+                    const presentIds = attendanceRecords.map(rec => rec.userId);
+                    const allUsers = AuthService.getUsers();
+                    const employees = allUsers.filter(u => presentIds.includes(u.id));
+                    setPresentEmployees(employees);
+                } catch (error) {
+                    console.error("Failed to fetch daily attendance", error);
+                    setPresentEmployees([]);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            fetchAttendance();
         } else {
             setPresentEmployees([]);
         }
-    }, [selectedDate]);
+    }, [selectedDate, currentUser]);
     
     const changeMonth = (offset: number) => {
         setCurrentDate(prev => {
@@ -187,7 +219,8 @@ const AdminAttendanceView: React.FC = () => {
 
             <div className="bg-white p-6 rounded-lg shadow-lg">
                 <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">{selectedDate ? `Present on ${selectedDate.toLocaleDateString()}` : 'Select a date'}</h3>
-                {selectedDate ? (
+                {isLoading ? <p className="text-slate-500 text-center pt-8">Loading attendance...</p> :
+                 selectedDate ? (
                     presentEmployees.length > 0 ? (
                         <ul className="space-y-3">
                             {presentEmployees.map(emp => (
@@ -215,34 +248,44 @@ const AdminAttendanceView: React.FC = () => {
 };
 
 const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
+    const { user: currentUser } = useAuth();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [attendanceStatus, setAttendanceStatus] = useState<Record<string, 'present' | 'absent'>>({});
 
      useEffect(() => {
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const today = new Date();
-        const newStatus: Record<string, 'present' | 'absent'> = {};
+        if (!currentUser) return;
+        const fetchAttendance = async () => {
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth() + 1; // API expects 1-12
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const today = new Date();
+            const newStatus: Record<string, 'present' | 'absent'> = {};
 
-        for (let day = 1; day <= daysInMonth; day++) {
-            const date = new Date(year, month, day);
-            if (date > today) continue; // Don't mark future dates
-
-            const dayOfWeek = date.getDay();
-            if (dayOfWeek === 0 || dayOfWeek === 6) continue; // Skip weekends
-
-            const dateString = date.toISOString().split('T')[0];
-            const presentIds = DataService.getAttendanceByDate(dateString);
-            
-            if (presentIds.includes(user.id)) {
-                newStatus[day] = 'present';
-            } else {
-                newStatus[day] = 'absent';
+            try {
+                const attendanceRecords = await DataService.getAttendanceForUserByMonth(user.id, year, month, currentUser.id);
+                const presentDates = new Set(attendanceRecords.map(rec => new Date(rec.date).getUTCDate()));
+    
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const date = new Date(year, month - 1, day);
+                    if (date > today) continue;
+    
+                    const dayOfWeek = date.getDay();
+                    if (dayOfWeek === 0 || dayOfWeek === 6) continue;
+    
+                    if (presentDates.has(day)) {
+                        newStatus[day] = 'present';
+                    } else {
+                        newStatus[day] = 'absent';
+                    }
+                }
+                setAttendanceStatus(newStatus);
+            } catch (error) {
+                console.error("Failed to fetch user's monthly attendance", error);
             }
-        }
-        setAttendanceStatus(newStatus);
-    }, [currentDate, user.id]);
+        };
+        fetchAttendance();
+    }, [currentDate, user.id, currentUser]);
+
 
     const changeMonth = (offset: number) => {
         setCurrentDate(prev => {
@@ -269,7 +312,7 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
                     <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-100">&gt;</button>
                 </div>
                 <div className="grid grid-cols-7 gap-2 text-center text-sm text-slate-500 font-semibold mb-2">
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day}>{day}</div>)}
+                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day,i) => <div key={i}>{day}</div>)}
                 </div>
                 <div className="grid grid-cols-7 gap-2">
                     {blanks.map((_, i) => <div key={`blank-${i}`}></div>)}

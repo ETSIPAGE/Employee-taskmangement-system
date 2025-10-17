@@ -71,7 +71,14 @@ const BarChart = ({ data, title }: { data: { label: string, value: number }[], t
     );
 };
 
-const OverdueTaskItem = ({ task, project, assignee }: { task: Task, project?: Project, assignee?: User }) => {
+// FIX: Explicitly type component with React.FC to ensure proper handling of React-specific props like 'key'.
+interface OverdueTaskItemProps {
+    task: Task;
+    project?: Project;
+    assignees?: User[];
+}
+
+const OverdueTaskItem: React.FC<OverdueTaskItemProps> = ({ task, project, assignees }) => {
     return (
         <li className="py-3 border-b border-slate-100 last:border-b-0">
             <div className="flex items-center justify-between">
@@ -81,7 +88,7 @@ const OverdueTaskItem = ({ task, project, assignee }: { task: Task, project?: Pr
                     </Link>
                     <div className="text-xs text-slate-500 mt-1 flex items-center space-x-4">
                         <span>Project: {project?.name || 'N/A'}</span>
-                        <span>Assignee: {assignee?.name || 'Unassigned'}</span>
+                        <span>Assignees: {(assignees && assignees.length > 0) ? assignees.map(a => a.name).join(', ') : 'Unassigned'}</span>
                     </div>
                 </div>
                 <div className="text-right flex-shrink-0 ml-4">
@@ -222,7 +229,7 @@ const AdminDashboard: React.FC = () => {
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Overdue Tasks</h2>
                     {overdueTasksList.length > 0 ? (
                         <ul className="divide-y divide-slate-100">
-                           {overdueTasksList.map(task => <OverdueTaskItem key={task.id} task={task} project={projectsMap.get(task.projectId)} assignee={usersMap.get(task.assigneeId || '')} />)}
+                           {overdueTasksList.map(task => <OverdueTaskItem key={task.id} task={task} project={projectsMap.get(task.projectId)} assignees={(task.assigneeIds || []).map(id => usersMap.get(id)).filter(u => u) as User[]} />)}
                         </ul>
                     ) : (
                         <p className="text-center py-4 text-slate-500">No overdue tasks. Great job!</p>

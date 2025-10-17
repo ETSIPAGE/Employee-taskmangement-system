@@ -2,13 +2,18 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import { Project, Task, TaskStatus, UserRole } from '../../types';
+import * as AuthService from '../../services/authService';
+import { Project, Task, TaskStatus, User, UserRole } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import { EditIcon, TrashIcon } from '../../constants';
+import Button from '../shared/Button';
+import Modal from '../shared/Modal';
+import Input from '../shared/Input';
 
 interface HydratedTask extends Task {
     projectName: string;
+    assigneeNames: string[];
 }
 
 const EmployeeTasks: React.FC = () => {
@@ -17,8 +22,23 @@ const EmployeeTasks: React.FC = () => {
 
     const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
+    const [allUsers, setAllUsers] = useState<User[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [view, setView] = useState<'card' | 'table'>('card');
+
+    // Modal and form state
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [apiProjects, setApiProjects] = useState<Project[]>([]);
+    const [newTaskData, setNewTaskData] = useState({
+        project: '',
+        title: '',
+        description: '',
+        due_date: '',
+        priority: 'medium' as 'low' | 'medium' | 'high',
+        est_time: '',
+    });
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [submitError, setSubmitError] = useState('');
 
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
@@ -29,17 +49,26 @@ const EmployeeTasks: React.FC = () => {
         if (!user) return;
         setIsLoading(true);
         try {
-            const [userTasks, allProjects] = await Promise.all([
+            const [userTasks, allProjects, users] = await Promise.all([
                 DataService.getTasksByAssignee(user.id),
-                DataService.getAllProjects()
+                DataService.getAllProjects(),
+                AuthService.getUsers()
             ]);
             
             setProjects(allProjects);
+            setApiProjects(allProjects);
+            setAllUsers(users);
+
+            if (allProjects.length > 0 && !newTaskData.project) {
+                setNewTaskData(prev => ({ ...prev, project: allProjects[0].id }));
+            }
 
             const projectsMap = new Map(allProjects.map(p => [p.id, p]));
+            const usersMap = new Map(users.map(u => [u.id, u]));
             const newHydratedTasks = userTasks.map(task => ({
                 ...task,
-                projectName: projectsMap.get(task.projectId)?.name || 'N/A'
+                projectName: projectsMap.get(task.projectId)?.name || 'N/A',
+                assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
 
@@ -48,11 +77,47 @@ const EmployeeTasks: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [user]);
+    }, [user, newTaskData.project]);
 
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    const handleOpenModal = () => setIsModalOpen(true);
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        setSubmitError('');
+    };
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+        const { name, value } = e.target;
+        setNewTaskData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleCreateTask = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!user) {
+            setSubmitError('You must be logged in to create a task.');
+            return;
+        }
+        setSubmitError('');
+        setIsSubmitting(true);
+        try {
+            const payload = {
+                ...newTaskData,
+                department: '', // Not applicable for employee self-assign
+                assign_to: [user.id],
+                currentUserId: user.id
+            };
+            await DataService.createTask(payload);
+            handleCloseModal();
+            loadData();
+        } catch (error) {
+            setSubmitError(error instanceof Error ? error.message : 'An unknown error occurred.');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     const filteredTasks = useMemo(() => {
         return hydratedTasks.filter(task => {
@@ -73,7 +138,10 @@ const EmployeeTasks: React.FC = () => {
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-slate-800 mb-6">My Tasks</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-slate-800">My Tasks</h1>
+                <Button onClick={handleOpenModal}>Create New Task</Button>
+            </div>
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
                 <div className="w-full md:w-auto md:flex-1"></div>
                 <div className="w-full md:w-64">
@@ -111,7 +179,7 @@ const EmployeeTasks: React.FC = () => {
                     <TaskCard
                             key={task.id}
                             task={task}
-                            assigneeName={user.name}
+                            assigneeNames={task.assigneeNames}
                             projectName={task.projectName}
                         />
                     ))}
@@ -123,7 +191,7 @@ const EmployeeTasks: React.FC = () => {
                             <tr>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Task</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project</th>
-                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignee</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignees</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Due Date</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Actions</th>
@@ -141,7 +209,7 @@ const EmployeeTasks: React.FC = () => {
                                 <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
-                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{user.name}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeNames.join(', ')}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <span className={`capitalize px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusStyles[task.status]}`}>
@@ -171,6 +239,49 @@ const EmployeeTasks: React.FC = () => {
                     </table>
                 </div>
             )}
+
+            <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
+                <form onSubmit={handleCreateTask} className="space-y-4">
+                    {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
+                    
+                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
+                    
+                    <div>
+                        <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
+                        <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
+                            className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm"
+                        />
+                    </div>
+                    
+                    <div>
+                        <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
+                        <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 rounded-md shadow-sm">
+                            {apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found</option>}
+                        </select>
+                    </div>
+
+                    <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="priority" className="block text-sm font-medium text-slate-700">Priority</label>
+                            <select id="priority" name="priority" value={newTaskData.priority} onChange={handleInputChange} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 rounded-md shadow-sm">
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
+                        <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
+                    </div>
+
+                    <div className="pt-4 flex justify-end space-x-3">
+                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">
+                            Cancel
+                        </button>
+                        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Creating...' : 'Create Task'}</Button>
+                    </div>
+                </form>
+            </Modal>
         </div>
     );
 };
