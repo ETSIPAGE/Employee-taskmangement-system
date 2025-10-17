@@ -5,7 +5,7 @@ import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, N
 let COMPANIES: Company[] = [
     { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
 ];
-import { getToken } from './authService'; // Assuming getToken is in authService
+import { getToken, getCurrentUser } from './authService'; // Assuming getToken is in authService
 
 // --- API ENDPOINTS ---
 const USERS_API_URL = 'https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users';
@@ -319,16 +319,18 @@ export const getAllTasks = async (): Promise<Task[]> => {
             return [];
         }
         
-        cachedTasks = tasksFromApi.map((task: any): Task => ({
-            id: task.id,
-            name: task.title,
-            description: task.description,
-            dueDate: task.due_date,
-            projectId: task.project,
-            assigneeIds: Array.isArray(task.assign_to) ? task.assign_to : (task.assign_to ? [task.assign_to] : []),
-            assign_by: task.assign_by,
-            status: mapApiStatusToTaskStatus(task.status),
-            priority: task.priority,
+        cachedTasks = tasksFromApi.map((task: any, idx: number): Task => ({
+            id: String(task.id ?? task.taskId ?? `task-${idx}-${Date.now()}`),
+            name: String(task.title ?? task.name ?? 'Untitled Task'),
+            description: typeof task.description === 'string' ? task.description : '',
+            dueDate: task.due_date ?? task.dueDate ?? '',
+            projectId: String(task.project ?? task.projectId ?? ''),
+            assigneeIds: Array.isArray(task.assign_to)
+                ? task.assign_to
+                : (task.assign_to ? [task.assign_to] : []),
+            assign_by: task.assign_by ?? task.created_by ?? task.creatorId,
+            status: mapApiStatusToTaskStatus(String(task.status || 'To-Do')),
+            priority: task.priority ?? 'medium',
             estimatedTime: (task.est_time ? parseInt(task.est_time, 10) : (task.estimated_time ? parseInt(task.estimated_time, 10) : undefined)),
             // Prefer backend 'messages' array, map to internal notes structure; fallback to 'notes' if present
             notes: Array.isArray(task.messages)
@@ -367,6 +369,11 @@ export const createTask = async (taskData: any): Promise<Task> => {
         return Number.isNaN(n) ? undefined : n;
     })();
 
+    // Determine current session user and role
+    const sessionUser = getCurrentUser();
+    const sessionUserId = sessionUser?.id;
+    const sessionUserRole = sessionUser?.role ? String(sessionUser.role).toUpperCase() : undefined;
+
     // Resolve department if missing but project is provided
     let resolvedDepartment: string | undefined = (taskData.department ?? taskData.departmentId);
     if ((!resolvedDepartment || resolvedDepartment === '') && (taskData.project || taskData.projectId)) {
@@ -378,17 +385,12 @@ export const createTask = async (taskData: any): Promise<Task> => {
         } catch {}
     }
 
-    // Fallback: if still no department, try to use the creator's first department
-    if ((!resolvedDepartment || resolvedDepartment === '') && taskData.currentUserId) {
-        try {
-            const creator = await getUserByIdFromApi(taskData.currentUserId);
-            if (creator && Array.isArray(creator.departmentIds) && creator.departmentIds.length > 0) {
-                resolvedDepartment = creator.departmentIds[0];
-            }
-        } catch {}
+    const currentUserId = taskData.currentUserId || sessionUserId;
+    if (!currentUserId) {
+        throw new Error('You must be logged in to create a task.');
     }
 
-    const payload = {
+    const payload: any = {
         title: taskData.title ?? taskData.name,
         description: taskData.description ?? '',
         project: taskData.project ?? taskData.projectId,
@@ -399,18 +401,53 @@ export const createTask = async (taskData: any): Promise<Task> => {
         assign_to: Array.isArray(taskData.assign_to)
             ? taskData.assign_to
             : (Array.isArray(taskData.assigneeIds) ? taskData.assigneeIds : []),
-        assign_by: taskData.assign_by ?? taskData.currentUserId,
+        assign_by: taskData.assign_by ?? currentUserId,
         status: taskData.status ?? 'To-Do',
+        // Extra metadata to help backend identify caller if needed
+        currentUserId,
+        role: sessionUserRole,
+        currentUserRole: sessionUserRole,
     };
 
+    // If creator is EMPLOYEE, allow missing department and set to empty string
+    const isEmployee = sessionUserRole === 'EMPLOYEE';
+    if ((!payload.department || payload.department === undefined) && isEmployee) {
+        payload.department = '';
+    }
+
+    // For employees, provide safe defaults to satisfy strict backend validation
+    if (isEmployee) {
+        if (!payload.description || (typeof payload.description === 'string' && payload.description.trim() === '')) {
+            payload.description = ' ';
+        }
+        if (!payload.due_date) {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            payload.due_date = `${yyyy}-${mm}-${dd}`;
+        }
+        if (!payload.priority) {
+            payload.priority = 'medium';
+        }
+        if (payload.est_time === undefined || payload.est_time === null || Number.isNaN(Number(payload.est_time)) || Number(payload.est_time) === 0) {
+            payload.est_time = 1;
+        }
+    }
+
     // Final fallbacks
-    if ((!payload.assign_to || payload.assign_to.length === 0) && payload.assign_by) {
-        payload.assign_to = [payload.assign_by];
+    if ((!payload.assign_to || payload.assign_to.length === 0) && currentUserId) {
+        payload.assign_to = [currentUserId];
     }
 
     // Defensive: ensure minimal required fields are present before hitting API
-    if (!payload.title || !payload.project || !payload.department || !payload.due_date || !payload.priority) {
-        throw new Error('Please fill Title, Project, Department, Due Date and Priority.');
+    if (!payload.title || !payload.project) {
+        throw new Error('Please fill Title and Project.');
+    }
+    if (!isEmployee) {
+        if (!payload.department || !payload.due_date || !payload.priority) {
+            throw new Error('Please fill Title, Project, Department, Due Date and Priority.');
+        }
     }
 
     // Single call to the configured create endpoint

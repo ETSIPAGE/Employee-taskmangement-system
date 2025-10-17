@@ -54,7 +54,9 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
-        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${roleStyles[user.role].border}`}>
+        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${
+            (roleStyles[user.role] || { border: 'border-slate-200' }).border
+        }`}>
             {/* Header */}
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-4">
@@ -64,7 +66,11 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     <div>
                          <div className="flex items-center gap-x-2">
                             <h3 className="text-xl font-bold text-slate-800">{user.name}</h3>
-                             <span className={`${roleStyles[user.role].bg} ${roleStyles[user.role].text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
+                            <span className={`${
+                                (roleStyles[user.role] || { bg: 'bg-slate-100', text: 'text-slate-700' }).bg
+                            } ${
+                                (roleStyles[user.role] || { bg: 'bg-slate-100', text: 'text-slate-700' }).text
+                            } text-xs font-semibold px-2 py-0.5 rounded-full`}>
                                 {user.role}
                             </span>
                         </div>
@@ -76,7 +82,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                 </div>
                 <div className="relative">
                      <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="flex items-center space-x-2 text-sm border rounded-lg px-3 py-1.5 hover:bg-slate-50">
-                        <span className={`w-2.5 h-2.5 rounded-full ${statusStyles[currentStatus].dot}`}></span>
+                        <span className={`w-2.5 h-2.5 rounded-full ${(statusStyles[currentStatus] || { dot: 'bg-slate-400' }).dot}`}></span>
                         <span>{currentStatus}</span>
                         <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                      </button>
