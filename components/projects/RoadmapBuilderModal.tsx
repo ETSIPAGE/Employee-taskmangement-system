@@ -10,9 +10,10 @@ interface RoadmapBuilderModalProps {
     onClose: () => void;
     project: Project;
     onSave: (roadmap: ProjectMilestone[]) => void;
+    isSaving?: boolean;
 }
 
-const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClose, project, onSave }) => {
+const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClose, project, onSave, isSaving }) => {
     const [roadmap, setRoadmap] = useState<ProjectMilestone[]>([]);
 
     useEffect(() => {
@@ -49,13 +50,21 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
 
     return (
         <Modal title={`Roadmap for "${project.name}"`} isOpen={isOpen} onClose={onClose}>
+            {/* Saving overlay indicator */}
+            {isSaving && (
+                <div className="mb-3 flex items-center text-sm text-slate-600">
+                    <span className="inline-block w-4 h-4 mr-2 rounded-full border-2 border-slate-300 border-t-indigo-600 animate-spin" />
+                    Saving roadmap...
+                </div>
+            )}
             <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
                 {roadmap.map(milestone => (
-                    <div key={milestone.id} className="p-4 border rounded-lg bg-slate-50 relative">
+                    <div key={milestone.id} className="p-4 border rounded-lg bg-slate-50 relative opacity-100">
                         <button
                             type="button"
-                            onClick={() => handleRemoveMilestone(milestone.id)}
-                            className="absolute top-3 right-3 text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100"
+                            onClick={() => !isSaving && handleRemoveMilestone(milestone.id)}
+                            className="absolute top-3 right-3 text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100 disabled:opacity-50"
+                            disabled={!!isSaving}
                         >
                             <TrashIcon />
                         </button>
@@ -65,6 +74,7 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
                                 label="Milestone Name"
                                 value={milestone.name}
                                 onChange={e => handleChange(milestone.id, 'name', e.target.value)}
+                                disabled={!!isSaving}
                             />
                              <div>
                                 <label htmlFor={`status-${milestone.id}`} className="block text-sm font-medium text-slate-700">Status</label>
@@ -72,7 +82,8 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
                                     id={`status-${milestone.id}`}
                                     value={milestone.status}
                                     onChange={e => handleChange(milestone.id, 'status', e.target.value)}
-                                    className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md shadow-sm"
+                                    className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md shadow-sm disabled:opacity-50"
+                                    disabled={!!isSaving}
                                 >
                                     {Object.values(MilestoneStatus).map(s => <option key={s} value={s}>{s}</option>)}
                                 </select>
@@ -84,7 +95,8 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
                                     rows={2}
                                     value={milestone.description}
                                     onChange={e => handleChange(milestone.id, 'description', e.target.value)}
-                                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm"
+                                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm disabled:opacity-50"
+                                    disabled={!!isSaving}
                                 />
                             </div>
                             <Input
@@ -93,6 +105,7 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
                                 type="date"
                                 value={formatDateForInput(milestone.startDate)}
                                 onChange={e => handleChange(milestone.id, 'startDate', e.target.value)}
+                                disabled={!!isSaving}
                             />
                             <Input
                                 id={`end-${milestone.id}`}
@@ -100,17 +113,27 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
                                 type="date"
                                 value={formatDateForInput(milestone.endDate)}
                                 onChange={e => handleChange(milestone.id, 'endDate', e.target.value)}
+                                disabled={!!isSaving}
                             />
                         </div>
                     </div>
                 ))}
-                <Button onClick={handleAddMilestone} fullWidth>
+                <Button onClick={handleAddMilestone} fullWidth disabled={!!isSaving}>
                     Add Milestone
                 </Button>
             </div>
             <div className="pt-4 flex justify-end space-x-3 border-t mt-4">
-                <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
-                <Button type="button" onClick={handleSave}>Save Roadmap</Button>
+                <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border disabled:opacity-50" disabled={!!isSaving}>Cancel</button>
+                <Button type="button" onClick={handleSave} disabled={!!isSaving}>
+                    {isSaving ? (
+                        <span className="inline-flex items-center">
+                            <span className="inline-block w-4 h-4 mr-2 rounded-full border-2 border-white/50 border-t-white animate-spin" />
+                            Saving...
+                        </span>
+                    ) : (
+                        'Save Roadmap'
+                    )}
+                </Button>
             </div>
         </Modal>
     );

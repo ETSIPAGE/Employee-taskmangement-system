@@ -37,6 +37,7 @@ const TaskDetail: React.FC = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [isEditingAssignees, setIsEditingAssignees] = useState(false);
 
     // Initial state for editedTask should be based on task, or empty if task is null
     const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number }>({});
@@ -63,6 +64,7 @@ const TaskDetail: React.FC = () => {
         setIsLoading(true);
         try {
             const currentTask = await DataService.getTaskById(taskId);
+
             if (!currentTask) {
                 setTask(null);
                 setProject(null); // Clear project as well
@@ -86,6 +88,7 @@ const TaskDetail: React.FC = () => {
 
             setProject(taskProject || null);
             setAllUsers(users);
+            setIsEditingAssignees(false);
 
         } catch (error) {
             console.error("Failed to load task details:", error);
@@ -100,6 +103,7 @@ const TaskDetail: React.FC = () => {
     }, [loadData]);
 
     const { canChangeStatus, canChangeAssignee, canAddNote } = useMemo(() => {
+
         if (!currentUser || !task || !project) {
             return { canChangeStatus: false, canChangeAssignee: false, canAddNote: false };
         }
@@ -121,6 +125,20 @@ const TaskDetail: React.FC = () => {
             canAddNote: true
         };
     }, [currentUser, task, project]);
+
+    // Partition users into Managers and Employees, filtered by the task's project departments
+    const { managersForProject, employeesForProject } = useMemo(() => {
+        const projDeptIds = project?.departmentIds || [];
+        const byDept = (u: User) => {
+            if (!projDeptIds.length) return true;
+            const uDepts = u.departmentIds || [];
+            return uDepts.some(id => projDeptIds.includes(id));
+        };
+        return {
+            managersForProject: allUsers.filter(u => u.role === UserRole.MANAGER && byDept(u)),
+            employeesForProject: allUsers.filter(u => u.role === UserRole.EMPLOYEE && byDept(u)),
+        };
+    }, [allUsers, project]);
 
     const handleAddNote = async () => {
         if (!newNote.trim() || !currentUser || !task || !taskId) return;
@@ -309,46 +327,113 @@ const TaskDetail: React.FC = () => {
                                 </select>
                             </DetailItem>
                             <DetailItem icon={<UserCircleIcon />} label="Assignees">
-                                {canChangeAssignee ? (
-                                    <div className="mt-1 max-h-48 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1">
-                                        {allUsers.filter(u => u.role !== UserRole.ADMIN).map(u => (
-                                            <div key={u.id} className="flex items-center p-1 rounded hover:bg-slate-100">
-                                                <input
-                                                    id={`detail-assignee-${u.id}`}
-                                                    type="checkbox"
-                                                    value={u.id}
-                                                    checked={(editedTask.assigneeIds || []).includes(u.id)}
-                                                    onChange={(e) => {
-                                                        const { value, checked } = e.target;
-                                                        setEditedTask(prev => ({
-                                                            ...prev,
-                                                            assigneeIds: checked
-                                                                ? [...(prev.assigneeIds || []), value]
-                                                                : (prev.assigneeIds || []).filter(id => id !== value)
-                                                        }));
-                                                    }}
-                                                    className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                                />
-                                                <label htmlFor={`detail-assignee-${u.id}`} className="ml-3 block text-sm text-slate-800">
-                                                    {u.name}
-                                                </label>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-wrap gap-2 mt-1">
-                                        {(task.assigneeIds && task.assigneeIds.length > 0) ? (
-                                            task.assigneeIds.map(id => {
-                                                const assignee = allUsers.find(u => u.id === id);
-                                                return (
-                                                    <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">
-                                                        {assignee?.name || 'Unknown'}
-                                                    </span>
-                                                );
-                                            })
-                                        ) : (
-                                            <span className="text-slate-500">Unassigned</span>
+                                {!isEditingAssignees && (
+                                    <div className="flex items-start justify-between">
+                                        <div className="flex flex-wrap gap-2 mt-1">
+                                            {(task.assigneeIds && task.assigneeIds.length > 0) ? (
+                                                task.assigneeIds.map(id => {
+                                                    const assignee = allUsers.find(u => u.id === id);
+                                                    return (
+                                                        <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                                                            {assignee?.name || 'Unknown'}
+                                                        </span>
+                                                    );
+                                                })
+                                            ) : (
+                                                <span className="text-slate-500">Unassigned</span>
+                                            )}
+                                        </div>
+                                        {canChangeAssignee && (
+                                            <Button onClick={() => {
+                                                // Start editing with current task assignees
+                                                setEditedTask(prev => ({ ...prev, assigneeIds: task.assigneeIds || [] }));
+                                                setIsEditingAssignees(true);
+                                            }}>
+                                                Edit
+                                            </Button>
                                         )}
+                                    </div>
+                                )}
+
+                                {canChangeAssignee && isEditingAssignees && (
+                                    <div className="space-y-4">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-700 mb-1">Managers</p>
+                                            <div className="mt-1 max-h-40 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1">
+                                                {managersForProject.length === 0 && (
+                                                    <p className="text-xs text-slate-500">No managers in project departments.</p>
+                                                )}
+                                                {managersForProject.map(u => (
+                                                    <label key={u.id} htmlFor={`assignee-mgr-${u.id}`} className="flex items-center p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                                        <input
+                                                            id={`assignee-mgr-${u.id}`}
+                                                            type="checkbox"
+                                                            value={u.id}
+                                                            checked={(editedTask.assigneeIds || []).includes(u.id)}
+                                                            onChange={(e) => {
+                                                                const { value, checked } = e.target;
+                                                                setEditedTask(prev => ({
+                                                                    ...prev,
+                                                                    assigneeIds: checked
+                                                                        ? [...(prev.assigneeIds || []), value]
+                                                                        : (prev.assigneeIds || []).filter(id => id !== value)
+                                                                }));
+                                                            }}
+                                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                        />
+                                                        <span className="ml-3 text-sm text-slate-800">{u.name}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-700 mb-1">Employees</p>
+                                            <div className="mt-1 max-h-40 overflow-y-auto border border-slate-200 rounded-md p-2 space-y-1">
+                                                {employeesForProject.length === 0 && (
+                                                    <p className="text-xs text-slate-500">No employees in project departments.</p>
+                                                )}
+                                                {employeesForProject.map(u => (
+                                                    <label key={u.id} htmlFor={`assignee-emp-${u.id}`} className="flex items-center p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                                        <input
+                                                            id={`assignee-emp-${u.id}`}
+                                                            type="checkbox"
+                                                            value={u.id}
+                                                            checked={(editedTask.assigneeIds || []).includes(u.id)}
+                                                            onChange={(e) => {
+                                                                const { value, checked } = e.target;
+                                                                setEditedTask(prev => ({
+                                                                    ...prev,
+                                                                    assigneeIds: checked
+                                                                        ? [...(prev.assigneeIds || []), value]
+                                                                        : (prev.assigneeIds || []).filter(id => id !== value)
+                                                                }));
+                                                            }}
+                                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                        />
+                                                        <span className="ml-3 text-sm text-slate-800">{u.name}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-end space-x-2">
+                                            <button
+                                                type="button"
+                                                className="px-3 py-1.5 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border"
+                                                onClick={() => {
+                                                    // Revert assignees and exit edit mode
+                                                    setEditedTask(prev => ({ ...prev, assigneeIds: task.assigneeIds || [] }));
+                                                    setIsEditingAssignees(false);
+                                                }}
+                                            >
+                                                Cancel
+                                            </button>
+                                            <Button
+                                                type="button"
+                                                onClick={() => setIsEditingAssignees(false)}
+                                            >
+                                                Done
+                                            </Button>
+                                        </div>
                                     </div>
                                 )}
                             </DetailItem>
