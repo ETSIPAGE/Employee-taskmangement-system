@@ -16,6 +16,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
   const [isPunchedIn, setIsPunchedIn] = useState(false);
   const [isPunchingIn, setIsPunchingIn] = useState(false);
   const [punchInLoading, setPunchInLoading] = useState(true);
+  const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -48,6 +49,10 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
   }, [user]);
 
   const handleLogout = () => {
+    if (isPunchedIn) {
+      setLogoutMessage('Please punch out before logging out.');
+      return;
+    }
     logout();
     navigate('/login');
   };
@@ -65,6 +70,7 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
     try {
         await DataService.recordAttendance(user.id, action);
         setIsPunchedIn(!isPunchedIn);
+        if (action === 'PUNCH_OUT') setLogoutMessage(null);
         // Notify other parts of the app (e.g., monthly attendance view) to refresh with action detail
         try { window.dispatchEvent(new CustomEvent('ets-attendance-updated', { detail: { userId: user.id, action } })); } catch {}
     } catch (error) {
@@ -135,6 +141,9 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
                 >
                     <CogIcon />
                 </button>
+                {logoutMessage && (
+                  <div className="ml-2 text-sm text-red-600">{logoutMessage}</div>
+                )}
             </div>
         </header>
     )
@@ -159,6 +168,9 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
             <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
         </button>
+        {logoutMessage && (
+          <div className="ml-2 text-sm text-red-600">{logoutMessage}</div>
+        )}
       </div>
     </header>
   );
