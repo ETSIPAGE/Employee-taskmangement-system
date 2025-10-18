@@ -28,7 +28,7 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, cu
         setSelectedMembers(newSelection);
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         if (!groupName.trim()) {
@@ -40,10 +40,15 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, cu
             return;
         }
 
-        DataService.createGroup(groupName, Array.from(selectedMembers), currentUser.id);
-        onGroupCreated();
-        setGroupName('');
-        setSelectedMembers(new Set());
+        try {
+            const participants = Array.from(new Set([currentUser.id, ...Array.from(selectedMembers)]));
+            await DataService.createConversationApi(groupName, participants);
+            onGroupCreated();
+            setGroupName('');
+            setSelectedMembers(new Set());
+        } catch (err: any) {
+            setError(err?.message || 'Failed to create conversation.');
+        }
     };
 
     return (
