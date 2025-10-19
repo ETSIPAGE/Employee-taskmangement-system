@@ -7,9 +7,10 @@ import * as DataService from '../../services/dataService';
 
 interface HeaderProps {
   onToggleChat: () => void;
+  unreadCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
+const Header: React.FC<HeaderProps> = ({ onToggleChat, unreadCount = 0 }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [isOnBreak, setIsOnBreak] = useState(false);
@@ -113,10 +114,15 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
      <div className="flex items-center space-x-2">
        <button
           onClick={onToggleChat}
-          className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
+          className="relative p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
           aria-label="Toggle Chat"
         >
           <ChatBubbleLeftRightIcon /> {/* Assuming this is a valid React component */}
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[1.4rem] h-[1.4rem] px-1 rounded-full bg-red-500 text-white text-xs font-semibold flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </button>
      </div>
   );

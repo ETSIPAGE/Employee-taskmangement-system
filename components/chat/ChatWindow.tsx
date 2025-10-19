@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatConversation, ChatMessage, User } from '../../types';
-import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
+import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
 
 interface ChatWindowProps {
     conversation: ChatConversation;
     currentUser: User;
     onBack: () => void;
     allUsers: User[];
+    refreshKey?: number;
+    pendingMessages?: ChatMessage[];
+    onPendingConsumed?: (conversationId: string) => void;
 }
 
 const getInitials = (name: string) => {
@@ -16,16 +19,119 @@ const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
 };
 
-const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBack, allUsers }) => {
+const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBack, allUsers, refreshKey, pendingMessages = [], onPendingConsumed }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messageLoading, setMessageLoading] = useState(false);
+    const [nextToken, setNextToken] = useState<string | null>(null);
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     // FIX: Explicitly type usersMap to resolve issues where its values are inferred as 'unknown'.
     const usersMap: Map<string, User> = new Map(allUsers.map(u => [u.id, u]));
 
+    const loadMessages = useCallback(async (conversationId: string, token?: string | null, append: boolean = false) => {
+        setMessageLoading(true);
+        try {
+            const response = await DataService.getMessagesForConversation(conversationId, token || undefined);
+            console.log('ChatWindow loadMessages fetched items', {
+                conversationId,
+                fetchedCount: response.items?.length || 0,
+                append,
+            });
+            setMessages(prev => {
+                const incoming = response.items || [];
+                if (append) {
+                    const mergedMap = new Map<string, ChatMessage>();
+                    prev.forEach(msg => mergedMap.set(msg.id, msg));
+                    incoming.forEach(msg => mergedMap.set(msg.id, msg));
+                    return Array.from(mergedMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                }
+                const mergedMap = new Map<string, ChatMessage>();
+                incoming.forEach(msg => mergedMap.set(msg.id, msg));
+                prev.forEach(msg => {
+                    if (!mergedMap.has(msg.id)) {
+                        mergedMap.set(msg.id, msg);
+                    }
+                });
+                const merged = Array.from(mergedMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                console.log('ChatWindow loadMessages merged result', {
+                    conversationId,
+                    totalCount: merged.length,
+                    lastMessage: merged[merged.length - 1],
+                });
+                return merged;
+            });
+            setNextToken(response.nextToken);
+        } catch (error) {
+            console.error('Failed to load messages:', error);
+        } finally {
+            setMessageLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
-        const conversationMessages = DataService.getMessagesForConversation(conversation.id);
-        setMessages(conversationMessages);
+        loadMessages(conversation.id);
+    }, [conversation.id, loadMessages]);
+
+    useEffect(() => {
+        if (refreshKey === undefined) return;
+        loadMessages(conversation.id);
+    }, [refreshKey, conversation.id, loadMessages]);
+
+    useEffect(() => {
+        if (!pendingMessages.length) {
+            return;
+        }
+        setMessages(prev => {
+            const mergedMap = new Map<string, ChatMessage>();
+            prev.forEach(msg => mergedMap.set(msg.id, msg));
+            pendingMessages.forEach(msg => mergedMap.set(msg.id, msg));
+            const merged = Array.from(mergedMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            console.log('ChatWindow merged pending messages', {
+                added: pendingMessages.length,
+                totalCount: merged.length,
+            });
+            return merged;
+        });
+        if (onPendingConsumed) {
+            onPendingConsumed(conversation.id);
+        }
+    }, [pendingMessages, conversation.id, onPendingConsumed]);
+
+    useEffect(() => {
+        const listener = (event: ChatSocketEvent) => {
+            if (event.type !== 'newMessage' || event.conversationId !== conversation.id || !event.timestamp) {
+                return;
+            }
+            console.log('Chat message received', event);
+            setMessages(prev => {
+                const exists = prev.some(msg => msg.id === `${event.conversationId}-${event.timestamp}`);
+                if (exists) {
+                    return prev;
+                }
+                const incoming: ChatMessage = {
+                    id: `${event.conversationId}-${event.timestamp}`,
+                    conversationId: event.conversationId,
+                    senderId: event.senderId || '',
+                    text: event.text || '',
+                    timestamp: event.timestamp,
+                };
+                if ((event.senderId || '') === currentUser.id) {
+                    console.log('Chat message send success', incoming);
+                } else {
+                    console.log('Chat message receive success', incoming);
+                }
+                const merged = [...prev, incoming].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                console.log('ChatWindow listener merged messages', {
+                    totalCount: merged.length,
+                    lastMessage: merged[merged.length - 1],
+                });
+                return merged;
+            });
+        };
+        chatSocket.addListener(listener);
+        return () => {
+            chatSocket.removeListener(listener);
+        };
     }, [conversation.id]);
 
      useEffect(() => {
@@ -35,9 +141,26 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBa
     const handleSendMessage = (e: React.FormEvent) => {
         e.preventDefault();
         if (newMessage.trim()) {
-            const sentMessage = DataService.sendMessage(conversation.id, currentUser.id, newMessage.trim());
-            setMessages(prev => [...prev, sentMessage]);
+            const messageText = newMessage.trim();
+            const sent = chatSocket.sendMessage(conversation.id, messageText);
+            console.log('Chat message send initiated', { conversationId: conversation.id, messageText, sent });
+            if (!sent) {
+                const optimisticMessage: ChatMessage = {
+                    id: `temp-${Date.now()}`,
+                    conversationId: conversation.id,
+                    senderId: currentUser.id,
+                    text: messageText,
+                    timestamp: new Date().toISOString(),
+                };
+                setMessages(prev => [...prev, optimisticMessage]);
+            }
             setNewMessage('');
+        }
+    };
+
+    const handleLoadMore = () => {
+        if (nextToken && !messageLoading) {
+            loadMessages(conversation.id, nextToken, true);
         }
     };
     

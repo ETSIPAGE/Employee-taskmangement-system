@@ -17,6 +17,9 @@ const PROJECTS_UPDATE_API_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.
 const DEPARTMENTS_API_URL = 'https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/'; // Used for GET and POST
 
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
+const CHAT_CONVERSATIONS_API_URL = 'https://dwzvagakdh.execute-api.ap-south-1.amazonaws.com/dev/conversations';
+const CHAT_CONVERSATION_CREATE_API_URL = 'https://cgdham1ksb.execute-api.ap-south-1.amazonaws.com/dev/conversation';
+const CHAT_MESSAGES_API_BASE_URL = 'https://h5jj6yq686.execute-api.ap-south-1.amazonaws.com/dev/conversation/msg';
 
 const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.amazonaws.com/dev/attendance/user';
 const ATTENDANCE_GET_BY_DATE_URL = 'https://rhb8m6a8mg.execute-api.ap-south-1.amazonaws.com/dev/attendance/date';
@@ -968,23 +971,104 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
 
 // --- CHAT SERVICE (MOCKED) ---
 export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
-export const getConversationsForUser = (userId: string): ChatConversation[] => CONVERSATIONS.filter(c => c.participantIds.includes(userId)).sort((a,b) => {
+const sortConversationsByLastMessage = (conversations: ChatConversation[]) => conversations.slice().sort((a,b) => {
     const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
     const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
     return timeB - timeA;
 });
-export const getMessagesForConversation = (conversationId: string): ChatMessage[] => MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-export const sendMessage = (conversationId: string, senderId: string, text: string): ChatMessage => {
-    const newMessage: ChatMessage = { id: `msg-${Date.now()}`, conversationId, senderId, text, timestamp: new Date().toISOString() };
-    MESSAGES.push(newMessage);
-    const convIndex = CONVERSATIONS.findIndex(c => c.id === conversationId);
-    if (convIndex > -1) CONVERSATIONS[convIndex].lastMessage = newMessage;
-    return newMessage;
+
+const extractConversationArray = (data: any): ChatConversation[] => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data as ChatConversation[];
+    if (Array.isArray(data.conversations)) return data.conversations as ChatConversation[];
+    if (Array.isArray(data.items)) return data.items as ChatConversation[];
+    if (Array.isArray(data.data)) return data.data as ChatConversation[];
+    return [];
 };
-export const createGroup = (groupName: string, memberIds: string[], creatorId: string): ChatConversation => {
-    const newGroup: ChatConversation = { id: `conv-${Date.now()}`, type: 'group', name: groupName, participantIds: [...new Set([creatorId, ...memberIds])], adminIds: [creatorId] };
-    CONVERSATIONS.unshift(newGroup);
-    return newGroup;
+
+export const getConversationsForUser = async (userId: string): Promise<ChatConversation[]> => {
+    try {
+        const conversations: ChatConversation[] = [];
+        let nextKey: any = undefined;
+
+        do {
+            const url = new URL(CHAT_CONVERSATIONS_API_URL);
+            url.searchParams.set('userId', userId);
+            if (nextKey) {
+                url.searchParams.set('nextKey', encodeURIComponent(JSON.stringify(nextKey)));
+            }
+
+            const response = await authenticatedFetch(url.toString());
+            const parsed = await parseApiResponse(response);
+            const fetched = extractConversationArray(parsed);
+            conversations.push(...fetched);
+
+            const lastEvaluatedKey = (parsed && typeof parsed === 'object') ? (parsed as any).lastEvaluatedKey : null;
+            nextKey = lastEvaluatedKey || undefined;
+        } while (nextKey);
+
+        if (!conversations.length) {
+            return sortConversationsByLastMessage(CONVERSATIONS.filter(c => c.participantIds.includes(userId)));
+        }
+        return sortConversationsByLastMessage(conversations.map(conv => ({ ...conv, participantIds: conv.participantIds?.map(String) || [] })));
+    } catch (error) {
+        console.error('Failed to fetch conversations from API:', error);
+        return sortConversationsByLastMessage(CONVERSATIONS.filter(c => c.participantIds.includes(userId)));
+    }
+};
+export interface ChatMessagesResponse {
+    items: ChatMessage[];
+    nextToken: string | null;
+}
+
+export const getMessagesForConversation = async (conversationId: string, nextToken?: string, limit: number = 50): Promise<ChatMessagesResponse> => {
+    try {
+        const url = new URL(`${CHAT_MESSAGES_API_BASE_URL}/${encodeURIComponent(conversationId)}`);
+        url.searchParams.set('limit', String(limit));
+        if (nextToken) {
+            url.searchParams.set('nextToken', nextToken);
+        }
+        const response = await authenticatedFetch(url.toString());
+        const parsed = await parseApiResponse(response);
+        const items = Array.isArray(parsed?.items) ? parsed.items as ChatMessage[] : [];
+        return {
+            items: items.map(msg => ({
+                ...msg,
+                conversationId: String(msg.conversationId),
+                senderId: String(msg.senderId),
+            })),
+            nextToken: parsed?.nextToken || null,
+        };
+    } catch (error) {
+        console.error(`Failed to fetch messages for conversation ${conversationId}:`, error);
+        const fallback = MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return { items: fallback, nextToken: null };
+    }
+};
+export const createGroup = async (groupName: string, memberIds: string[], creatorId: string): Promise<ChatConversation> => {
+    const payload = {
+        name: groupName,
+        participantIds: memberIds.map(String),
+    };
+
+    try {
+        const response = await authenticatedFetch(`${CHAT_CONVERSATION_CREATE_API_URL}?userId=${encodeURIComponent(creatorId)}`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        const parsed = await parseApiResponse(response);
+        const created = (parsed && parsed.conversation) ? parsed.conversation : parsed;
+        if (!created || !created.id) {
+            throw new Error('Invalid response while creating conversation.');
+        }
+        return {
+            ...created,
+            participantIds: created.participantIds?.map(String) || [],
+        } as ChatConversation;
+    } catch (error) {
+        console.error('Failed to create group conversation via API:', error);
+        throw error instanceof Error ? error : new Error('Unable to create group conversation.');
+    }
 };
 export const getOrCreateDirectConversation = (userId1: string, userId2: string): ChatConversation => {
     const existing = CONVERSATIONS.find(c => c.type === 'direct' && c.participantIds.length === 2 && c.participantIds.includes(userId1) && c.participantIds.includes(userId2));

@@ -1,30 +1,50 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
-import { ChatConversation, User } from '../../types';
+import { ChatConversation, ChatMessage, User } from '../../types';
 import ChatSidebar from './ChatSidebar';
 import ChatWindow from './ChatWindow';
+import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
 
 interface ChatContainerProps {
     onClose: () => void;
+    refreshKey?: number;
+    isOpen?: boolean;
 }
 
-const ChatContainer: React.FC<ChatContainerProps> = ({ onClose }) => {
+const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOpen }) => {
     const { user } = useAuth();
     const [conversations, setConversations] = useState<ChatConversation[]>([]);
     const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null);
     const [allUsers, setAllUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
+    const [messagesRefreshTrigger, setMessagesRefreshTrigger] = useState(0);
+    const [pendingMessages, setPendingMessages] = useState<Record<string, ChatMessage[]>>({});
 
-    const loadData = useCallback(() => {
+    const loadData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
         try {
-            const userConversations = DataService.getConversationsForUser(user.id);
-            const users = AuthService.getUsers();
+            const [userConversations, users] = await Promise.all([
+                DataService.getConversationsForUser(user.id),
+                DataService.getUsers(true),
+            ]);
             setConversations(userConversations);
             setAllUsers(users);
+            console.log('ChatContainer loadData result', {
+                conversationsCount: userConversations.length,
+                usersCount: users.length,
+            });
+            setActiveConversation(prev => {
+                if (!prev) return prev;
+                const updated = userConversations.find(c => c.id === prev.id);
+                if (!updated) {
+                    console.warn('ChatContainer active conversation no longer present', { activeId: prev.id });
+                } else {
+                    console.log('ChatContainer active conversation updated', { activeId: prev.id });
+                }
+                return updated ? { ...updated } : prev;
+            });
         } catch (error) {
             console.error("Failed to load chat data:", error);
         } finally {
@@ -35,6 +55,79 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose }) => {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    useEffect(() => {
+        if (isOpen) {
+            console.log('ChatContainer detected panel open, refreshing messages');
+            setMessagesRefreshTrigger(prev => prev + 1);
+        }
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (refreshKey === undefined) return;
+        console.log('ChatContainer refreshKey effect', { refreshKey });
+        loadData();
+        setMessagesRefreshTrigger(prev => prev + 1);
+    }, [refreshKey, loadData]);
+
+    useEffect(() => {
+        if (!user) {
+            return;
+        }
+        const listener = (event: ChatSocketEvent) => {
+            if (event.type !== 'newMessage' || !event.conversationId || !event.text || !event.timestamp) {
+                return;
+            }
+            console.log('ChatContainer socket listener received', event);
+            const lastMessage = {
+                id: `${event.conversationId}-${event.timestamp}`,
+                conversationId: event.conversationId,
+                senderId: event.senderId || '',
+                text: event.text,
+                timestamp: event.timestamp,
+            };
+            setConversations(prev => {
+                const existingIndex = prev.findIndex(conv => conv.id === event.conversationId);
+                if (existingIndex === -1) {
+                    loadData();
+                    return prev;
+                }
+                const updatedConversation: ChatConversation = {
+                    ...prev[existingIndex],
+                    lastMessage,
+                };
+                const remaining = prev.filter((_, idx) => idx !== existingIndex);
+                console.log('ChatContainer conversation updated', { conversationId: event.conversationId });
+                return [updatedConversation, ...remaining];
+            });
+            const incomingMessage: ChatMessage = {
+                id: `${event.conversationId}-${event.timestamp}`,
+                conversationId: event.conversationId,
+                senderId: event.senderId || '',
+                text: event.text,
+                timestamp: event.timestamp,
+            };
+            setPendingMessages(prev => {
+                if (isOpen && activeConversation?.id === event.conversationId) {
+                    return prev;
+                }
+                const existing = prev[event.conversationId] || [];
+                return {
+                    ...prev,
+                    [event.conversationId]: [...existing, incomingMessage],
+                };
+            });
+            setMessagesRefreshTrigger(prev => {
+                const next = prev + 1;
+                console.log('ChatContainer messagesRefreshTrigger incremented', { next });
+                return next;
+            });
+        };
+        chatSocket.addListener(listener);
+        return () => {
+            chatSocket.removeListener(listener);
+        };
+    }, [user, loadData]);
 
     const handleSelectConversation = (conversation: ChatConversation) => {
         setActiveConversation(conversation);
@@ -84,6 +177,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose }) => {
                         currentUser={user}
                         onBack={() => setActiveConversation(null)}
                         allUsers={allUsers}
+                        refreshKey={messagesRefreshTrigger}
+                        pendingMessages={pendingMessages[activeConversation.id] || []}
+                        onPendingConsumed={(conversationId) => {
+                            setPendingMessages(prev => {
+                                if (!prev[conversationId]) return prev;
+                                const { [conversationId]: _removed, ...rest } = prev;
+                                return rest;
+                            });
+                        }}
                     />
                 )}
             </div>
