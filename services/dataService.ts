@@ -22,10 +22,6 @@ const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.am
 const ATTENDANCE_GET_BY_DATE_URL = 'https://rhb8m6a8mg.execute-api.ap-south-1.amazonaws.com/dev/attendance/date';
 const ATTENDANCE_RECORD_ACTION_URL = 'https://q1rltbjzl4.execute-api.ap-south-1.amazonaws.com/dev/attendance/record'; // POST
 
-const CONVERSATIONS_GET_API_URL = 'https://dwzvagakdh.execute-api.ap-south-1.amazonaws.com/dev/conversations';
-const CONVERSATION_CREATE_API_URL = 'https://cgdham1ksb.execute-api.ap-south-1.amazonaws.com/dev/conversation';
-const MESSAGES_GET_API_BASE_URL = 'https://h5jj6yq686.execute-api.ap-south-1.amazonaws.com/dev/conversation/msg';
-
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIS / FALLBACKS ---
 let CONVERSATIONS: ChatConversation[] = [
     { id: 'conv-1', type: 'group', name: 'Project Marketing', participantIds: ['2', '3', '4', '5'], adminIds: ['2'] },
@@ -59,121 +55,6 @@ const year = today.getFullYear();
 const month = (today.getMonth() + 1).toString().padStart(2, '0');
 const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
-};
-
-export const getMessagesForConversationApi = async (
-    conversationId: string,
-    options?: { limit?: number; nextToken?: string; order?: 'asc' | 'desc' }
-): Promise<{ items: ChatMessage[]; nextToken: string | null }> => {
-    const qs: string[] = [];
-    if (options?.limit) qs.push(`limit=${encodeURIComponent(String(options.limit))}`);
-    if (options?.nextToken) qs.push(`nextToken=${encodeURIComponent(options.nextToken)}`);
-    if (options?.order) qs.push(`order=${encodeURIComponent(options.order)}`);
-    const url = `${MESSAGES_GET_API_BASE_URL}/${encodeURIComponent(conversationId)}${qs.length ? `?${qs.join('&')}` : ''}`;
-
-    const tryOnce = async (): Promise<{ items: ChatMessage[]; nextToken: string | null }> => {
-        console.log('[DataService] GET messages ->', url);
-        const response = await authenticatedFetch(url);
-        const data = await parseApiResponse(response);
-
-    let rawItems: any[] = [];
-    let nextToken: string | null = null;
-    if (Array.isArray(data)) {
-        rawItems = data as any[];
-    } else if (data && typeof data === 'object') {
-        if (Array.isArray((data as any).items)) {
-            rawItems = (data as any).items as any[];
-            nextToken = (data as any).nextToken || (data as any).next_token || null;
-        } else {
-            rawItems = extractArrayFromApiResponse(data, 'items');
-        }
-    }
-
-    const mapMsg = (m: any): ChatMessage => ({
-        id: String(m?.id || m?.messageId || m?.msgId || `${conversationId}-${m?.timestamp || Date.now()}`),
-        conversationId: String(m?.conversationId || m?.conversation_id || m?.convId || conversationId),
-        senderId: String(m?.senderId || m?.sender_id || m?.from || m?.userId || ''),
-        text: String(m?.text || m?.message || m?.body || ''),
-        timestamp: String(m?.timestamp || m?.createdAt || m?.created_at || new Date().toISOString()),
-    });
-
-    const items = (rawItems || []).map(mapMsg).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    console.log(`[DataService] GET messages success: ${items.length} items for conversation ${conversationId}`);
-    return { items, nextToken };
-    };
-
-    try {
-        let attempt = 0;
-        let result = await tryOnce();
-        while (attempt < 2 && (!result.items || result.items.length === 0)) {
-            attempt += 1;
-            await new Promise(r => setTimeout(r, 400));
-            result = await tryOnce();
-        }
-        return result;
-    } catch (err) {
-        console.error('[DataService] GET messages failed:', err);
-        throw err;
-    }
-};
-
-export const createConversationApi = async (name: string, participantIds: string[]): Promise<ChatConversation> => {
-    const normalizedName = (name && name.trim().length > 0) ? name.trim() : `Direct-${Date.now()}`;
-    const payload: any = {
-        // Common
-        name: normalizedName,
-        // Provide multiple variants for backend compatibility
-        participantIds,
-        participants: participantIds,
-        participant_ids: participantIds,
-        members: participantIds,
-        // Hint conversation type for servers that expect it
-        // If caller provided a real name (not our Direct-* default), treat as group
-        type: (normalizedName.startsWith('Direct-') && participantIds.length === 2) ? 'direct' : 'group',
-    };
-    const response = await authenticatedFetch(CONVERSATION_CREATE_API_URL.replace(/\/$/, ''), {
-        method: 'POST',
-        body: JSON.stringify(payload),
-    });
-    const data = await parseApiResponse(response);
-    const conv = (data && (data.conversation || data.item || data.Item || data)) as any;
-    const toStringArray = (val: any): string[] => Array.isArray(val) ? val.map((x: any) => String(x)) : (typeof val === 'string' ? [val] : []);
-    const mapMsg = (m: any): ChatMessage => ({
-        id: String(m?.id || m?.messageId || m?.msgId || `msg-${Date.now()}`),
-        conversationId: String(m?.conversationId || m?.conversation_id || m?.convId || ''),
-        senderId: String(m?.senderId || m?.sender_id || m?.from || m?.userId || ''),
-        text: String(m?.text || m?.message || m?.body || ''),
-        timestamp: String(m?.timestamp || m?.createdAt || m?.created_at || new Date().toISOString()),
-    });
-    const participantsRaw = toStringArray(conv?.participantIds || conv?.participants || conv?.participant_ids || conv?.members).map((s: string) => s.trim());
-    const participants = Array.from(new Set(participantsRaw.filter((s: string) => !!s)));
-    const admins = toStringArray(conv?.adminIds || conv?.admin_ids || conv?.admins).map((s: string) => s.trim());
-    let lastMessage: ChatMessage | undefined;
-    const lm = conv?.lastMessage || conv?.last_message || conv?.latestMessage;
-    if (lm) lastMessage = mapMsg(lm);
-    else if (Array.isArray(conv?.messages) && conv.messages.length > 0) {
-        const sorted = [...conv.messages].sort((a: any, b: any) => {
-            const ta = new Date(a?.timestamp || a?.createdAt || a?.created_at || 0).getTime();
-            const tb = new Date(b?.timestamp || b?.createdAt || b?.created_at || 0).getTime();
-            return tb - ta;
-        });
-        lastMessage = mapMsg(sorted[0]);
-    }
-    const typeRaw = String(conv?.type || conv?.conversationType || conv?.kind || '').toLowerCase();
-    const isNamedGroup = !!(conv?.name) && !String(conv?.name).startsWith('Direct-');
-    const defaultDirect = participants.length === 2 && (!conv?.name || String(conv?.name).startsWith('Direct-'));
-    const type: 'direct' | 'group' = defaultDirect
-        ? 'direct'
-        : ((typeRaw === 'group' || participants.length > 2 || isNamedGroup) ? 'group' : 'direct');
-    const mapped: ChatConversation = {
-        id: String(conv?.id || conv?.conversationId || conv?.convId),
-        type,
-        participantIds: participants,
-        name: conv?.name,
-        adminIds: admins.length ? admins : undefined,
-        lastMessage,
-    };
-    return mapped;
 };
 
 // --- COMMON HELPERS ---
@@ -294,7 +175,7 @@ const mapApiUserToUser = (apiUser: any): User => {
             : [];
 
     return {
-        id: String(apiUser.id),
+        id: apiUser.id,
         name: apiUser.name,
         email: apiUser.email,
         role: role,
@@ -317,20 +198,25 @@ const mapApiUserToUser = (apiUser: any): User => {
     };
 };
 
-export const getUsers = async (): Promise<User[]> => {
-    if (cachedAllUsers) return cachedAllUsers;
+export const getUsers = async (forceRefresh = false): Promise<User[]> => {
+    if (!forceRefresh && cachedAllUsers) return cachedAllUsers;
 
     try {
         const response = await authenticatedFetch(USERS_API_URL);
         const data = await parseApiResponse(response);
         const usersFromApi = extractArrayFromApiResponse(data, 'users');
-        
+
         cachedAllUsers = usersFromApi.map(mapApiUserToUser);
         return cachedAllUsers;
     } catch (error) {
         console.error("Failed to fetch all users:", error);
         return [];
     }
+};
+
+export const clearUsersCache = () => {
+    cachedAllUsers = null;
+    cachedManagers = null;
 };
 
 export const getUserById = async (userId: string): Promise<User | undefined> => {
@@ -946,7 +832,7 @@ export const createCompany = (name: string, ownerId: string): Company => {
 
 
 // --- ATTENDANCE SERVICE ---
-export const getAttendanceByDate = async (date: string): Promise<Array<{ userId: string; date?: string }>> => {
+export const getAttendanceByDate = async (date: string): Promise<Array<{ userId: string; date?: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
         // --- THIS IS THE CORRECTED LINE ---
         const endpoint = `${ATTENDANCE_GET_BY_DATE_URL}?date=${encodeURIComponent(date)}`;
@@ -962,7 +848,16 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
                 }
                 const userId = r.userId || r.user_id || r.user || r.id;
                 const d = r.date || r.timestamp || r.attendanceDate || date;
-                return userId ? { userId: String(userId), date: d } : null;
+                if (!userId) return null;
+                const punchIn = r.punchInTime || r.punch_in_time || r.punch_in || r.punchIn;
+                const punchOut = r.punchOutTime || r.punch_out_time || r.punch_out || r.punchOut;
+                const record: { userId: string; date?: string; punchInTime?: string; punchOutTime?: string } = {
+                    userId: String(userId),
+                    date: d,
+                };
+                if (punchIn) record.punchInTime = String(punchIn);
+                if (punchOut) record.punchOutTime = String(punchOut);
+                return record;
             })
             .filter((x: any) => x);
         return normalized;
@@ -1068,106 +963,6 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
     } catch (error) {
         console.error(`Error recording attendance for user ${userId} with action ${action}:`, error);
         throw error; // Re-throw to propagate the error
-    }
-};
-
-export const getConversationsForUserApi = async (userId: string): Promise<ChatConversation[]> => {
-    const fetchOnce = async (): Promise<ChatConversation[]> => {
-        const url = CONVERSATIONS_GET_API_URL.replace(/\/$/, '');
-        const response = await authenticatedFetch(url, { method: 'GET' });
-        const data = await parseApiResponse(response);
-        const raw = extractArrayFromApiResponse(data, 'conversations');
-
-        const toStringArray = (val: any): string[] => {
-            if (Array.isArray(val)) return val.map((x: any) => String(x));
-            if (typeof val === 'string') return [val];
-            return [];
-        };
-
-        const mapMsg = (m: any): ChatMessage => ({
-            id: String(m?.id || m?.messageId || m?.msgId || `msg-${Date.now()}`),
-            conversationId: String(m?.conversationId || m?.conversation_id || m?.convId || ''),
-            senderId: String(m?.senderId || m?.sender_id || m?.from || m?.userId || ''),
-            text: String(m?.text || m?.message || m?.body || ''),
-            timestamp: String(m?.timestamp || m?.createdAt || m?.created_at || new Date().toISOString()),
-        });
-
-        const parsed: ChatConversation[] = raw.map((c: any) => {
-            const participantsRaw = toStringArray(
-                c?.participantIds || c?.participants || c?.participant_ids || c?.members
-            ).map((s: string) => s.trim());
-            const participants = Array.from(new Set(participantsRaw.filter((s: string) => !!s)));
-
-            const admins = toStringArray(c?.adminIds || c?.admin_ids || c?.admins).map((s: string) => s.trim());
-
-            const typeRaw = String(c?.type || c?.conversationType || c?.kind || '').toLowerCase();
-            const isNamedGroup = !!(c?.name) && !String(c?.name).startsWith('Direct-');
-            const defaultDirect = participants.length === 2 && (!c?.name || String(c?.name).startsWith('Direct-'));
-            let type: 'direct' | 'group' = defaultDirect
-                ? 'direct'
-                : ((typeRaw === 'group' || participants.length > 2 || isNamedGroup) ? 'group' : 'direct');
-
-            let lastMessage: ChatMessage | undefined;
-            const lm = c?.lastMessage || c?.last_message || c?.latestMessage;
-            if (lm) {
-                lastMessage = mapMsg(lm);
-            } else if (Array.isArray(c?.messages) && c.messages.length > 0) {
-                const sorted = [...c.messages].sort((a: any, b: any) => {
-                    const ta = new Date(a?.timestamp || a?.createdAt || a?.created_at || 0).getTime();
-                    const tb = new Date(b?.timestamp || b?.createdAt || b?.created_at || 0).getTime();
-                    return tb - ta;
-                });
-                lastMessage = mapMsg(sorted[0]);
-            } else {
-                // Fallback: use conversation-level activity timestamps so the chat orders correctly on login
-                const lastTsRaw = c?.updatedAt || c?.updated_at || c?.lastActivity || c?.last_activity || c?.lastMessageAt || c?.last_message_at;
-                const ts = lastTsRaw ? String(lastTsRaw) : undefined;
-                if (ts) {
-                    lastMessage = {
-                        id: `synthetic-${String(c?.id || c?.conversationId || c?.convId || Date.now())}`,
-                        conversationId: String(c?.id || c?.conversationId || c?.convId || ''),
-                        senderId: '',
-                        text: '',
-                        timestamp: String(ts),
-                    };
-                }
-            }
-
-            return {
-                id: String(c?.id || c?.conversationId || c?.convId),
-                type,
-                participantIds: participants,
-                name: c?.name,
-                adminIds: admins.length ? admins : undefined,
-                lastMessage,
-            } as ChatConversation;
-        })
-        .filter((c: ChatConversation) => c?.id && c?.participantIds?.includes(String(userId)));
-
-        const sorted = parsed.sort((a, b) => {
-            const ta = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
-            const tb = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
-            return tb - ta;
-        });
-
-        return sorted;
-    };
-
-    try {
-        let attempt = 0;
-        let convs = await fetchOnce();
-        // Retry if no conversations have any timestamp yet (eventual consistency)
-        const noActivity = !convs || convs.length === 0 || convs.every(c => !c.lastMessage || !c.lastMessage.timestamp);
-        while (attempt < 2 && noActivity) {
-            attempt += 1;
-            await new Promise(r => setTimeout(r, 400));
-            convs = await fetchOnce();
-            if (convs.some(c => c.lastMessage && c.lastMessage.timestamp)) break;
-        }
-        return convs;
-    } catch (error) {
-        console.error('Failed to fetch conversations from API, falling back to mock:', error);
-        return getConversationsForUser(userId);
     }
 };
 

@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { UserRole } from '../../types';
-import { CogIcon, ChatBubbleLeftRightIcon } from '../../constants';
+import { CogIcon, ChatBubbleLeftRightIcon } from '../../constants'; // Assuming these are valid paths
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
 
 interface HeaderProps {
   onToggleChat: () => void;
@@ -15,226 +14,128 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
   const navigate = useNavigate();
   const [isOnBreak, setIsOnBreak] = useState(false);
   const [isPunchedIn, setIsPunchedIn] = useState(false);
-  const [isPunchingIn, setIsPunchingIn] = useState(false);
-  const [punchInLoading, setPunchInLoading] = useState(true);
+  const [isPunching, setIsPunching] = useState(false); // Renamed to avoid confusion with `isPunchingIn` for initial load
+  const [punchStatusLoading, setPunchStatusLoading] = useState(true); // Renamed for clarity
   const [logoutMessage, setLogoutMessage] = useState<string | null>(null);
-  const [hasUnread, setHasUnread] = useState<boolean>(false);
-  const [lastSent, setLastSent] = useState<Record<string, { text: string; ts: number }>>({});
-  const [lastReadAll, setLastReadAll] = useState<number>(0);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      console.log("Header: No user, skipping initial attendance fetch.");
+      return;
+    }
 
     const fetchTodaysAttendance = async () => {
-      setPunchInLoading(true);
+      setPunchStatusLoading(true);
+      console.log("Header: Fetching today's attendance for user:", user.id);
       try {
         const today = new Date();
         const year = today.getFullYear();
-        const month = today.getMonth() + 1;
+        const month = today.getMonth() + 1; // getMonth() is 0-indexed
+
+        // Fetch monthly records and then filter for today
         const attendanceForMonth = await DataService.getAttendanceForUserByMonth(user.id, year, month);
+        console.log("Header: Monthly attendance fetched:", attendanceForMonth);
 
         const todayString = today.toISOString().split('T')[0];
-        const todayRecord = attendanceForMonth.find(rec => typeof rec.date === 'string' && rec.date.startsWith(todayString));
+        const todayRecord = attendanceForMonth.find(rec =>
+            typeof rec.date === 'string' && rec.date.startsWith(todayString)
+        );
 
         if (todayRecord && todayRecord.punchInTime && !todayRecord.punchOutTime) {
             setIsPunchedIn(true);
+            console.log("Header: User is currently punched in.");
         } else {
             setIsPunchedIn(false);
+            console.log("Header: User is currently punched out or has no record for today.");
         }
       } catch (error) {
-          console.error("Failed to fetch today's attendance status", error);
-          setIsPunchedIn(false);
+          console.error("Header: Failed to fetch today's attendance status", error);
+          setIsPunchedIn(false); // Assume not punched in on error
       } finally {
-          setPunchInLoading(false);
+          setPunchStatusLoading(false);
+          console.log("Header: Initial punch status loading complete.");
       }
     };
 
     fetchTodaysAttendance();
-  }, [user]);
-
-  // Load lastReadAll and compute initial unread status from per-conversation lastRead
-  useEffect(() => {
-    if (!user) return;
-    const key = `ets-chat-lastreadall:${user.id}`;
-    const stored = Number(localStorage.getItem(key) || '0');
-    setLastReadAll(isNaN(stored) ? 0 : stored);
-    (async () => {
-      try {
-        const convs = await DataService.getConversationsForUserApi(user.id);
-        const has = convs.some(c => {
-          const ts = c.lastMessage?.timestamp ? new Date(c.lastMessage.timestamp).getTime() : 0;
-          const sender = String(c.lastMessage?.senderId || '');
-          if (!ts || !sender || sender === String(user.id)) return false;
-          const perKey = `ets-chat-lastread:${user.id}:${c.id}`;
-          const readAt = Number(localStorage.getItem(perKey) || '0');
-          return isNaN(readAt) || ts > readAt;
-        });
-        setHasUnread(has);
-        try { window.dispatchEvent(new CustomEvent('ets-chat-refresh', { detail: { reason: 'login-initial' } })); } catch {}
-      } catch {}
-    })();
-  }, [user]);
-
-  // Global WebSocket for chat notifications (active even if chat UI is closed)
-  useEffect(() => {
-    if (!user) return;
-    let closed = false;
-    let attempt = 0;
-    let socket: WebSocket | null = null;
-    const token = AuthService.getToken ? AuthService.getToken() : '';
-    const base = 'wss://4axwbl20th.execute-api.ap-south-1.amazonaws.com/dev';
-    const wsUrl = `${base}?token=${encodeURIComponent(token || '')}`;
-
-    const connect = () => {
-      if (closed) return;
-      try { socket = new WebSocket(wsUrl); } catch { return; }
-      socket.onopen = () => { /* noop */ };
-      socket.onclose = () => {
-        if (!closed) {
-          attempt += 1;
-          setTimeout(connect, Math.min(1000 * Math.pow(2, attempt), 8000));
-        }
-      };
-      socket.onerror = () => { /* noop */ };
-      socket.onmessage = (evt) => {
-        try {
-          const msg = JSON.parse((evt as MessageEvent).data as string);
-          const convId = String((msg && (msg.conversationId || msg.conversation_id || msg.convId)) || '');
-          const text = String((msg && (msg.text || msg.message || msg.body)) || '');
-          const tsRaw = (msg && (msg.timestamp || msg.createdAt || msg.created_at)) as string | number | undefined;
-          const msgTs = typeof tsRaw === 'number' ? tsRaw : (tsRaw ? new Date(String(tsRaw)).getTime() : Date.now());
-          const looksLikeMessage = msg && (msg.type === 'newMessage' || msg.action === 'broadcastMessage' || (convId && text));
-          if (!looksLikeMessage) return;
-          // Only set unread for messages not sent by the current user (ignore self-echo)
-          const sender = String((msg && (msg.senderId || msg.sender_id || msg.userId || msg.user_id)) || '');
-          if (!sender || sender === String(user.id)) return;
-          // Suppress if this client just sent the same text in this conversation (WS echo race)
-          const ls = lastSent[convId];
-          if (ls && ls.text === text && (Date.now() - ls.ts) <= 5000) return;
-          // If message is newer than lastRead for this conversation, mark unread
-          try {
-            const lastReadKey = `ets-chat-lastread:${user.id}:${convId}`;
-            const readAt = Number(localStorage.getItem(lastReadKey) || '0');
-            if (isNaN(readAt) || msgTs > readAt) {
-              setHasUnread(true);
-            }
-          } catch {
-            setHasUnread(true);
-          }
-          // Trigger a lightweight refresh for any mounted chat container; also mark a flag for future mounts
-          try {
-            sessionStorage.setItem('ets-chat-needs-refresh', '1');
-          } catch {}
-          try { window.dispatchEvent(new CustomEvent('ets-chat-refresh', { detail: { reason: 'ws-incoming' } })); } catch {}
-          // Broadcast a window event so any mounted chat components can react
-          try { window.dispatchEvent(new CustomEvent('ets-chat-incoming', { detail: { convId, text, msg } })); } catch {}
-        } catch {}
-      };
-    };
-
-    const t = setTimeout(connect, 150);
-    return () => { closed = true; clearTimeout(t); try { socket && socket.close(); } catch {} };
-  }, [user, lastSent]);
-
-  // When any conversation is read (ChatWindow marks per-conversation), recompute unread against all conversations
-  useEffect(() => {
-    const handler = async () => {
-      if (!user) return;
-      try {
-        const convs = await DataService.getConversationsForUserApi(user.id);
-        const has = convs.some(c => {
-          const ts = c.lastMessage?.timestamp ? new Date(c.lastMessage.timestamp).getTime() : 0;
-          const sender = String(c.lastMessage?.senderId || '');
-          if (!ts || !sender || sender === String(user.id)) return false;
-          const perKey = `ets-chat-lastread:${user.id}:${c.id}`;
-          const readAt = Number(localStorage.getItem(perKey) || '0');
-          return isNaN(readAt) || ts > readAt;
-        });
-        setHasUnread(has);
-      } catch {}
-    };
-    window.addEventListener('ets-chat-read', handler as any);
-    return () => { window.removeEventListener('ets-chat-read', handler as any); };
-  }, [user]);
-
-  // Track last sent messages to suppress local unread echoes
-  useEffect(() => {
-    const handler = (e: any) => {
-      const detail = e?.detail || {};
-      const convId = String(detail.conversationId || '');
-      const text = String(detail.text || '');
-      const ts = typeof detail.ts === 'number' ? detail.ts : Date.now();
-      if (!convId || !text) return;
-      setLastSent(prev => ({ ...prev, [convId]: { text, ts } }));
-    };
-    window.addEventListener('ets-chat-sent', handler as any);
-    return () => { window.removeEventListener('ets-chat-sent', handler as any); };
-  }, []);
+  }, [user]); // Re-run if user changes
 
   const handleLogout = () => {
     if (isPunchedIn) {
       setLogoutMessage('Please punch out before logging out.');
       return;
     }
+    console.log("Header: Logging out user.");
     logout();
     navigate('/login');
   };
 
   const toggleBreak = () => {
-      setIsOnBreak(!isOnBreak);
+      setIsOnBreak(prev => !prev);
+      console.log(`Header: Break status toggled to: ${!isOnBreak}`);
   }
 
   const togglePunchIn = async () => {
-    if (!user || isPunchingIn || punchInLoading) return;
+    if (!user || isPunching || punchStatusLoading) {
+        console.log("Header: Punch In/Out button disabled (conditions met):", { user: !!user, isPunching, punchStatusLoading });
+        return;
+    }
 
-    setIsPunchingIn(true);
+    setIsPunching(true);
     const action = isPunchedIn ? 'PUNCH_OUT' : 'PUNCH_IN';
+    console.log(`Header: Attempting to ${action} for user ${user.id}`);
 
     try {
         await DataService.recordAttendance(user.id, action);
-        setIsPunchedIn(!isPunchedIn);
-        if (action === 'PUNCH_OUT') setLogoutMessage(null);
-        // Notify other parts of the app (e.g., monthly attendance view) to refresh with action detail
-        try { window.dispatchEvent(new CustomEvent('ets-attendance-updated', { detail: { userId: user.id, action } })); } catch {}
+        console.log(`Header: Successfully completed ${action} API call.`);
+        setIsPunchedIn(prev => !prev); // Toggle punch status immediately
+
+        if (action === 'PUNCH_OUT') {
+            setLogoutMessage(null);
+        }
+
+        // --- CRITICAL PART: Dispatching the event ---
+        const eventDetail = { userId: user.id, action };
+        console.log("Header: Dispatching 'ets-attendance-updated' event with detail:", eventDetail);
+        window.dispatchEvent(new CustomEvent('ets-attendance-updated', { detail: eventDetail }));
+        // --- END CRITICAL PART ---
+
     } catch (error) {
-        console.error(`Failed to ${action}`, error);
+        console.error(`Header: Failed to ${action}`, error);
         alert(`Error: ${error instanceof Error ? error.message : 'An unknown error occurred.'}`);
     } finally {
-        setIsPunchingIn(false);
+        setIsPunching(false);
+        console.log("Header: Punching state reset to false.");
     }
   }
 
   const commonButtons = (
      <div className="flex items-center space-x-2">
-       <button 
-          onClick={() => { onToggleChat(); }}
+       <button
+          onClick={onToggleChat}
           className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
           aria-label="Toggle Chat"
         >
-          <div className="relative">
-            <ChatBubbleLeftRightIcon />
-            {hasUnread && (
-              <span className="absolute -top-0.5 -right-0.5 block h-2.5 w-2.5 rounded-full bg-red-600"></span>
-            )}
-          </div>
+          <ChatBubbleLeftRightIcon /> {/* Assuming this is a valid React component */}
         </button>
      </div>
   );
 
   const punchButton = (
-    <button 
+    <button
       onClick={togglePunchIn}
-      disabled={isPunchingIn || punchInLoading}
+      disabled={isPunching || punchStatusLoading}
       className={`px-4 py-2 text-sm font-medium rounded-md transition-colors shadow-sm disabled:opacity-75 disabled:cursor-wait ${
-          isPunchedIn 
-          ? 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-300' 
+          isPunchedIn
+          ? 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-300'
           : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
       }`}
     >
-      {punchInLoading ? 'Loading...' : isPunchingIn ? 'Processing...' : isPunchedIn ? 'Punch Out' : 'Punch In'}
+      {punchStatusLoading ? 'Loading...' : isPunching ? 'Processing...' : isPunchedIn ? 'Punch Out' : 'Punch In'}
     </button>
   );
 
+  // Manager specific header
   if (user?.role === UserRole.MANAGER) {
     return (
         <header className="flex justify-between items-center px-6 bg-white border-b-2 border-slate-200 h-16 flex-shrink-0">
@@ -246,11 +147,11 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
             {/* Right side */}
             <div className="flex items-center space-x-4">
                 {punchButton}
-                <button 
+                <button
                   onClick={toggleBreak}
                   className={`px-4 py-2 text-sm font-medium rounded-md transition-colors shadow-sm ${
-                      isOnBreak 
-                      ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200 border border-yellow-300' 
+                      isOnBreak
+                      ? 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200 border border-yellow-300'
                       : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200 border border-emerald-300'
                   }`}
                 >
@@ -263,11 +164,11 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
                     Logout
                 </button>
                 {commonButtons}
-                <button 
+                <button
                   className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
                   aria-label="Settings"
                 >
-                    <CogIcon />
+                    <CogIcon /> {/* Assuming this is a valid React component */}
                 </button>
                 {logoutMessage && (
                   <div className="ml-2 text-sm text-red-600">{logoutMessage}</div>
@@ -277,18 +178,18 @@ const Header: React.FC<HeaderProps> = ({ onToggleChat }) => {
     )
   }
 
-  // Default header for other roles
+  // Default header for other roles (Employee, Admin, HR)
   return (
     <header className="flex justify-end items-center px-6 bg-white border-b-2 border-slate-200 h-16 flex-shrink-0">
       <div className="flex items-center space-x-4">
-        {punchButton}
+        {user?.role !== UserRole.ADMIN && punchButton}
         {commonButtons}
         <div className="text-right">
             <div className="font-semibold text-slate-800">{user?.name}</div>
             <div className="text-sm text-slate-500">{user?.role}</div>
         </div>
-        <button 
-          onClick={handleLogout} 
+        <button
+          onClick={handleLogout}
           className="p-2 rounded-full text-slate-500 hover:bg-slate-200 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
           aria-label="Logout"
         >

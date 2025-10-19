@@ -14,7 +14,7 @@ interface ChatSidebarProps {
 
 const getInitials = (name: string) => {
     const names = name.split(' ');
-    if (names.length > 1) return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
+    if (names.length > 1) return `${names[0][0]}$${names[names.length - 1][0]}`.toUpperCase();
     return name.substring(0, 2).toUpperCase();
 };
 
@@ -23,8 +23,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
 
     const getConversationDisplay = (conv: ChatConversation) => {
-        const isGroup = conv.type === 'group';
-        if (isGroup) {
+        if (conv.type === 'group') {
             return { name: conv.name || 'Group Chat', initials: (conv.name || 'G').charAt(0).toUpperCase() };
         }
         const otherUserId = conv.participantIds.find(id => id !== currentUser.id);
