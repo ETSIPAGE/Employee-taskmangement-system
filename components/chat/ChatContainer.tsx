@@ -46,25 +46,65 @@ const formatUserDisplayName = (user?: User) => {
 
 const normalizeMessageText = (text?: string) => (text || '').trim().toLowerCase();
 
-const mergeMessagesById = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
-    const mergedMap = new Map<string, ChatMessage>();
-    existing.forEach(msg => mergedMap.set(msg.id, msg));
-    incoming.forEach(msg => mergedMap.set(msg.id, msg));
-    const merged = Array.from(mergedMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+const DUPLICATE_WINDOW_MS = 60 * 1000;
+
+const getMessageTime = (message: ChatMessage) => {
+    const value = new Date(message.timestamp).getTime();
+    return Number.isFinite(value) ? value : 0;
+};
+
+const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
+    if (a === b) return true;
+    if (a.conversationId !== b.conversationId) return false;
+    if (normalizeMessageText(a.text) !== normalizeMessageText(b.text)) return false;
+    const timeA = getMessageTime(a);
+    const timeB = getMessageTime(b);
+    if (!timeA || !timeB) return false;
+    if (Math.abs(timeA - timeB) > DUPLICATE_WINDOW_MS) return false;
+    if (a.senderId && b.senderId && a.senderId !== b.senderId) return false;
+    return true;
+};
+
+const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
+    const sorted = messages.slice().sort((a, b) => getMessageTime(a) - getMessageTime(b));
     const result: ChatMessage[] = [];
-    for (const message of merged) {
-        if (message.isLocal) {
-            const hasServerDuplicate = merged.some(other => other !== message && !other.isLocal && other.conversationId === message.conversationId && normalizeMessageText(other.text) === normalizeMessageText(message.text) && Math.abs(new Date(other.timestamp).getTime() - new Date(message.timestamp).getTime()) <= 5000 && other.senderId === message.senderId);
-            if (hasServerDuplicate) {
-                continue;
+    for (const message of sorted) {
+        const duplicateIndex = result.findIndex(existing => areMessagesEquivalent(existing, message));
+        if (duplicateIndex !== -1) {
+            const existing = result[duplicateIndex];
+            if (existing.isLocal && !message.isLocal) {
+                result[duplicateIndex] = message;
             }
+            continue;
         }
         result.push(message);
     }
     return result;
 };
 
+const mergeMessagesById = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
+    return dedupeMessages([...existing, ...incoming]);
+};
+
+const filterOutMatchingLocalEchoes = (messages: ChatMessage[], incoming: ChatMessage): ChatMessage[] => {
+    if (incoming.isLocal) {
+        return messages;
+    }
+    return messages.filter(message => !(message.isLocal && areMessagesEquivalent(message, incoming)));
+};
+
 const getCacheStorageKey = (userId: string) => `ets-chat-cache-${userId}`;
+const getRecencyStorageKey = (userId: string) => `ets-chat-recency-${userId}`;
+
+const resolveTimestamp = (value?: string | number | Date): number | null => {
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const parsed = new Date(value).getTime();
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return null;
+};
 
 const enrichConversation = (
     conversation: ChatConversation,
@@ -113,6 +153,9 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     const [pendingMessages, setPendingMessages] = useState<Record<string, ChatMessage[]>>({});
     const [cachedMessages, setCachedMessages] = useState<Record<string, ChatMessage[]>>({});
     const cachedMessagesRef = useRef<Record<string, ChatMessage[]>>({});
+    const recencyMapRef = useRef<Record<string, number>>({});
+    const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+    const loadInProgressRef = useRef(false);
 
     const usersMap = useMemo(() => new Map(allUsers.map(u => [u.id, u])), [allUsers]);
 
@@ -122,9 +165,65 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         return enrichConversation(conversation, effectiveLookup, user.id);
     }, [user, usersMap]);
 
-    const loadData = useCallback(async () => {
+    const persistRecencyMap = useCallback(() => {
         if (!user) return;
-        setLoading(true);
+        try {
+            const key = getRecencyStorageKey(user.id);
+            localStorage.setItem(key, JSON.stringify(recencyMapRef.current));
+        } catch (error) {
+            console.warn('ChatContainer failed to persist recency map', error);
+        }
+    }, [user]);
+
+    const updateConversationRecency = useCallback((conversationId: string, timestamp?: string | number | Date, fallbackToNow = false) => {
+        const normalized = resolveTimestamp(timestamp);
+        const nextValue = normalized ?? (fallbackToNow && !recencyMapRef.current[conversationId] ? Date.now() : null);
+        if (nextValue === null) {
+            return recencyMapRef.current[conversationId];
+        }
+        const current = recencyMapRef.current[conversationId];
+        if (!current || nextValue > current) {
+            recencyMapRef.current[conversationId] = nextValue;
+            persistRecencyMap();
+        }
+        return recencyMapRef.current[conversationId];
+    }, [persistRecencyMap]);
+
+    const getConversationRecency = useCallback((conversation: ChatConversation) => {
+        if (conversation.lastMessage?.timestamp) {
+            return updateConversationRecency(conversation.id, conversation.lastMessage.timestamp);
+        }
+        return recencyMapRef.current[conversation.id] || 0;
+    }, [updateConversationRecency]);
+
+    const sortConversationsByRecency = useCallback((list: ChatConversation[], previous?: ChatConversation[]) => {
+        const sorted = list.slice().sort((a, b) => getConversationRecency(b) - getConversationRecency(a));
+        if (previous && previous.length === sorted.length) {
+            let identical = true;
+            for (let i = 0; i < sorted.length; i += 1) {
+                if (previous[i].id !== sorted[i].id) {
+                    identical = false;
+                    break;
+                }
+            }
+            if (identical) {
+                return previous;
+            }
+        }
+        return sorted;
+    }, [getConversationRecency]);
+
+    const loadData = useCallback(async (options?: { suppressLoading?: boolean }) => {
+        if (!user) return;
+        if (loadInProgressRef.current) {
+            console.debug('ChatContainer loadData skipped: already in progress');
+            return;
+        }
+        const suppressLoading = options?.suppressLoading ?? hasLoadedOnce;
+        if (!suppressLoading) {
+            setLoading(true);
+        }
+        loadInProgressRef.current = true;
         try {
             const [userConversations, users] = await Promise.all([
                 DataService.getConversationsForUser(user.id),
@@ -135,13 +234,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             const conversationsWithCache = enrichedConversations.map(conv => {
                 const cached = cachedMessagesRef.current[conv.id];
                 if (!cached || !cached.length) {
+                    updateConversationRecency(conv.id, conv.lastMessage?.timestamp, true);
                     return conv;
                 }
                 const lastMessage = cached[cached.length - 1];
+                updateConversationRecency(conv.id, lastMessage.timestamp, true);
                 return hydrateConversation({ ...conv, lastMessage }, freshLookup);
             });
             setAllUsers(users);
-            setConversations(conversationsWithCache);
+            setConversations(prev => sortConversationsByRecency(conversationsWithCache, prev));
             console.log('ChatContainer loadData result', {
                 conversationsCount: userConversations.length,
                 usersCount: users.length,
@@ -159,13 +260,22 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         } catch (error) {
             console.error("Failed to load chat data:", error);
         } finally {
-            setLoading(false);
+            loadInProgressRef.current = false;
+            if (!suppressLoading) {
+                setLoading(false);
+            }
+            if (!hasLoadedOnce) {
+                setHasLoadedOnce(true);
+            }
         }
-    }, [user]);
+    }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, hasLoadedOnce]);
 
     useEffect(() => {
+        if (!user) {
+            return;
+        }
         loadData();
-    }, [loadData]);
+    }, [user?.id]);
 
     useEffect(() => {
         if (!user) {
@@ -197,9 +307,10 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                                 return conv;
                             }
                             const lastMessage = messages[messages.length - 1];
+                            updateConversationRecency(conv.id, lastMessage.timestamp, true);
                             return hydrateConversation({ ...conv, lastMessage });
                         });
-                        return updated;
+                        return sortConversationsByRecency(updated, prev);
                     });
                     console.log('ChatContainer restored cached messages from storage', {
                         conversations: Object.keys(normalized).length,
@@ -209,7 +320,25 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         } catch (error) {
             console.warn('ChatContainer failed to restore cached messages', error);
         }
-    }, [user, hydrateConversation]);
+    }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency]);
+
+    useEffect(() => {
+        if (!user) {
+            return;
+        }
+        const recencyKey = getRecencyStorageKey(user.id);
+        try {
+            const stored = localStorage.getItem(recencyKey);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (parsed && typeof parsed === 'object') {
+                    recencyMapRef.current = parsed as Record<string, number>;
+                }
+            }
+        } catch (error) {
+            console.warn('ChatContainer failed to restore recency map', error);
+        }
+    }, [user]);
 
     useEffect(() => {
         if (!user) return;
@@ -225,16 +354,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
 
     useEffect(() => {
         if (isOpen) {
-            console.log('ChatContainer detected panel open, refreshing messages');
-            setMessagesRefreshTrigger(prev => prev + 1);
+            console.log('ChatContainer detected panel open, refreshing conversations');
+            loadData({ suppressLoading: true });
         }
-    }, [isOpen]);
+    }, [isOpen, loadData]);
 
     useEffect(() => {
         if (refreshKey === undefined) return;
         console.log('ChatContainer refreshKey effect', { refreshKey });
         loadData();
-        setMessagesRefreshTrigger(prev => prev + 1);
     }, [refreshKey, loadData]);
 
     useEffect(() => {
@@ -256,7 +384,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             setConversations(prev => {
                 const existingIndex = prev.findIndex(conv => conv.id === event.conversationId);
                 if (existingIndex === -1) {
-                    loadData();
                     return prev;
                 }
                 const updatedConversation = hydrateConversation({
@@ -265,7 +392,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 });
                 const remaining = prev.filter((_, idx) => idx !== existingIndex);
                 console.log('ChatContainer conversation updated', { conversationId: event.conversationId });
-                return [updatedConversation, ...remaining];
+                updateConversationRecency(event.conversationId, lastMessage.timestamp, true);
+                return sortConversationsByRecency([updatedConversation, ...remaining], prev);
             });
             const incomingMessage: ChatMessage = {
                 id: `${event.conversationId}-${event.timestamp}`,
@@ -276,31 +404,41 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             };
             setCachedMessages(prev => {
                 const existing = prev[event.conversationId] || [];
-                const merged = mergeMessagesById(existing, [incomingMessage]);
-                return { ...prev, [event.conversationId]: merged };
+                const withoutLocalEcho = filterOutMatchingLocalEchoes(existing, incomingMessage);
+                const merged = mergeMessagesById(withoutLocalEcho, [incomingMessage]);
+                const updated = { ...prev, [event.conversationId]: merged };
+                cachedMessagesRef.current = updated;
+                const latest = merged[merged.length - 1];
+                if (latest) {
+                    updateConversationRecency(event.conversationId, latest.timestamp, true);
+                    setConversations(prevConvs => sortConversationsByRecency(prevConvs, prevConvs));
+                }
+                return updated;
             });
             setPendingMessages(prev => {
                 if (isOpen && activeConversation?.id === event.conversationId) {
                     return prev;
                 }
                 const existing = prev[event.conversationId] || [];
-                const merged = mergeMessagesById(existing, [incomingMessage]);
-                return {
+                const withoutLocalEcho = filterOutMatchingLocalEchoes(existing, incomingMessage);
+                const merged = mergeMessagesById(withoutLocalEcho, [incomingMessage]);
+                const updated = {
                     ...prev,
                     [event.conversationId]: merged,
                 };
-            });
-            setMessagesRefreshTrigger(prev => {
-                const next = prev + 1;
-                console.log('ChatContainer messagesRefreshTrigger incremented', { next });
-                return next;
+                const latest = merged[merged.length - 1];
+                if (latest) {
+                    updateConversationRecency(event.conversationId, latest.timestamp, true);
+                    setConversations(prevConvs => sortConversationsByRecency(prevConvs, prevConvs));
+                }
+                return updated;
             });
         };
         chatSocket.addListener(listener);
         return () => {
             chatSocket.removeListener(listener);
         };
-    }, [user, loadData]);
+    }, [user, loadData, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation]);
 
     const handleSelectConversation = (conversation: ChatConversation) => {
         setActiveConversation(hydrateConversation(conversation));
@@ -349,9 +487,10 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 lastMessageTimestamp: lastMessage.timestamp,
             });
             const remaining = prev.filter((_, idx) => idx !== existingIndex);
-            return [updatedConv, ...remaining];
+            updateConversationRecency(conversationId, lastMessage.timestamp, true);
+            return sortConversationsByRecency([updatedConv, ...remaining], prev);
         });
-    }, [hydrateConversation]);
+    }, [hydrateConversation, sortConversationsByRecency, updateConversationRecency]);
 
     const handleMessagesFetched = useCallback((conversationId: string, fetchedMessages: ChatMessage[]) => {
         setCachedMessages(prev => {

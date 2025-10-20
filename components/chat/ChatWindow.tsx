@@ -24,23 +24,44 @@ const getInitials = (name: string) => {
 
 const normalizeMessageText = (text?: string) => (text || '').trim().toLowerCase();
 
-const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
-    const mergedMap = new Map<string, ChatMessage>();
-    existing.forEach(msg => mergedMap.set(msg.id, msg));
-    incoming.forEach(msg => mergedMap.set(msg.id, msg));
-    const sorted = Array.from(mergedMap.values()).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+const DUPLICATE_WINDOW_MS = 60 * 1000;
 
+const getMessageTime = (message: ChatMessage) => {
+    const value = new Date(message.timestamp).getTime();
+    return Number.isFinite(value) ? value : 0;
+};
+
+const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
+    if (a === b) return true;
+    if (a.conversationId !== b.conversationId) return false;
+    if (normalizeMessageText(a.text) !== normalizeMessageText(b.text)) return false;
+    const timeA = getMessageTime(a);
+    const timeB = getMessageTime(b);
+    if (!timeA || !timeB) return false;
+    if (Math.abs(timeA - timeB) > DUPLICATE_WINDOW_MS) return false;
+    if (a.senderId && b.senderId && a.senderId !== b.senderId) return false;
+    return true;
+};
+
+const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
+    const sorted = messages.slice().sort((a, b) => getMessageTime(a) - getMessageTime(b));
     const result: ChatMessage[] = [];
     for (const msg of sorted) {
-        if (msg.isLocal) {
-            const hasServerDuplicate = sorted.some(other => other !== msg && !other.isLocal && other.senderId === msg.senderId && normalizeMessageText(other.text) === normalizeMessageText(msg.text) && Math.abs(new Date(other.timestamp).getTime() - new Date(msg.timestamp).getTime()) <= 5000);
-            if (hasServerDuplicate) {
-                continue;
+        const duplicateIndex = result.findIndex(existing => areMessagesEquivalent(existing, msg));
+        if (duplicateIndex !== -1) {
+            const existing = result[duplicateIndex];
+            if (existing.isLocal && !msg.isLocal) {
+                result[duplicateIndex] = msg;
             }
+            continue;
         }
         result.push(msg);
     }
     return result;
+};
+
+const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
+    return dedupeMessages([...existing, ...incoming]);
 };
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBack, allUsers, refreshKey, pendingMessages = [], cachedMessages = [], onPendingConsumed, onMessagesFetched, onLocalMessage }) => {
