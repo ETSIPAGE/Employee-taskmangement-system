@@ -270,11 +270,26 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         }
     }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, hasLoadedOnce]);
 
+    const loadDataRef = useRef(loadData);
+    const lastUserIdRef = useRef<string | undefined>();
+    const panelRefreshTriggeredRef = useRef(false);
+    const lastRefreshKeyRef = useRef<number | undefined>();
+
     useEffect(() => {
-        if (!user) {
+        loadDataRef.current = loadData;
+    }, [loadData]);
+
+    useEffect(() => {
+        const currentUserId = user?.id;
+        if (!currentUserId) {
+            lastUserIdRef.current = undefined;
             return;
         }
-        loadData();
+        if (lastUserIdRef.current === currentUserId) {
+            return;
+        }
+        lastUserIdRef.current = currentUserId;
+        loadDataRef.current();
     }, [user?.id]);
 
     useEffect(() => {
@@ -353,17 +368,29 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     }, [cachedMessages, user]);
 
     useEffect(() => {
-        if (isOpen) {
-            console.log('ChatContainer detected panel open, refreshing conversations');
-            loadData({ suppressLoading: true });
+        if (!isOpen) {
+            panelRefreshTriggeredRef.current = false;
+            return;
         }
-    }, [isOpen, loadData]);
+        if (panelRefreshTriggeredRef.current) {
+            return;
+        }
+        panelRefreshTriggeredRef.current = true;
+        console.log('ChatContainer detected panel open, refreshing conversations');
+        loadDataRef.current({ suppressLoading: true });
+    }, [isOpen]);
 
     useEffect(() => {
-        if (refreshKey === undefined) return;
+        if (refreshKey === undefined) {
+            return;
+        }
+        if (lastRefreshKeyRef.current === refreshKey) {
+            return;
+        }
+        lastRefreshKeyRef.current = refreshKey;
         console.log('ChatContainer refreshKey effect', { refreshKey });
-        loadData();
-    }, [refreshKey, loadData]);
+        loadDataRef.current();
+    }, [refreshKey]);
 
     useEffect(() => {
         if (!user) {
@@ -438,7 +465,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         return () => {
             chatSocket.removeListener(listener);
         };
-    }, [user, loadData, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation]);
+    }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation]);
 
     const handleSelectConversation = (conversation: ChatConversation) => {
         setActiveConversation(hydrateConversation(conversation));
