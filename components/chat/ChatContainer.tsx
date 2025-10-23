@@ -20,6 +20,19 @@ const looksLikeSystemId = (value?: string) => {
     return /^[0-9a-fA-F]+$/.test(hexCandidate) && (trimmed.includes('-') || hexCandidate.length >= 16);
 };
 
+const isPlaceholderConversationName = (value?: string) => {
+    if (!value) return false;
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    if (normalized === 'direct chat' || normalized === 'chat' || normalized === 'chat conversation') {
+        return true;
+    }
+    if (normalized.startsWith('direct chat')) {
+        return true;
+    }
+    return false;
+};
+
 const deriveNameFromEmail = (email?: string) => {
     if (!email) return null;
     const [localPart] = email.split('@');
@@ -30,6 +43,30 @@ const deriveNameFromEmail = (email?: string) => {
         .filter(Boolean)
         .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
         .join(' ');
+};
+
+const normalizeParticipantIds = (ids?: (string | number | undefined)[]) =>
+    (ids || [])
+        .map(id => (id === null || id === undefined ? null : String(id)))
+        .filter((value): value is string => Boolean(value));
+
+const buildParticipantKey = (ids?: (string | number | undefined)[]) => {
+    const normalized = normalizeParticipantIds(ids);
+    return normalized.slice().sort().join('|');
+};
+
+const shouldTreatAsDirect = (conversation: ChatConversation, normalizedParticipantIds?: string[]) => {
+    const participantIds = normalizedParticipantIds ?? normalizeParticipantIds(conversation.participantIds);
+    const participantCount = participantIds.length;
+    if (participantCount === 0 || participantCount > 2) {
+        return false;
+    }
+    const rawType = conversation.type?.toLowerCase();
+    if (rawType === 'group' && (conversation.adminIds?.length ?? 0) > 0) {
+        // Some backends mark direct chats as group with admin metadata; prefer participant count.
+        return true;
+    }
+    return true;
 };
 
 const formatUserDisplayName = (user?: User) => {
@@ -106,40 +143,81 @@ const resolveTimestamp = (value?: string | number | Date): number | null => {
     return null;
 };
 
+const dedupeConversations = (conversations: ChatConversation[]): ChatConversation[] => {
+    const directMap = new Map<string, ChatConversation>();
+    const groupMap = new Map<string, ChatConversation>();
+
+    const resolveTimestampSafe = (conversation: ChatConversation) =>
+        resolveTimestamp(conversation.lastMessage?.timestamp) ?? 0;
+
+    for (const conversation of conversations) {
+        const normalizedParticipants = normalizeParticipantIds(conversation.participantIds);
+        const normalizedConversation: ChatConversation = {
+            ...conversation,
+            participantIds: normalizedParticipants,
+        };
+
+        if (shouldTreatAsDirect(normalizedConversation, normalizedParticipants)) {
+            const key = buildParticipantKey(normalizedParticipants) || normalizedConversation.id;
+            if (!key) {
+                continue;
+            }
+            const existing = directMap.get(key);
+            if (!existing || resolveTimestampSafe(normalizedConversation) > resolveTimestampSafe(existing)) {
+                directMap.set(key, normalizedConversation);
+            }
+            continue;
+        }
+
+        const groupKey = normalizedConversation.id || buildParticipantKey(normalizedParticipants) || `group-${groupMap.size}`;
+        const existingGroup = groupMap.get(groupKey);
+        if (!existingGroup || resolveTimestampSafe(normalizedConversation) > resolveTimestampSafe(existingGroup)) {
+            groupMap.set(groupKey, normalizedConversation);
+        }
+    }
+
+    return [...groupMap.values(), ...directMap.values()];
+};
+
 const enrichConversation = (
     conversation: ChatConversation,
     userLookup: Map<string, User>,
     currentUserId: string
 ): ChatConversation => {
-    const participantCount = conversation.participantIds?.length || 0;
+    const participantIds = normalizeParticipantIds(conversation.participantIds);
+    const participantCount = participantIds.length;
     const rawType = conversation.type?.toLowerCase();
-    const nameLooksSystem = conversation.name && (looksLikeSystemId(conversation.name) || conversation.name.toLowerCase().startsWith('direct-'));
-    const hasGroupHints = rawType === 'group' || (conversation.adminIds?.length ?? 0) > 0 || participantCount > 2;
+    const cleanName = conversation.name?.trim();
+    const nameLooksSystem = cleanName && (
+        looksLikeSystemId(cleanName) ||
+        cleanName.toLowerCase().startsWith('direct-') ||
+        isPlaceholderConversationName(cleanName)
+    );
+    const treatAsDirect = shouldTreatAsDirect({ ...conversation, participantIds }, participantIds);
 
-    if (hasGroupHints && !nameLooksSystem) {
-        return {
-            ...conversation,
-            type: 'group',
-            name: conversation.name && conversation.name.trim() ? conversation.name : 'Group Chat',
-        };
-    }
-
-    const isDirect = rawType === 'direct' || !hasGroupHints || nameLooksSystem || participantCount <= 2;
-    if (isDirect) {
-        const otherUserId = conversation.participantIds.find(id => id !== currentUserId);
+    if (treatAsDirect) {
+        const otherUserId = participantIds.find(id => id !== currentUserId);
         const otherUser = otherUserId ? userLookup.get(otherUserId) : undefined;
         const displayName = formatUserDisplayName(otherUser);
         return {
             ...conversation,
             type: 'direct',
-            name: displayName,
+            name: displayName || (conversation.name && !looksLikeSystemId(conversation.name) ? conversation.name : 'Direct Chat'),
+            participantIds,
         };
     }
 
+    const otherParticipantNames = participantIds
+        .filter(id => id !== currentUserId)
+        .map(id => formatUserDisplayName(userLookup.get(id)))
+        .filter(Boolean);
+    const derivedGroupName = otherParticipantNames.slice(0, 3).join(', ');
+
     return {
         ...conversation,
-        type: hasGroupHints ? 'group' : 'direct',
-        name: conversation.name && conversation.name.trim() ? conversation.name : hasGroupHints ? 'Group Chat' : conversation.name,
+        type: 'group',
+        name: !cleanName || nameLooksSystem ? (derivedGroupName || cleanName || 'Group Chat') : cleanName,
+        participantIds,
     };
 };
 
@@ -171,7 +249,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             const key = getRecencyStorageKey(user.id);
             localStorage.setItem(key, JSON.stringify(recencyMapRef.current));
         } catch (error) {
-            console.warn('ChatContainer failed to persist recency map', error);
         }
     }, [user]);
 
@@ -197,7 +274,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     }, [updateConversationRecency]);
 
     const sortConversationsByRecency = useCallback((list: ChatConversation[], previous?: ChatConversation[]) => {
-        const sorted = list.slice().sort((a, b) => getConversationRecency(b) - getConversationRecency(a));
+        const deduped = dedupeConversations(list);
+        const sorted = deduped.slice().sort((a, b) => getConversationRecency(b) - getConversationRecency(a));
         if (previous && previous.length === sorted.length) {
             let identical = true;
             for (let i = 0; i < sorted.length; i += 1) {
@@ -216,7 +294,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     const loadData = useCallback(async (options?: { suppressLoading?: boolean }) => {
         if (!user) return;
         if (loadInProgressRef.current) {
-            console.debug('ChatContainer loadData skipped: already in progress');
             return;
         }
         const suppressLoading = options?.suppressLoading ?? hasLoadedOnce;
@@ -231,6 +308,14 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             ]);
             const freshLookup = new Map(users.map(u => [u.id, u]));
             const enrichedConversations = userConversations.map(conv => hydrateConversation(conv, freshLookup));
+            const directChats = enrichedConversations
+                .filter(conv => conv.type === 'direct')
+                .map(conv => ({ id: conv.id, name: conv.name || 'Direct Chat' }));
+            console.log('ChatContainer direct chat list', directChats);
+            const groupNames = enrichedConversations
+                .filter(conv => conv.type === 'group')
+                .map(conv => conv.name || 'Group Chat');
+            const totalChats = dedupeConversations(enrichedConversations).length;
             const conversationsWithCache = enrichedConversations.map(conv => {
                 const cached = cachedMessagesRef.current[conv.id];
                 if (!cached || !cached.length) {
@@ -241,24 +326,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 updateConversationRecency(conv.id, lastMessage.timestamp, true);
                 return hydrateConversation({ ...conv, lastMessage }, freshLookup);
             });
+            const dedupedConversations = dedupeConversations(conversationsWithCache);
             setAllUsers(users);
-            setConversations(prev => sortConversationsByRecency(conversationsWithCache, prev));
-            console.log('ChatContainer loadData result', {
-                conversationsCount: userConversations.length,
-                usersCount: users.length,
-            });
+            setConversations(prev => sortConversationsByRecency(dedupedConversations, prev));
             setActiveConversation(prev => {
                 if (!prev) return prev;
-                const updated = enrichedConversations.find(c => c.id === prev.id);
-                if (!updated) {
-                    console.warn('ChatContainer active conversation no longer present', { activeId: prev.id });
-                } else {
-                    console.log('ChatContainer active conversation updated', { activeId: prev.id });
-                }
+                const updated = dedupedConversations.find(c => c.id === prev.id) || enrichedConversations.find(c => c.id === prev.id);
                 return updated ? updated : hydrateConversation(prev, freshLookup);
             });
         } catch (error) {
-            console.error("Failed to load chat data:", error);
         } finally {
             loadInProgressRef.current = false;
             if (!suppressLoading) {
@@ -325,15 +401,12 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                             updateConversationRecency(conv.id, lastMessage.timestamp, true);
                             return hydrateConversation({ ...conv, lastMessage });
                         });
-                        return sortConversationsByRecency(updated, prev);
-                    });
-                    console.log('ChatContainer restored cached messages from storage', {
-                        conversations: Object.keys(normalized).length,
+                        const deduped = dedupeConversations(updated);
+                        return sortConversationsByRecency(deduped, prev);
                     });
                 }
             }
         } catch (error) {
-            console.warn('ChatContainer failed to restore cached messages', error);
         }
     }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency]);
 
@@ -351,7 +424,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 }
             }
         } catch (error) {
-            console.warn('ChatContainer failed to restore recency map', error);
         }
     }, [user]);
 
@@ -363,7 +435,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             const serialized = JSON.stringify(cachedMessages);
             localStorage.setItem(cacheKey, serialized);
         } catch (error) {
-            console.warn('ChatContainer failed to persist cached messages', error);
         }
     }, [cachedMessages, user]);
 
@@ -376,7 +447,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             return;
         }
         panelRefreshTriggeredRef.current = true;
-        console.log('ChatContainer detected panel open, refreshing conversations');
         loadDataRef.current({ suppressLoading: true });
     }, [isOpen]);
 
@@ -388,7 +458,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             return;
         }
         lastRefreshKeyRef.current = refreshKey;
-        console.log('ChatContainer refreshKey effect', { refreshKey });
         loadDataRef.current();
     }, [refreshKey]);
 
@@ -400,7 +469,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             if (event.type !== 'newMessage' || !event.conversationId || !event.text || !event.timestamp) {
                 return;
             }
-            console.log('ChatContainer socket listener received', event);
             const lastMessage = {
                 id: `${event.conversationId}-${event.timestamp}`,
                 conversationId: event.conversationId,
@@ -408,9 +476,11 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 text: event.text,
                 timestamp: event.timestamp,
             };
+            let shouldRefreshConversations = false;
             setConversations(prev => {
                 const existingIndex = prev.findIndex(conv => conv.id === event.conversationId);
                 if (existingIndex === -1) {
+                    shouldRefreshConversations = true;
                     return prev;
                 }
                 const updatedConversation = hydrateConversation({
@@ -418,7 +488,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                     lastMessage,
                 });
                 const remaining = prev.filter((_, idx) => idx !== existingIndex);
-                console.log('ChatContainer conversation updated', { conversationId: event.conversationId });
                 updateConversationRecency(event.conversationId, lastMessage.timestamp, true);
                 return sortConversationsByRecency([updatedConversation, ...remaining], prev);
             });
@@ -442,6 +511,9 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 }
                 return updated;
             });
+            if (shouldRefreshConversations) {
+                loadData({ suppressLoading: true });
+            }
             setPendingMessages(prev => {
                 if (isOpen && activeConversation?.id === event.conversationId) {
                     return prev;
@@ -467,23 +539,78 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         };
     }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation]);
 
+    const buildDirectConversationKey = useCallback((ids: (string | number | undefined)[]) => {
+        return ids
+            .map(id => (id === null || id === undefined ? null : String(id)))
+            .filter((id): id is string => Boolean(id))
+            .sort()
+            .join('|');
+    }, []);
+
+    const findExistingDirectConversation = useCallback((selectedUserId: string) => {
+        if (!user) return null;
+        const desiredKey = buildDirectConversationKey([user.id, selectedUserId]);
+        return conversations.find(conv => {
+            if (!shouldTreatAsDirect(conv)) {
+                return false;
+            }
+            const key = buildDirectConversationKey(conv.participantIds || []);
+            return key === desiredKey;
+        }) || null;
+    }, [buildDirectConversationKey, conversations, user]);
+
     const handleSelectConversation = (conversation: ChatConversation) => {
         setActiveConversation(hydrateConversation(conversation));
     };
 
-    const handleSelectUser = (selectedUser: User) => {
+    const handleSelectUser = useCallback(async (selectedUser: User) => {
         if (!user) return;
-        const conversation = hydrateConversation(DataService.getOrCreateDirectConversation(user.id, selectedUser.id));
-        setActiveConversation(conversation);
-        // Refresh conversations list to include the new one if created
-        if (!conversations.find(c => c.id === conversation.id)) {
-            loadData();
+        const existing = findExistingDirectConversation(selectedUser.id);
+        if (existing) {
+            const hydrated = hydrateConversation(existing);
+            updateConversationRecency(existing.id, existing.lastMessage?.timestamp, true);
+            setActiveConversation(hydrated);
+            setConversations(prev => {
+                const index = prev.findIndex(conv => conv.id === hydrated.id);
+                const nextList = index === -1
+                    ? [...prev, hydrated]
+                    : prev.map(conv => (conv.id === hydrated.id ? hydrated : conv));
+                return sortConversationsByRecency(nextList, prev);
+            });
+            setMessagesRefreshTrigger(Date.now());
+            return;
         }
-    };
+        try {
+            const baseConversation = await DataService.getOrCreateDirectConversation(user.id, selectedUser.id);
+            const conversation = hydrateConversation(baseConversation);
+            updateConversationRecency(conversation.id, conversation.lastMessage?.timestamp, true);
+            setActiveConversation(conversation);
+            setConversations(prev => {
+                const exists = prev.some(c => c.id === conversation.id);
+                const nextList = exists ? prev.map(conv => (conv.id === conversation.id ? conversation : conv)) : [...prev, conversation];
+                return sortConversationsByRecency(nextList, prev);
+            });
+            setMessagesRefreshTrigger(Date.now());
+        } catch (error) {
+        }
+    }, [user, findExistingDirectConversation, hydrateConversation, sortConversationsByRecency, updateConversationRecency]);
     
-    const handleGroupCreated = () => {
-        loadData();
-    };
+    const handleGroupCreated = useCallback((createdConversation?: ChatConversation) => {
+        if (createdConversation) {
+            const hydrated = hydrateConversation(createdConversation);
+            updateConversationRecency(hydrated.id, hydrated.lastMessage?.timestamp, true);
+            setConversations(prev => {
+                const exists = prev.some(conv => conv.id === hydrated.id);
+                const nextList = exists
+                    ? prev.map(conv => (conv.id === hydrated.id ? hydrated : conv))
+                    : [...prev, hydrated];
+                return sortConversationsByRecency(nextList, prev);
+            });
+            setActiveConversation(hydrated);
+            setMessagesRefreshTrigger(Date.now());
+        }
+        loadData({ suppressLoading: true });
+    }, [hydrateConversation, updateConversationRecency, sortConversationsByRecency, loadData]);
 
     const handlePendingConsumed = useCallback((conversationId: string) => {
         setPendingMessages(prev => {
@@ -505,13 +632,6 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             const updatedConv = hydrateConversation({
                 ...prev[existingIndex],
                 lastMessage,
-            });
-            console.log('ChatContainer last message update', {
-                conversationId,
-                conversationName: updatedConv.name,
-                conversationType: updatedConv.type,
-                lastMessageText: lastMessage.text,
-                lastMessageTimestamp: lastMessage.timestamp,
             });
             const remaining = prev.filter((_, idx) => idx !== existingIndex);
             updateConversationRecency(conversationId, lastMessage.timestamp, true);

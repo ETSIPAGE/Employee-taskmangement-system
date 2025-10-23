@@ -9,7 +9,7 @@ interface ChatSidebarProps {
     currentUser: User;
     onSelectConversation: (conversation: ChatConversation) => void;
     onSelectUser: (user: User) => void;
-    onGroupCreated: () => void;
+    onGroupCreated: (conversation?: ChatConversation) => void;
 }
 
 const getInitials = (name: string) => {
@@ -150,9 +150,9 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                 onClose={() => setIsGroupModalOpen(false)}
                 currentUser={currentUser}
                 allUsers={users}
-                onGroupCreated={() => {
+                onGroupCreated={(conversation) => {
                     setIsGroupModalOpen(false);
-                    onGroupCreated();
+                    onGroupCreated(conversation);
                 }}
             />
         </div>

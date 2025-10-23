@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User } from '../../types';
+import { ChatConversation, User } from '../../types';
 import * as DataService from '../../services/dataService';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -10,13 +10,14 @@ interface CreateGroupModalProps {
     onClose: () => void;
     currentUser: User;
     allUsers: User[];
-    onGroupCreated: () => void;
+    onGroupCreated: (conversation?: ChatConversation) => void;
 }
 
 const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, currentUser, allUsers, onGroupCreated }) => {
     const [groupName, setGroupName] = useState('');
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [error, setError] = useState('');
+    const [submitting, setSubmitting] = useState(false);
 
     const handleMemberToggle = (userId: string) => {
         const newSelection = new Set(selectedMembers);
@@ -28,9 +29,12 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, cu
         setSelectedMembers(newSelection);
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+        if (submitting) {
+            return;
+        }
         if (!groupName.trim()) {
             setError('Group name is required.');
             return;
@@ -40,10 +44,18 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, cu
             return;
         }
 
-        DataService.createGroup(groupName, Array.from(selectedMembers), currentUser.id);
-        onGroupCreated();
-        setGroupName('');
-        setSelectedMembers(new Set());
+        setSubmitting(true);
+        try {
+            const createdConversation = await DataService.createGroup(groupName, Array.from(selectedMembers), currentUser.id);
+            onGroupCreated(createdConversation);
+            setGroupName('');
+            setSelectedMembers(new Set());
+            onClose();
+        } catch (err) {
+            setError('Failed to create group. Please try again.');
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     return (
@@ -80,8 +92,8 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({ isOpen, onClose, cu
                 {error && <p className="text-sm text-red-600">{error}</p>}
 
                 <div className="pt-4 flex justify-end space-x-3">
-                    <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
-                    <Button type="submit">Create Group</Button>
+                    <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border" disabled={submitting}>Cancel</button>
+                    <Button type="submit" disabled={submitting}>{submitting ? 'Creating…' : 'Create Group'}</Button>
                 </div>
             </form>
         </Modal>
