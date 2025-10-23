@@ -60,6 +60,71 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
 };
 
+// --- ATTENDANCE TIME NORMALIZATION HELPERS ---
+const coerceDateFromEpochAny = (input: string | number): Date | null => {
+    const numeric = typeof input === 'number' ? input : Number(String(input).trim());
+    if (!Number.isFinite(numeric)) return null;
+    const millis = numeric > 1e12 ? numeric : numeric > 1e9 ? numeric * 1000 : null;
+    if (!millis) return null;
+    const d = new Date(millis);
+    return isNaN(d.getTime()) ? null : d;
+};
+
+const parseClock = (value: string): { h: number; m: number } | null => {
+    const s = value.trim();
+    const m12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (m12) {
+        let h = parseInt(m12[1], 10);
+        const m = parseInt(m12[2], 10);
+        const mer = m12[4].toUpperCase();
+        if (Number.isNaN(h) || Number.isNaN(m) || m < 0 || m > 59) return null;
+        if (mer === 'AM') { if (h === 12) h = 0; }
+        else { if (h !== 12) h += 12; }
+        if (h < 0 || h > 23) return null;
+        return { h, m };
+    }
+    const m24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m24) {
+        const h = parseInt(m24[1], 10);
+        const m = parseInt(m24[2], 10);
+        if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+        return { h, m };
+    }
+    return null;
+};
+
+const toHHmm = (date: Date): string => {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const normalizeTimeForDisplay = (input: any): string => {
+    if (input === undefined || input === null) return '';
+    // Numeric epoch seconds/millis
+    if (typeof input === 'number') {
+        const d = coerceDateFromEpochAny(input);
+        if (d) return toHHmm(d);
+    }
+    const s = String(input).trim();
+    // Numeric string epoch
+    if (/^\d{9,}$/.test(s)) {
+        const d = coerceDateFromEpochAny(s);
+        if (d) return toHHmm(d);
+    }
+    // ISO or date-like string
+    const asDate = new Date(s);
+    if (!isNaN(asDate.getTime())) {
+        return toHHmm(asDate);
+    }
+    // Plain clock strings
+    const comps = parseClock(s);
+    if (comps) {
+        const d = new Date();
+        d.setHours(comps.h, comps.m, 0, 0);
+        return toHHmm(d);
+    }
+    return s;
+};
+
 // --- COMMON HELPERS ---
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
     const token = getToken();
@@ -839,8 +904,6 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
     try {
         // --- THIS IS THE CORRECTED LINE ---
         const endpoint = `${ATTENDANCE_GET_BY_DATE_URL}?date=${encodeURIComponent(date)}`;
-        // ----------------------------------
-
         const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
         const raw = extractArrayFromApiResponse(data, 'attendance');
@@ -858,8 +921,8 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
                     userId: String(userId),
                     date: d,
                 };
-                if (punchIn) record.punchInTime = String(punchIn);
-                if (punchOut) record.punchOutTime = String(punchOut);
+                if (punchIn !== undefined && punchIn !== null) record.punchInTime = normalizeTimeForDisplay(punchIn);
+                if (punchOut !== undefined && punchOut !== null) record.punchOutTime = normalizeTimeForDisplay(punchOut);
                 return record;
             })
             .filter((x: any) => x);
@@ -877,7 +940,6 @@ export const getAttendanceForUserByMonth = async (
     month: number
 ): Promise<Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
-        // Always use query parameter as backend requires ?userId even if path includes {userId}
         const baseUserUrl = ATTENDANCE_GET_BY_USER_URL
             .replace('{userId}', '')
             .replace(/\/{userId}/g, '')
@@ -896,8 +958,10 @@ export const getAttendanceForUserByMonth = async (
                     userId: String(uid),
                     date: String(d),
                 };
-                if (r?.punchInTime) rec.punchInTime = String(r.punchInTime);
-                if (r?.punchOutTime) rec.punchOutTime = String(r.punchOutTime);
+                const punchIn = r?.punchInTime || r?.punch_in_time || r?.punch_in || r?.punchIn;
+                const punchOut = r?.punchOutTime || r?.punch_out_time || r?.punch_out || r?.punchOut;
+                if (punchIn !== undefined && punchIn !== null) rec.punchInTime = normalizeTimeForDisplay(punchIn);
+                if (punchOut !== undefined && punchOut !== null) rec.punchOutTime = normalizeTimeForDisplay(punchOut);
                 return rec;
             })
             .filter((x: any) => x);
