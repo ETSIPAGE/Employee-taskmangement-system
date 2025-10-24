@@ -306,8 +306,44 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 DataService.getConversationsForUser(user.id),
                 DataService.getUsers(true),
             ]);
+            const conversationsWithLastMessage = await Promise.all(userConversations.map(async conv => {
+                if (conv.lastMessage?.timestamp) {
+                    return conv;
+                }
+                const cached = cachedMessagesRef.current[conv.id];
+                const cachedLast = cached && cached.length ? cached[cached.length - 1] : undefined;
+                if (cachedLast?.timestamp) {
+                    console.log('ChatContainer resolved last message from cache', {
+                        conversationId: conv.id,
+                        timestamp: cachedLast.timestamp,
+                    });
+                    return { ...conv, lastMessage: cachedLast };
+                }
+                try {
+                    const response = await DataService.getMessagesForConversation(conv.id, undefined, 1);
+                    const latest = response.items && response.items.length ? response.items[response.items.length - 1] : undefined;
+                    if (latest?.timestamp) {
+                        console.log('ChatContainer resolved missing last message via fetch', {
+                            conversationId: conv.id,
+                            timestamp: latest.timestamp,
+                        });
+                        return { ...conv, lastMessage: latest };
+                    }
+                } catch (error) {
+                    console.error('ChatContainer failed to resolve last message', {
+                        conversationId: conv.id,
+                        error,
+                    });
+                }
+                return conv;
+            }));
+            console.log('ChatContainer fetched conversation last messages', conversationsWithLastMessage.map(conv => ({
+                conversationId: conv.id,
+                lastMessageText: conv.lastMessage?.text || 'No messages yet.',
+                lastMessageTimestamp: conv.lastMessage?.timestamp,
+            })));
             const freshLookup = new Map(users.map(u => [u.id, u]));
-            const enrichedConversations = userConversations.map(conv => hydrateConversation(conv, freshLookup));
+            const enrichedConversations = conversationsWithLastMessage.map(conv => hydrateConversation(conv, freshLookup));
             const directChats = enrichedConversations
                 .filter(conv => conv.type === 'direct')
                 .map(conv => ({ id: conv.id, name: conv.name || 'Direct Chat' }));
