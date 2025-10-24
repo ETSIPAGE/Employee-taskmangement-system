@@ -921,8 +921,8 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
                     userId: String(userId),
                     date: d,
                 };
-                if (punchIn !== undefined && punchIn !== null) record.punchInTime = normalizeTimeForDisplay(punchIn);
-                if (punchOut !== undefined && punchOut !== null) record.punchOutTime = normalizeTimeForDisplay(punchOut);
+                if (punchIn !== undefined && punchIn !== null) record.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) record.punchOutTime = String(punchOut);
                 return record;
             })
             .filter((x: any) => x);
@@ -960,8 +960,8 @@ export const getAttendanceForUserByMonth = async (
                 };
                 const punchIn = r?.punchInTime || r?.punch_in_time || r?.punch_in || r?.punchIn;
                 const punchOut = r?.punchOutTime || r?.punch_out_time || r?.punch_out || r?.punchOut;
-                if (punchIn !== undefined && punchIn !== null) rec.punchInTime = normalizeTimeForDisplay(punchIn);
-                if (punchOut !== undefined && punchOut !== null) rec.punchOutTime = normalizeTimeForDisplay(punchOut);
+                if (punchIn !== undefined && punchIn !== null) rec.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) rec.punchOutTime = String(punchOut);
                 return rec;
             })
             .filter((x: any) => x);
