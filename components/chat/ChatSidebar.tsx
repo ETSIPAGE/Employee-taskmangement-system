@@ -9,13 +9,52 @@ interface ChatSidebarProps {
     currentUser: User;
     onSelectConversation: (conversation: ChatConversation) => void;
     onSelectUser: (user: User) => void;
-    onGroupCreated: () => void;
+    onGroupCreated: (conversation?: ChatConversation) => void;
 }
 
 const getInitials = (name: string) => {
-    const names = name.split(' ');
-    if (names.length > 1) return `${names[0][0]}$${names[names.length - 1][0]}`.toUpperCase();
-    return name.substring(0, 2).toUpperCase();
+    const trimmed = name?.trim();
+    if (!trimmed) return '?';
+    const parts = trimmed.split(' ').filter(Boolean);
+    if (parts.length === 1) {
+        return parts[0].substring(0, 2).toUpperCase();
+    }
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+};
+
+const looksLikeSystemId = (value?: string) => {
+    if (!value) return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    const hexCandidate = trimmed.replace(/-/g, '');
+    return /^[0-9a-fA-F]+$/.test(hexCandidate) && (trimmed.includes('-') || hexCandidate.length >= 16);
+};
+
+const deriveNameFromEmail = (email?: string) => {
+    if (!email) return null;
+    const [localPart] = email.split('@');
+    if (!localPart) return null;
+    return localPart
+        .replace(/[._-]+/g, ' ')
+        .split(' ')
+        .filter(Boolean)
+        .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+        .join(' ');
+};
+
+const formatUserName = (user?: User) => {
+    if (!user) return 'Unknown User';
+    if (user.name && !looksLikeSystemId(user.name) && !user.name.toLowerCase().startsWith('direct-')) {
+        return user.name;
+    }
+    const emailName = deriveNameFromEmail(user.email);
+    if (emailName) {
+        return emailName;
+    }
+    if (user.name) {
+        return user.name;
+    }
+    return user.id || 'Unknown User';
 };
 
 const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, currentUser, onSelectConversation, onSelectUser, onGroupCreated }) => {
@@ -24,11 +63,15 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
 
     const getConversationDisplay = (conv: ChatConversation) => {
         if (conv.type === 'group') {
-            return { name: conv.name || 'Group Chat', initials: (conv.name || 'G').charAt(0).toUpperCase() };
+            const groupName = conv.name || 'Group Chat';
+            console.log('ChatSidebar group conversation display', { conversationId: conv.id, name: groupName });
+            return { name: groupName, initials: (groupName || 'G').charAt(0).toUpperCase() };
         }
         const otherUserId = conv.participantIds.find(id => id !== currentUser.id);
         const otherUser = users.find(u => u.id === otherUserId);
-        return { name: otherUser?.name || 'Unknown User', initials: getInitials(otherUser?.name || '?') };
+        const name = formatUserName(otherUser);
+        console.log('ChatSidebar direct conversation display', { conversationId: conv.id, otherUserId, name });
+        return { name, initials: getInitials(name) };
     };
 
     const canCreateGroup = currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.MANAGER;
@@ -48,6 +91,12 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                         {conversations.map(conv => {
                             const display = getConversationDisplay(conv);
                             const lastMessageText = conv.lastMessage?.text || 'No messages yet.';
+                            console.log('ChatSidebar last message preview', {
+                                conversationId: conv.id,
+                                conversationName: display.name,
+                                lastMessageText,
+                                lastMessageTimestamp: conv.lastMessage?.timestamp,
+                            });
                             return (
                                 <li key={conv.id} onClick={() => onSelectConversation(conv)} className="flex items-center p-3 hover:bg-slate-100 cursor-pointer">
                                     <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold mr-3 flex-shrink-0">
@@ -64,22 +113,26 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                 )}
                  {tab === 'users' && (
                     <ul>
-                        {users.filter(u => u.id !== currentUser.id).map(user => (
+                        {users.filter(u => u.id !== currentUser.id).map(user => {
+                             const displayName = formatUserName(user);
+                             console.log('ChatSidebar user entry', { userId: user.id, name: displayName });
+                             return (
                              <li key={user.id} onClick={() => onSelectUser(user)} className="flex items-center p-3 hover:bg-slate-100 cursor-pointer">
                                 <div className="relative mr-3">
                                     <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold flex-shrink-0">
-                                        {getInitials(user.name)}
+                                        {getInitials(displayName)}
                                     </div>
                                     {DataService.isUserOnline(user.id) && (
                                         <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-500 border-2 border-white"></span>
                                     )}
                                 </div>
                                 <div className="flex-1 overflow-hidden">
-                                    <p className="font-semibold text-slate-800 truncate">{user.name}</p>
+                                    <p className="font-semibold text-slate-800 truncate">{displayName}</p>
                                     <p className="text-sm text-slate-500 truncate">{user.role}</p>
                                 </div>
                             </li>
-                        ))}
+                        );
+                        })}
                     </ul>
                  )}
             </div>
@@ -97,9 +150,9 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                 onClose={() => setIsGroupModalOpen(false)}
                 currentUser={currentUser}
                 allUsers={users}
-                onGroupCreated={() => {
+                onGroupCreated={(conversation) => {
                     setIsGroupModalOpen(false);
-                    onGroupCreated();
+                    onGroupCreated(conversation);
                 }}
             />
         </div>

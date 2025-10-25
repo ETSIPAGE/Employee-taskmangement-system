@@ -22,11 +22,13 @@ const PROJECTS_UPDATE_API_BASE_URL = 'https://ikwfgdgtzk.execute-api.ap-south-1.
 const DEPARTMENTS_API_URL = 'https://pp02swd0a8.execute-api.ap-south-1.amazonaws.com/prod/'; // Used for GET and POST
 
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
+const CHAT_CONVERSATIONS_API_URL = 'https://dwzvagakdh.execute-api.ap-south-1.amazonaws.com/dev/conversations';
+const CHAT_CONVERSATION_CREATE_API_URL = 'https://cgdham1ksb.execute-api.ap-south-1.amazonaws.com/dev/conversation';
+const CHAT_MESSAGES_API_BASE_URL = 'https://h5jj6yq686.execute-api.ap-south-1.amazonaws.com/dev/conversation/msg';
 
-const ATTENDANCE_GET_BY_DATE_URL = 'https://onp8l5se9i.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-by-date';
-const ATTENDANCE_GET_BY_USER_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/get-attendence-user';
-const ATTENDANCE_RECORD_ACTION_URL = 'https://w5ahewobh3.execute-api.ap-south-1.amazonaws.com/dev/ETS-record-attendance-action';
-
+const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.amazonaws.com/dev/attendance/user';
+const ATTENDANCE_GET_BY_DATE_URL = 'https://rhb8m6a8mg.execute-api.ap-south-1.amazonaws.com/dev/attendance/date';
+const ATTENDANCE_RECORD_ACTION_URL = 'https://q1rltbjzl4.execute-api.ap-south-1.amazonaws.com/dev/attendance/record'; // POST
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIS / FALLBACKS ---
 let CONVERSATIONS: ChatConversation[] = [
@@ -63,13 +65,74 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
 };
 
-// --- API BASED DATA SERVICE ---
+// --- ATTENDANCE TIME NORMALIZATION HELPERS ---
+const coerceDateFromEpochAny = (input: string | number): Date | null => {
+    const numeric = typeof input === 'number' ? input : Number(String(input).trim());
+    if (!Number.isFinite(numeric)) return null;
+    const millis = numeric > 1e12 ? numeric : numeric > 1e9 ? numeric * 1000 : null;
+    if (!millis) return null;
+    const d = new Date(millis);
+    return isNaN(d.getTime()) ? null : d;
+};
 
-type ExtendedRequestInit = RequestInit & { skipAuth?: boolean; noContentType?: boolean; authRaw?: boolean };
+const parseClock = (value: string): { h: number; m: number } | null => {
+    const s = value.trim();
+    const m12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (m12) {
+        let h = parseInt(m12[1], 10);
+        const m = parseInt(m12[2], 10);
+        const mer = m12[4].toUpperCase();
+        if (Number.isNaN(h) || Number.isNaN(m) || m < 0 || m > 59) return null;
+        if (mer === 'AM') { if (h === 12) h = 0; }
+        else { if (h !== 12) h += 12; }
+        if (h < 0 || h > 23) return null;
+        return { h, m };
+    }
+    const m24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m24) {
+        const h = parseInt(m24[1], 10);
+        const m = parseInt(m24[2], 10);
+        if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+        return { h, m };
+    }
+    return null;
+};
 
-// Helper to add auth token to requests
-const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
-    const token = localStorage.getItem('ets_token') || (typeof getToken === 'function' ? getToken() : undefined);
+const toHHmm = (date: Date): string => {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const normalizeTimeForDisplay = (input: any): string => {
+    if (input === undefined || input === null) return '';
+    // Numeric epoch seconds/millis
+    if (typeof input === 'number') {
+        const d = coerceDateFromEpochAny(input);
+        if (d) return toHHmm(d);
+    }
+    const s = String(input).trim();
+    // Numeric string epoch
+    if (/^\d{9,}$/.test(s)) {
+        const d = coerceDateFromEpochAny(s);
+        if (d) return toHHmm(d);
+    }
+    // ISO or date-like string
+    const asDate = new Date(s);
+    if (!isNaN(asDate.getTime())) {
+        return toHHmm(asDate);
+    }
+    // Plain clock strings
+    const comps = parseClock(s);
+    if (comps) {
+        const d = new Date();
+        d.setHours(comps.h, comps.m, 0, 0);
+        return toHHmm(d);
+    }
+    return s;
+};
+
+// --- COMMON HELPERS ---
+const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
+    const token = getToken();
     const headers = new Headers(options.headers || {});
 
     const { skipAuth, noContentType, authRaw, ...fetchOptions } = (options as any) || {};
@@ -201,31 +264,25 @@ const mapApiUserToUser = (apiUser: any): User => {
     };
 };
 
-export const getAllUsersFromApi = async (): Promise<User[]> => {
-    if (cachedAllUsers) return cachedAllUsers;
+export const getUsers = async (forceRefresh = false): Promise<User[]> => {
+    if (!forceRefresh && cachedAllUsers) return cachedAllUsers;
 
-    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
-    const data = await parseApiResponse(response);
-    const usersFromApi = extractArrayFromApiResponse(data, 'users');
-    
-    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
-    return cachedAllUsers;
+    try {
+        const response = await authenticatedFetch(USERS_API_URL);
+        const data = await parseApiResponse(response);
+        const usersFromApi = extractArrayFromApiResponse(data, 'users');
+
+        cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+        return cachedAllUsers;
+    } catch (error) {
+        console.error("Failed to fetch all users:", error);
+        return [];
+    }
 };
 
-export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
-    const allUsers = await getAllUsersFromApi();
-    return allUsers.find(u => u.id === userId);
-};
-
-// --- EMPLOYEES from API ---
-export const getEmployeesFromApi = async (): Promise<User[]> => {
-    const allUsers = await getAllUsersFromApi();
-    return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
-};
-
-// Simple wrapper used by various parts of the app
-export const getUsers = async (): Promise<User[]> => {
-    return getAllUsersFromApi();
+export const clearUsersCache = () => {
+    cachedAllUsers = null;
+    cachedManagers = null;
 };
 
 export const getUserById = async (userId: string): Promise<User | undefined> => {
@@ -1018,59 +1075,133 @@ export const createCompany = (name: string, ownerId: string): Company => {
     return newCompany;
 };
 
-export const getAttendanceByDate = async (date: string): Promise<string[]> => {
+
+// --- ATTENDANCE SERVICE ---
+export const getAttendanceByDate = async (date: string): Promise<Array<{ userId: string; date?: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_DATE_URL, {
-            method: 'POST',
-            body: JSON.stringify({ date }),
-        });
+        // --- THIS IS THE CORRECTED LINE ---
+        const endpoint = `${ATTENDANCE_GET_BY_DATE_URL}?date=${encodeURIComponent(date)}`;
+        const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
-        const attendanceRecords = extractArrayFromApiResponse(data, 'attendance');
-        return attendanceRecords.map((record: any) => record.userId);
+        const raw = extractArrayFromApiResponse(data, 'attendance');
+        const normalized = raw
+            .map((r: any) => {
+                if (typeof r === 'string') {
+                    return { userId: r, date };
+                }
+                const userId = r.userId || r.user_id || r.user || r.id;
+                const d = r.date || r.timestamp || r.attendanceDate || date;
+                if (!userId) return null;
+                const punchIn = r.punchInTime || r.punch_in_time || r.punch_in || r.punchIn;
+                const punchOut = r.punchOutTime || r.punch_out_time || r.punch_out || r.punchOut;
+                const record: { userId: string; date?: string; punchInTime?: string; punchOutTime?: string } = {
+                    userId: String(userId),
+                    date: d,
+                };
+                if (punchIn !== undefined && punchIn !== null) record.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) record.punchOutTime = String(punchOut);
+                return record;
+            })
+            .filter((x: any) => x);
+        return normalized;
     } catch (error) {
         console.error(`Failed to fetch attendance for date ${date}:`, error);
-        return ATTENDANCE_DATA[date] || []; // Fallback to mock data
+        const fallback = (ATTENDANCE_DATA[date] || []).map(uid => ({ userId: uid, date }));
+        return fallback;
     }
 };
 
-export const getAttendanceForUserByMonth = async (userId: string, year: number, month: number): Promise<string[]> => {
+export const getAttendanceForUserByMonth = async (
+    userId: string,
+    year: number,
+    month: number
+): Promise<Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_USER_URL, {
-            method: 'POST',
-            body: JSON.stringify({ userId }),
-        });
+        const baseUserUrl = ATTENDANCE_GET_BY_USER_URL
+            .replace('{userId}', '')
+            .replace(/\/{userId}/g, '')
+            .replace(/\/$/, '');
+        const endpoint = `${baseUserUrl}?userId=${encodeURIComponent(userId)}&year=${encodeURIComponent(String(year))}&month=${encodeURIComponent(String(month))}`;
+        const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
-        const allUserAttendanceRecords = extractArrayFromApiResponse(data, 'attendance');
+        const raw = extractArrayFromApiResponse(data, 'attendance');
 
-        const presentDatesInMonth = allUserAttendanceRecords
-            .filter((record: any) => {
-                const recordDate = new Date(record.date);
-                // Note: month from API might be 1-indexed, JS Date getMonth() is 0-indexed.
-                // Assuming month parameter here is 0-indexed for consistency with JS Date object.
-                return recordDate.getFullYear() === year && recordDate.getMonth() === month;
+        const normalizedAll = raw
+            .map((r: any) => {
+                const uid = (r?.userId || r?.user_id || r?.user || r?.id || userId);
+                const d = r?.date || r?.timestamp || r?.attendanceDate;
+                if (!d) return null;
+                const rec: { userId: string; date: string; punchInTime?: string; punchOutTime?: string } = {
+                    userId: String(uid),
+                    date: String(d),
+                };
+                const punchIn = r?.punchInTime || r?.punch_in_time || r?.punch_in || r?.punchIn;
+                const punchOut = r?.punchOutTime || r?.punch_out_time || r?.punch_out || r?.punchOut;
+                if (punchIn !== undefined && punchIn !== null) rec.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) rec.punchOutTime = String(punchOut);
+                return rec;
             })
-            .map((record: any) => record.date);
+            .filter((x: any) => x);
 
-        return presentDatesInMonth;
+        // Helper to parse year and month from various date formats
+        const parseYearMonth = (dateStr: string): { y: number; m: number } | null => {
+            const s = String(dateStr);
+            // Try ISO
+            const asDate = new Date(s);
+            if (!isNaN(asDate.getTime())) {
+                return { y: asDate.getFullYear(), m: asDate.getMonth() + 1 };
+            }
+            const core = s.split('T')[0];
+            const parts = core.split(/[-\/]/);
+            if (parts.length >= 3) {
+                // Detect if first part is year (yyyy-mm-dd) or day (dd-mm-yyyy)
+                if (parts[0].length === 4) {
+                    const y = parseInt(parts[0], 10);
+                    const m = parseInt(parts[1], 10);
+                    if (!isNaN(y) && !isNaN(m)) return { y, m };
+                } else {
+                    const d = parseInt(parts[0], 10);
+                    const m = parseInt(parts[1], 10);
+                    const y = parseInt(parts[2], 10);
+                    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) return { y, m };
+                }
+            }
+            return null;
+        };
 
+        const presentThisMonth = normalizedAll.filter((rec: { userId: string; date: string }) => {
+            const parsed = parseYearMonth(rec.date);
+            return parsed ? (parsed.y === year && parsed.m === month) : false;
+        });
+
+        return presentThisMonth;
     } catch (error) {
         console.error(`Failed to fetch attendance for user ${userId} in month ${month + 1}/${year}:`, error);
         const monthString = (month + 1).toString().padStart(2, '0');
-        const presentDates: string[] = [];
+        const presentDates: Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }> = [];
         for (const dateKey in ATTENDANCE_DATA) {
             if (dateKey.startsWith(`${year}-${monthString}`) && ATTENDANCE_DATA[dateKey].includes(userId)) {
-                presentDates.push(dateKey);
+                presentDates.push({ userId, date: dateKey });
             }
         }
         return presentDates; // Fallback to mock data
     }
 };
 
-export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUNCH_OUT'): Promise<any> => {
+const normalizeAttendanceAction = (action: string): string => {
+    const k = action.toUpperCase();
+    if (k === 'PUNCH_IN') return 'punchIn';
+    if (k === 'PUNCH_OUT') return 'punchOut';
+    if (k === 'START_BREAK') return 'startBreak';
+    if (k === 'END_BREAK') return 'endBreak';
+    return action;
+};
+
+export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUNCH_OUT' | 'START_BREAK' | 'END_BREAK'): Promise<any> => {
     try {
         const response = await authenticatedFetch(ATTENDANCE_RECORD_ACTION_URL, {
             method: 'POST',
-            body: JSON.stringify({ userId, action }),
+            body: JSON.stringify({ userId, action: normalizeAttendanceAction(action) }),
         });
         return parseApiResponse(response);
     } catch (error) {
@@ -1081,23 +1212,104 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
 
 // --- CHAT SERVICE (MOCKED) ---
 export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
-export const getConversationsForUser = (userId: string): ChatConversation[] => CONVERSATIONS.filter(c => c.participantIds.includes(userId)).sort((a,b) => {
+const sortConversationsByLastMessage = (conversations: ChatConversation[]) => conversations.slice().sort((a,b) => {
     const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
     const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
     return timeB - timeA;
 });
-export const getMessagesForConversation = (conversationId: string): ChatMessage[] => MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-export const sendMessage = (conversationId: string, senderId: string, text: string): ChatMessage => {
-    const newMessage: ChatMessage = { id: `msg-${Date.now()}`, conversationId, senderId, text, timestamp: new Date().toISOString() };
-    MESSAGES.push(newMessage);
-    const convIndex = CONVERSATIONS.findIndex(c => c.id === conversationId);
-    if (convIndex > -1) CONVERSATIONS[convIndex].lastMessage = newMessage;
-    return newMessage;
+
+const extractConversationArray = (data: any): ChatConversation[] => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data as ChatConversation[];
+    if (Array.isArray(data.conversations)) return data.conversations as ChatConversation[];
+    if (Array.isArray(data.items)) return data.items as ChatConversation[];
+    if (Array.isArray(data.data)) return data.data as ChatConversation[];
+    return [];
 };
-export const createGroup = (groupName: string, memberIds: string[], creatorId: string): ChatConversation => {
-    const newGroup: ChatConversation = { id: `conv-${Date.now()}`, type: 'group', name: groupName, participantIds: [...new Set([creatorId, ...memberIds])], adminIds: [creatorId] };
-    CONVERSATIONS.unshift(newGroup);
-    return newGroup;
+
+export const getConversationsForUser = async (userId: string): Promise<ChatConversation[]> => {
+    try {
+        const conversations: ChatConversation[] = [];
+        let nextKey: any = undefined;
+
+        do {
+            const url = new URL(CHAT_CONVERSATIONS_API_URL);
+            url.searchParams.set('userId', userId);
+            if (nextKey) {
+                url.searchParams.set('nextKey', encodeURIComponent(JSON.stringify(nextKey)));
+            }
+
+            const response = await authenticatedFetch(url.toString());
+            const parsed = await parseApiResponse(response);
+            const fetched = extractConversationArray(parsed);
+            conversations.push(...fetched);
+
+            const lastEvaluatedKey = (parsed && typeof parsed === 'object') ? (parsed as any).lastEvaluatedKey : null;
+            nextKey = lastEvaluatedKey || undefined;
+        } while (nextKey);
+
+        if (!conversations.length) {
+            return sortConversationsByLastMessage(CONVERSATIONS.filter(c => c.participantIds.includes(userId)));
+        }
+        return sortConversationsByLastMessage(conversations.map(conv => ({ ...conv, participantIds: conv.participantIds?.map(String) || [] })));
+    } catch (error) {
+        console.error('Failed to fetch conversations from API:', error);
+        return sortConversationsByLastMessage(CONVERSATIONS.filter(c => c.participantIds.includes(userId)));
+    }
+};
+export interface ChatMessagesResponse {
+    items: ChatMessage[];
+    nextToken: string | null;
+}
+
+export const getMessagesForConversation = async (conversationId: string, nextToken?: string, limit: number = 50): Promise<ChatMessagesResponse> => {
+    try {
+        const url = new URL(`${CHAT_MESSAGES_API_BASE_URL}/${encodeURIComponent(conversationId)}`);
+        url.searchParams.set('limit', String(limit));
+        if (nextToken) {
+            url.searchParams.set('nextToken', nextToken);
+        }
+        const response = await authenticatedFetch(url.toString());
+        const parsed = await parseApiResponse(response);
+        const items = Array.isArray(parsed?.items) ? parsed.items as ChatMessage[] : [];
+        return {
+            items: items.map(msg => ({
+                ...msg,
+                conversationId: String(msg.conversationId),
+                senderId: String(msg.senderId),
+            })),
+            nextToken: parsed?.nextToken || null,
+        };
+    } catch (error) {
+        console.error(`Failed to fetch messages for conversation ${conversationId}:`, error);
+        const fallback = MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        return { items: fallback, nextToken: null };
+    }
+};
+export const createGroup = async (groupName: string, memberIds: string[], creatorId: string): Promise<ChatConversation> => {
+    const payload = {
+        name: groupName,
+        participantIds: memberIds.map(String),
+    };
+
+    try {
+        const response = await authenticatedFetch(`${CHAT_CONVERSATION_CREATE_API_URL}?userId=${encodeURIComponent(creatorId)}`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        const parsed = await parseApiResponse(response);
+        const created = (parsed && parsed.conversation) ? parsed.conversation : parsed;
+        if (!created || !created.id) {
+            throw new Error('Invalid response while creating conversation.');
+        }
+        return {
+            ...created,
+            participantIds: created.participantIds?.map(String) || [],
+        } as ChatConversation;
+    } catch (error) {
+        console.error('Failed to create group conversation via API:', error);
+        throw error instanceof Error ? error : new Error('Unable to create group conversation.');
+    }
 };
 export const getOrCreateDirectConversation = (userId1: string, userId2: string): ChatConversation => {
     const existing = CONVERSATIONS.find(c => c.type === 'direct' && c.participantIds.length === 2 && c.participantIds.includes(userId1) && c.participantIds.includes(userId2));
