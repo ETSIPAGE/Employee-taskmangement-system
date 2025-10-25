@@ -260,9 +260,9 @@ const ManagerAttendanceView: React.FC = () => {
                         type="button"
                         onClick={() => currentUser && setSelectedEmployee(currentUser)}
                         className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
-                        title="View my attendance"
+                        title="Show My Attendance"
                     >
-                        Self
+                        Show My Attendance
                     </button>
                 </div>
                 {isLoading ? <p className="text-slate-500 text-center pt-8">Loading attendance...</p> :
