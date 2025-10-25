@@ -254,7 +254,17 @@ const ManagerAttendanceView: React.FC = () => {
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-lg">
-                <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">{selectedDate ? `Team present on ${selectedDate.toLocaleDateString()}` : 'Select a date'}</h3>
+                <div className="flex items-center justify-between mb-4 border-b pb-2">
+                    <h3 className="text-xl font-bold text-slate-800">{selectedDate ? `Team present on ${selectedDate.toLocaleDateString()}` : 'Select a date'}</h3>
+                    <button
+                        type="button"
+                        onClick={() => currentUser && setSelectedEmployee(currentUser)}
+                        className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+                        title="View my attendance"
+                    >
+                        Self
+                    </button>
+                </div>
                 {isLoading ? <p className="text-slate-500 text-center pt-8">Loading attendance...</p> :
                     selectedDate ? (
                         presentEmployees.length > 0 ? (
