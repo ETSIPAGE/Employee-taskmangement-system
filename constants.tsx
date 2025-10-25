@@ -207,7 +207,7 @@ export const NAV_ITEMS = {
         { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon },
         { name: 'Departments', href: '/departments', icon: BuildingOfficeIcon },
         { name: 'Employees', href: '/users', icon: UsersIcon },
-        { name: 'Roles', href: '/roles', icon: UserGroupIcon },
+        // { name: 'Roles', href: '/roles', icon: UserGroupIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],
