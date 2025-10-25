@@ -130,9 +130,10 @@ const normalizeTimeForDisplay = (input: any): string => {
     return s;
 };
 
-// --- COMMON HELPERS ---
-const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-    const token = getToken();
+// Helper to add auth token to requests
+const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
+    const token = localStorage.getItem('ets_token') || (typeof getToken === 'function' ? getToken() : undefined);
+    const apiKey = localStorage.getItem('ets_api_key');
     const headers = new Headers(options.headers || {});
 
     const { skipAuth, noContentType, authRaw, ...fetchOptions } = (options as any) || {};
@@ -142,10 +143,16 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
         headers.set('Content-Type', 'application/json');
     }
 
+    // Attach Authorization when available and not explicitly skipped
     if (!skipAuth && token) {
         const tokenStr = String(token);
         const authValue = authRaw ? tokenStr : (tokenStr.startsWith('Bearer ') ? tokenStr : `Bearer ${tokenStr}`);
         headers.set('Authorization', authValue);
+    }
+
+    // Attach API Gateway key if configured (some endpoints require x-api-key regardless of auth)
+    if (apiKey && !headers.has('x-api-key')) {
+        headers.set('x-api-key', apiKey);
     }
 
     return fetch(url, { ...fetchOptions, headers, mode: 'cors' });
