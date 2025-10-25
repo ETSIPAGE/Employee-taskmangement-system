@@ -16,7 +16,7 @@ interface HydratedTask extends Task {
     assigneeNames: string[];
 }
 
-export default function AdminTasks() {
+export default function TeamTasks() {
     const { user } = useAuth();
     const navigate = useNavigate();
 
@@ -52,13 +52,13 @@ export default function AdminTasks() {
     const [statusFilter, setStatusFilter] = useState('all');
 
     const loadData = useCallback(async () => {
-        if (!user || user.role !== UserRole.ADMIN) return;
+        if (!user || user.role !== UserRole.MANAGER) return;
         setIsLoading(true);
         try {
             const [tasks, projects, allUsersFromApi] = await Promise.all([
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
-                DataService.getAllUsersFromApi(),
+                DataService.getUsers(),
             ]);
             
             setAllProjects(projects);
@@ -76,7 +76,7 @@ export default function AdminTasks() {
             setHydratedTasks(newHydratedTasks);
             
         } catch (error) {
-            console.error("Failed to load admin task data:", error);
+            console.error("Failed to load team tasks data:", error);
         } finally {
             setIsLoading(false);
         }
@@ -178,18 +178,18 @@ export default function AdminTasks() {
         });
     }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
-    if (user?.role !== UserRole.ADMIN) {
+    if (user?.role !== UserRole.MANAGER) {
         return <Navigate to="/" />;
     }
 
     if (isLoading) {
-        return <div className="text-center p-8">Loading all tasks...</div>;
+        return <div className="text-center p-8">Loading team tasks...</div>;
     }
 
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-slate-800">All Tasks</h1>
+                <h1 className="text-3xl font-bold text-slate-800">Team Tasks</h1>
                 <Button onClick={handleOpenModal}>Create New Task</Button>
             </div>
              <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
@@ -343,7 +343,7 @@ export default function AdminTasks() {
                             {allEmployees.map(employee => (
                                 <div key={employee.id} className="flex items-center">
                                     <input
-                                        id={`assignee-admin-${employee.id}`}
+                                        id={`assignee-team-${employee.id}`}
                                         type="checkbox"
                                         value={employee.id}
                                         checked={newTaskData.assign_to.includes(employee.id)}
@@ -358,7 +358,7 @@ export default function AdminTasks() {
                                         }}
                                         className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
                                     />
-                                    <label htmlFor={`assignee-admin-${employee.id}`} className="ml-3 block text-sm text-slate-800">
+                                    <label htmlFor={`assignee-team-${employee.id}`} className="ml-3 block text-sm text-slate-800">
                                         {employee.name}
                                     </label>
                                 </div>

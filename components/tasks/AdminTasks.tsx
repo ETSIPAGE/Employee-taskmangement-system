@@ -4,6 +4,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import * as AuthService from '../../services/authService';
 import * as DataService from '../../services/dataService';
 import { Project, Task, TaskStatus, User, UserRole, Department } from '../../types';
+
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import { EditIcon, TrashIcon } from '../../constants';
@@ -22,6 +23,7 @@ export default function AdminTasks() {
 
     const [hydratedTasks, setHydratedTasks] = useState<HydratedTask[]>([]);
     const [allEmployees, setAllEmployees] = useState<User[]>([]);
+    const [allManagers, setAllManagers] = useState<User[]>([]);
     const [allProjects, setAllProjects] = useState<Project[]>([]);
     
     const [isLoading, setIsLoading] = useState(true);
@@ -33,14 +35,14 @@ export default function AdminTasks() {
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
     const [newTaskData, setNewTaskData] = useState({
-        department: '',
+        department: '', // departmentId
         project: '',
         title: '',
         description: '',
         due_date: '',
         priority: 'medium',
         est_time: '',
-        assign_to: ''
+        assign_to: [] as string[] // allow multiple assignees (managers + employees)
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState('');
@@ -55,23 +57,30 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const [tasks, projects, allUsers] = await Promise.all([ // Renamed to allUsers here
+            const [tasks, projects, allUsersFromApi] = await Promise.all([
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
-                DataService.getUsers(), // Corrected: Use DataService.getUsers()
+                DataService.getAllUsersFromApi(),
             ]);
             
             setAllProjects(projects);
-            const employees = allUsers.filter(u => u.role === UserRole.EMPLOYEE);
+            const employees = allUsersFromApi.filter(u => u.role === UserRole.EMPLOYEE);
+            const managers = allUsersFromApi.filter(u => u.role === UserRole.MANAGER);
             setAllEmployees(employees);
+            setAllManagers(managers);
             
             const projectsMap = new Map(projects.map(p => [p.id, p]));
-            const usersMap = new Map(allUsers.map(u => [u.id, u]));
+            const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
     
             const newHydratedTasks = tasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
-                assigneeName: usersMap.get(task.assigneeId || '')?.name || 'Unassigned',
+                assigneeName: Array.isArray(task.assigneeIds) && task.assigneeIds.length > 0
+                    ? task.assigneeIds
+                        .map(id => usersMap.get(id)?.name)
+                        .filter(Boolean)
+                        .join(', ')
+                    : 'Unassigned',
             }));
             setHydratedTasks(newHydratedTasks);
             
@@ -97,8 +106,8 @@ export default function AdminTasks() {
                     ]);
                     setApiDepartments(depts);
                     setApiProjects(projs);
-                     if (depts.length > 0) {
-                        setNewTaskData(prev => ({ ...prev, department: depts[0].name }));
+                    if (depts.length > 0) {
+                        setNewTaskData(prev => ({ ...prev, department: depts[0].id }));
                     }
                     if (projs.length > 0) {
                         setNewTaskData(prev => ({ ...prev, project: projs[0].id }));
@@ -112,12 +121,17 @@ export default function AdminTasks() {
             fetchDropdownData();
         }
     }, [isModalOpen]);
-    
-     useEffect(() => {
-        if (allEmployees.length > 0 && !newTaskData.assign_to) {
-            setNewTaskData(prev => ({...prev, assign_to: allEmployees[0].id}));
-        }
-    }, [allEmployees, newTaskData.assign_to]);
+
+    // Filter managers and employees by selected department
+    const filteredManagers = useMemo(() => {
+        if (!newTaskData.department) return allManagers;
+        return allManagers.filter(m => Array.isArray(m.departmentIds) && m.departmentIds.includes(newTaskData.department));
+    }, [allManagers, newTaskData.department]);
+
+    const filteredEmployees = useMemo(() => {
+        if (!newTaskData.department) return allEmployees;
+        return allEmployees.filter(e => Array.isArray(e.departmentIds) && e.departmentIds.includes(newTaskData.department));
+    }, [allEmployees, newTaskData.department]);
 
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
@@ -139,9 +153,29 @@ export default function AdminTasks() {
         setSubmitError('');
         setIsSubmitting(true);
         try {
+            // Normalize date to YYYY-MM-DD
+            const normalizeDate = (d: string) => {
+                if (!d) return undefined;
+                // If input like DD-MM-YYYY, convert to YYYY-MM-DD
+                const ddmmyyyy = /^\d{2}-\d{2}-\d{4}$/;
+                if (ddmmyyyy.test(d)) {
+                    const [dd, mm, yyyy] = d.split('-');
+                    return `${yyyy}-${mm}-${dd}`;
+                }
+                return d; // assume already acceptable (e.g., YYYY-MM-DD)
+            };
+
+            const estTimeNumber = newTaskData.est_time !== '' ? Number(newTaskData.est_time) : undefined;
             const payload = {
-                ...newTaskData,
-                currentUserId: user.id
+                title: newTaskData.title,
+                description: newTaskData.description,
+                project: newTaskData.project,
+                department: newTaskData.department,
+                due_date: normalizeDate(newTaskData.due_date),
+                priority: newTaskData.priority, // backend seems to accept lower-case
+                est_time: typeof estTimeNumber === 'number' && !Number.isNaN(estTimeNumber) ? estTimeNumber : undefined,
+                assign_to: Array.isArray(newTaskData.assign_to) ? newTaskData.assign_to : [],
+                currentUserId: user.id,
             };
             await DataService.createTask(payload);
             handleCloseModal();
@@ -178,7 +212,7 @@ export default function AdminTasks() {
         return hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
-            const assigneeMatch = assigneeFilter === 'all' || task.assigneeId === assigneeFilter;
+            const assigneeMatch = assigneeFilter === 'all' || (Array.isArray(task.assigneeIds) && task.assigneeIds.includes(assigneeFilter));
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
@@ -220,7 +254,7 @@ export default function AdminTasks() {
                     </select>
                     <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Assignees</option>
-                        {allEmployees.map((m: User) => <option key={m.id} value={m.id}>{m.name}</option>)} {/* Explicitly cast to User */}
+                        {allEmployees.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                     </select>
                     <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                         <option value="all">All Statuses</option>
@@ -320,7 +354,7 @@ export default function AdminTasks() {
                             <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
                             <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
                                 {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.name}>{d.name}</option>) : <option value="">No departments found</option>}
+                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
                             </select>
                         </div>
                         <div>
@@ -344,12 +378,62 @@ export default function AdminTasks() {
                         <Input id="est_time" name="est_time" type="number" label="Est. Time (hours)" value={newTaskData.est_time} onChange={handleInputChange} min="0" />
                     </div>
                     <div>
-                        <label htmlFor="assign_to" className="block text-sm font-medium text-slate-700">Assign To</label>
-                        <select id="assign_to" name="assign_to" value={newTaskData.assign_to} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
-                            {allEmployees.map((employee: User) => ( // Explicitly cast to User
-                                <option key={employee.id} value={employee.id}>{employee.name}</option>
+                        <label className="block text-sm font-semibold text-slate-700 mb-1">Assign Managers</label>
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                            {filteredManagers.length === 0 && (
+                                <p className="text-xs text-slate-500">No managers in selected department.</p>
+                            )}
+                            {filteredManagers.map(manager => (
+                                <div key={manager.id} className="flex items-center">
+                                    <input
+                                        id={`assignee-manager-${manager.id}`}
+                                        type="checkbox"
+                                        value={manager.id}
+                                        checked={newTaskData.assign_to.includes(manager.id)}
+                                        onChange={(e) => {
+                                            const { value, checked } = e.target;
+                                            setNewTaskData(prev => ({
+                                                ...prev,
+                                                assign_to: checked
+                                                    ? [...prev.assign_to, value]
+                                                    : prev.assign_to.filter(id => id !== value)
+                                            }));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`assignee-manager-${manager.id}`} className="ml-2 text-sm text-slate-800">{manager.name}</label>
+                                </div>
                             ))}
-                        </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-1">Assign Employees</label>
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                            {filteredEmployees.length === 0 && (
+                                <p className="text-xs text-slate-500">No employees in selected department.</p>
+                            )}
+                            {filteredEmployees.map(employee => (
+                                <div key={employee.id} className="flex items-center">
+                                    <input
+                                        id={`assignee-employee-${employee.id}`}
+                                        type="checkbox"
+                                        value={employee.id}
+                                        checked={newTaskData.assign_to.includes(employee.id)}
+                                        onChange={(e) => {
+                                            const { value, checked } = e.target;
+                                            setNewTaskData(prev => ({
+                                                ...prev,
+                                                assign_to: checked
+                                                    ? [...prev.assign_to, value]
+                                                    : prev.assign_to.filter(id => id !== value)
+                                            }));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <label htmlFor={`assignee-employee-${employee.id}`} className="ml-2 text-sm text-slate-800">{employee.name}</label>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                     <div className="pt-4 flex justify-end space-x-3">
                          <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">

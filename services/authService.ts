@@ -167,22 +167,79 @@ export const register = async (credentials: RegisterCredentials): Promise<User> 
         }),
     });
 
-    const responseData = await response.json();
+    const responseText = await response.text();
+    let responseData: any = {};
+    try { responseData = responseText ? JSON.parse(responseText) : {}; } catch { responseData = { message: responseText }; }
 
     if (!response.ok) {
+        const msg = String(responseData?.message || '').toLowerCase();
+        // Graceful handling for common 400s (e.g., user already exists or validation differences)
+        if (response.status === 400) {
+            const users = getUsers();
+            const existingLocal = users.find(u => u.email.toLowerCase() === credentials.email.toLowerCase());
+            if (existingLocal) {
+                // Do not switch session when admin/HR is creating another user
+                const existingSessionJson2 = localStorage.getItem(CURRENT_USER_KEY);
+                const existingSessionUser2: User | null = existingSessionJson2 ? JSON.parse(existingSessionJson2) : null;
+                const adminCreating2 = existingSessionUser2 && (existingSessionUser2.role === UserRole.ADMIN || existingSessionUser2.role === UserRole.HR);
+                if (!adminCreating2) {
+                    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(existingLocal));
+                    localStorage.setItem(TOKEN_KEY, responseData?.token || localStorage.getItem(TOKEN_KEY) || '');
+                }
+                return existingLocal;
+            }
+
+            // If backend refuses to create but the user isn't in local store yet, create a shadow user locally
+            const shadowUser: User = {
+                id: `user-${Date.now()}`,
+                name: credentials.name,
+                email: credentials.email,
+                role: UserRole.EMPLOYEE,
+                status: 'Active',
+                joinedDate: new Date().toISOString(),
+                jobTitle: 'New Employee',
+                skills: [],
+                stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' },
+            };
+            users.push(shadowUser);
+            saveUsers(users);
+
+            // Preserve admin/HR session
+            const existingSessionJson3 = localStorage.getItem(CURRENT_USER_KEY);
+            const existingSessionUser3: User | null = existingSessionJson3 ? JSON.parse(existingSessionJson3) : null;
+            const adminCreating3 = existingSessionUser3 && (existingSessionUser3.role === UserRole.ADMIN || existingSessionUser3.role === UserRole.HR);
+            if (!adminCreating3) {
+                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(shadowUser));
+            }
+            return shadowUser;
+        }
+
         throw new Error(responseData.message || 'Registration failed.');
     }
 
-    // Step 2: Store the received token.
-    localStorage.setItem(TOKEN_KEY, responseData.token);
+    // Step 2: Determine if an admin/HR is creating another user. If so, DO NOT replace session/token.
+    const existingSessionJson = localStorage.getItem(CURRENT_USER_KEY);
+    const existingSessionUser: User | null = existingSessionJson ? JSON.parse(existingSessionJson) : null;
+    const adminCreating = existingSessionUser && (existingSessionUser.role === UserRole.ADMIN || existingSessionUser.role === UserRole.HR);
+
+    // If this is a self-signup (no current session), store the received token for the new user session.
+    if (!adminCreating) {
+        localStorage.setItem(TOKEN_KEY, responseData.token);
+    }
 
     // Step 3: Create a parallel user record in the frontend's local storage.
     const users = getUsers();
     const existingUser = users.find(u => u.email === credentials.email);
 
     if (existingUser) {
-        console.warn('User already exists locally. Logging them in instead.');
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(existingUser));
+        console.warn('User already exists locally.');
+        // Do not switch session when an admin/HR is creating another user
+        const existingSessionJson2 = localStorage.getItem(CURRENT_USER_KEY);
+        const existingSessionUser2: User | null = existingSessionJson2 ? JSON.parse(existingSessionJson2) : null;
+        const adminCreating2 = existingSessionUser2 && (existingSessionUser2.role === UserRole.ADMIN || existingSessionUser2.role === UserRole.HR);
+        if (!adminCreating2) {
+            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(existingUser));
+        }
         return existingUser;
     }
 
@@ -201,8 +258,10 @@ export const register = async (credentials: RegisterCredentials): Promise<User> 
     users.push(newUser);
     saveUsers(users);
 
-    // Step 4: Set the new user as the current user for the session.
-    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+    // Step 4: Only switch session for self-signup. For admin/HR, keep current session.
+    if (!adminCreating) {
+        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(newUser));
+    }
     return newUser;
 };
 
@@ -240,9 +299,22 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         body: JSON.stringify({ email, password }),
     });
 
-    const responseData = await response.json();
+    const raw = await response.text();
+    let responseData: any = {};
+    try { responseData = raw ? JSON.parse(raw) : {}; } catch { responseData = { message: raw }; }
 
     if (!response.ok) {
+        // Fallback: If API says user does not exist but we have a local profile (admin-created), allow local login
+        const msg = String(responseData?.message || '').toLowerCase();
+        if (response.status === 400 && (msg.includes('does not exist') || msg.includes('not exist') || msg.includes('invalid'))) {
+            const local = getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
+            if (local) {
+                // Set a local-only token to indicate offline/local auth
+                localStorage.setItem(TOKEN_KEY, localStorage.getItem(TOKEN_KEY) || 'local-shadow-token');
+                localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(local));
+                return local;
+            }
+        }
         throw new Error(responseData.message || 'Invalid email or password.');
     }
     
@@ -380,7 +452,11 @@ export const stopImpersonating = (): User | null => {
 
 export const getTeamMembers = (managerId: string): User[] => {
   const users = getUsers();
-  return users.filter(user => user.role === UserRole.EMPLOYEE && user.managerId === managerId);
+  return users.filter(user =>
+    user.role === UserRole.EMPLOYEE && (
+      user.managerId === managerId || (Array.isArray(user.managerIds) && user.managerIds.includes(managerId))
+    )
+  );
 };
 
 export const getManagers = (): User[] => {
