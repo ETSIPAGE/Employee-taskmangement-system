@@ -208,7 +208,7 @@ const TaskDetail: React.FC = () => {
     // An Admin can view all tasks.
     // A Project Manager can view tasks in their projects.
     // An Employee can view tasks they are assigned to, or tasks in departments they belong to.
-    let isAuthorized = false;
+    let isAuthorized = true;
     if (currentUser) {
         if (currentUser.role === UserRole.ADMIN) {
             isAuthorized = true;
@@ -224,17 +224,7 @@ const TaskDetail: React.FC = () => {
         }
     }
 
-    if (!isAuthorized) {
-        return (
-            <div className="text-center p-8">
-                <h2 className="text-2xl font-bold text-slate-700">Access Denied</h2>
-                <p className="text-slate-500 mt-2">You are not authorized to view the details of this task.</p>
-                <Link to="/tasks" className="mt-4 inline-block">
-                    <Button>Back to Tasks</Button>
-                </Link>
-            </div>
-        );
-    }
+    // Note: View is allowed for all; edit controls are gated via canChange* flags above.
 
     return (
         <div>

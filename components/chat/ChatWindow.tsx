@@ -1,13 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChatConversation, ChatMessage, User } from '../../types';
-import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
+import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
 
 interface ChatWindowProps {
     conversation: ChatConversation;
     currentUser: User;
     onBack: () => void;
     allUsers: User[];
+    refreshKey?: number;
+    pendingMessages?: ChatMessage[];
+    cachedMessages?: ChatMessage[];
+    onPendingConsumed?: (conversationId: string) => void;
+    onMessagesFetched?: (conversationId: string, messages: ChatMessage[], append: boolean) => void;
+    onLocalMessage?: (conversationId: string, message: ChatMessage) => void;
 }
 
 const getInitials = (name: string) => {
@@ -16,16 +22,151 @@ const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
 };
 
-const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBack, allUsers }) => {
+const normalizeMessageText = (text?: string) => (text || '').trim().toLowerCase();
+
+const DUPLICATE_WINDOW_MS = 60 * 1000;
+
+const getMessageTime = (message: ChatMessage) => {
+    const value = new Date(message.timestamp).getTime();
+    return Number.isFinite(value) ? value : 0;
+};
+
+const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
+    if (a === b) return true;
+    if (a.conversationId !== b.conversationId) return false;
+    if (normalizeMessageText(a.text) !== normalizeMessageText(b.text)) return false;
+    const timeA = getMessageTime(a);
+    const timeB = getMessageTime(b);
+    if (!timeA || !timeB) return false;
+    if (Math.abs(timeA - timeB) > DUPLICATE_WINDOW_MS) return false;
+    if (a.senderId && b.senderId && a.senderId !== b.senderId) return false;
+    return true;
+};
+
+const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
+    const sorted = messages.slice().sort((a, b) => getMessageTime(a) - getMessageTime(b));
+    const result: ChatMessage[] = [];
+    for (const msg of sorted) {
+        const duplicateIndex = result.findIndex(existing => areMessagesEquivalent(existing, msg));
+        if (duplicateIndex !== -1) {
+            const existing = result[duplicateIndex];
+            if (existing.isLocal && !msg.isLocal) {
+                result[duplicateIndex] = msg;
+            }
+            continue;
+        }
+        result.push(msg);
+    }
+    return result;
+};
+
+const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
+    return dedupeMessages([...existing, ...incoming]);
+};
+
+const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBack, allUsers, refreshKey, pendingMessages = [], cachedMessages = [], onPendingConsumed, onMessagesFetched, onLocalMessage }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messageLoading, setMessageLoading] = useState(false);
+    const [nextToken, setNextToken] = useState<string | null>(null);
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef<HTMLDivElement>(null);
     // FIX: Explicitly type usersMap to resolve issues where its values are inferred as 'unknown'.
     const usersMap: Map<string, User> = new Map(allUsers.map(u => [u.id, u]));
 
+    const loadMessages = useCallback(async (conversationId: string, token?: string | null, append: boolean = false) => {
+        setMessageLoading(true);
+        try {
+            const response = await DataService.getMessagesForConversation(conversationId, token || undefined);
+            console.log('ChatWindow loadMessages fetched items', {
+                conversationId,
+                fetchedCount: response.items?.length || 0,
+                append,
+            });
+            const incoming = response.items || [];
+            setMessages(prev => {
+                const merged = mergeMessages(prev, incoming);
+                console.log('ChatWindow loadMessages merged result', {
+                    conversationId,
+                    totalCount: merged.length,
+                    lastMessage: merged[merged.length - 1],
+                });
+                return merged;
+            });
+            if (onMessagesFetched && response.items) {
+                onMessagesFetched(conversationId, response.items, append);
+            }
+            setNextToken(response.nextToken);
+        } catch (error) {
+            console.error('Failed to load messages:', error);
+        } finally {
+            setMessageLoading(false);
+        }
+    }, [onMessagesFetched]);
+
     useEffect(() => {
-        const conversationMessages = DataService.getMessagesForConversation(conversation.id);
-        setMessages(conversationMessages);
+        setMessages([]);
+    }, [conversation.id]);
+
+    useEffect(() => {
+        loadMessages(conversation.id);
+    }, [conversation.id, loadMessages]);
+
+    useEffect(() => {
+        if (refreshKey === undefined) return;
+        loadMessages(conversation.id);
+    }, [refreshKey, conversation.id, loadMessages]);
+
+    useEffect(() => {
+        const combined = [...(cachedMessages || []), ...(pendingMessages || [])];
+        if (!combined.length) {
+            return;
+        }
+        setMessages(prev => {
+            const merged = mergeMessages(prev, combined);
+            console.log('ChatWindow merged external messages', {
+                added: combined.length,
+                fromPending: pendingMessages?.length || 0,
+                fromCached: cachedMessages?.length || 0,
+                totalCount: merged.length,
+            });
+            return merged;
+        });
+        if (pendingMessages.length && onPendingConsumed) {
+            onPendingConsumed(conversation.id);
+        }
+    }, [pendingMessages, cachedMessages, conversation.id, onPendingConsumed]);
+
+    useEffect(() => {
+        const listener = (event: ChatSocketEvent) => {
+            if (event.type !== 'newMessage' || event.conversationId !== conversation.id || !event.timestamp) {
+                return;
+            }
+            console.log('Chat message received', event);
+            const incoming: ChatMessage = {
+                id: `${event.conversationId}-${event.timestamp}`,
+                conversationId: event.conversationId,
+                senderId: event.senderId || '',
+                text: event.text || '',
+                timestamp: event.timestamp,
+            };
+            if ((event.senderId || '') === currentUser.id) {
+                console.log('Chat message send success', incoming);
+            } else {
+                console.log('Chat message receive success', incoming);
+            }
+            setMessages(prev => {
+                const merged = mergeMessages(prev, [incoming]);
+                console.log('ChatWindow listener merged messages', {
+                    totalCount: merged.length,
+                    lastMessage: merged[merged.length - 1],
+                });
+                return merged;
+            });
+        };
+        chatSocket.addListener(listener);
+        return () => {
+            chatSocket.removeListener(listener);
+        };
     }, [conversation.id]);
 
      useEffect(() => {
@@ -35,9 +176,28 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ conversation, currentUser, onBa
     const handleSendMessage = (e: React.FormEvent) => {
         e.preventDefault();
         if (newMessage.trim()) {
-            const sentMessage = DataService.sendMessage(conversation.id, currentUser.id, newMessage.trim());
-            setMessages(prev => [...prev, sentMessage]);
+            const messageText = newMessage.trim();
+            const optimisticMessage: ChatMessage = {
+                id: `local-${Date.now()}`,
+                conversationId: conversation.id,
+                senderId: currentUser.id,
+                text: messageText,
+                timestamp: new Date().toISOString(),
+                isLocal: true,
+            };
+            const sent = chatSocket.sendMessage(conversation.id, messageText);
+            console.log('Chat message send initiated', { conversationId: conversation.id, messageText, sent });
+            setMessages(prev => mergeMessages(prev, [optimisticMessage]));
+            if (onLocalMessage) {
+                onLocalMessage(conversation.id, optimisticMessage);
+            }
             setNewMessage('');
+        }
+    };
+
+    const handleLoadMore = () => {
+        if (nextToken && !messageLoading) {
+            loadMessages(conversation.id, nextToken, true);
         }
     };
     

@@ -186,6 +186,7 @@ export interface ChatMessage {
   senderId: string;
   text: string;
   timestamp: string; // ISO string
+  isLocal?: boolean;
 }
 
 export interface ChatConversation {
