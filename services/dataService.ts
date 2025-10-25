@@ -70,6 +70,7 @@ type ExtendedRequestInit = RequestInit & { skipAuth?: boolean; noContentType?: b
 // Helper to add auth token to requests
 const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
     const token = localStorage.getItem('ets_token') || (typeof getToken === 'function' ? getToken() : undefined);
+    const apiKey = localStorage.getItem('ets_api_key');
     const headers = new Headers(options.headers || {});
 
     const { skipAuth, noContentType, authRaw, ...fetchOptions } = (options as any) || {};
@@ -79,10 +80,16 @@ const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}
         headers.set('Content-Type', 'application/json');
     }
 
+    // Attach Authorization when available and not explicitly skipped
     if (!skipAuth && token) {
         const tokenStr = String(token);
         const authValue = authRaw ? tokenStr : (tokenStr.startsWith('Bearer ') ? tokenStr : `Bearer ${tokenStr}`);
         headers.set('Authorization', authValue);
+    }
+
+    // Attach API Gateway key if configured (some endpoints require x-api-key regardless of auth)
+    if (apiKey && !headers.has('x-api-key')) {
+        headers.set('x-api-key', apiKey);
     }
 
     return fetch(url, { ...fetchOptions, headers, mode: 'cors' });
@@ -1029,40 +1036,7 @@ export const getAttendanceByDate = async (date: string): Promise<string[]> => {
         return attendanceRecords.map((record: any) => record.userId);
     } catch (error) {
         console.error(`Failed to fetch attendance for date ${date}:`, error);
-        return ATTENDANCE_DATA[date] || []; // Fallback to mock data
-    }
-};
-
-export const getAttendanceForUserByMonth = async (userId: string, year: number, month: number): Promise<string[]> => {
-    try {
-        const response = await authenticatedFetch(ATTENDANCE_GET_BY_USER_URL, {
-            method: 'POST',
-            body: JSON.stringify({ userId }),
-        });
-        const data = await parseApiResponse(response);
-        const allUserAttendanceRecords = extractArrayFromApiResponse(data, 'attendance');
-
-        const presentDatesInMonth = allUserAttendanceRecords
-            .filter((record: any) => {
-                const recordDate = new Date(record.date);
-                // Note: month from API might be 1-indexed, JS Date getMonth() is 0-indexed.
-                // Assuming month parameter here is 0-indexed for consistency with JS Date object.
-                return recordDate.getFullYear() === year && recordDate.getMonth() === month;
-            })
-            .map((record: any) => record.date);
-
-        return presentDatesInMonth;
-
-    } catch (error) {
-        console.error(`Failed to fetch attendance for user ${userId} in month ${month + 1}/${year}:`, error);
-        const monthString = (month + 1).toString().padStart(2, '0');
-        const presentDates: string[] = [];
-        for (const dateKey in ATTENDANCE_DATA) {
-            if (dateKey.startsWith(`${year}-${monthString}`) && ATTENDANCE_DATA[dateKey].includes(userId)) {
-                presentDates.push(dateKey);
-            }
-        }
-        return presentDates; // Fallback to mock data
+        return ATTENDANCE_DATA[date] || [];
     }
 };
 

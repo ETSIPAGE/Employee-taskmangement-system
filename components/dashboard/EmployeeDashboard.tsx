@@ -139,6 +139,7 @@ const EmployeeDashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
+            {/* Work Reports moved to dedicated route /my-work-reports */}
         </div>
     );
 };
