@@ -201,7 +201,7 @@ export const LoginIcon = ({ className = "h-5 w-5" }: { className?: string }) => 
 export const NAV_ITEMS = {
     [UserRole.ADMIN]: [
         { name: 'Dashboard', href: '/', icon: ChartBarIcon },
-        // { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
+        { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Tasks', href: '/admin-tasks', icon: ClipboardListIcon },
         { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon },
@@ -217,6 +217,7 @@ export const NAV_ITEMS = {
         { name: 'My Team', href: '/team', icon: UsersIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Team Tasks', href: '/team-tasks', icon: ClipboardListIcon },
+        { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],
@@ -224,6 +225,7 @@ export const NAV_ITEMS = {
         { name: 'Dashboard', href: '/', icon: HomeIcon },
         { name: 'My Profile', href: '/profile', icon: UserCircleIcon },
         { name: 'Tasks', href: '/tasks', icon: ClipboardListIcon },
+        { name: 'Work Reports', href: '/my-work-reports', icon: DocumentTextIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],

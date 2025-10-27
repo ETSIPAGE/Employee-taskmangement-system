@@ -5,6 +5,7 @@ import { ClockIcon, DocumentCheckIcon, ExclamationTriangleIcon, ArrowPathIcon } 
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Project, Task, TaskStatus, User } from '../../types';
+import WorkReportsDashboardFixed from './WorkReportsDashboardFixed';
 
 const StatCard = ({ icon, title, value, color }: { icon: React.ReactNode, title: string, value: string, color: string }) => (
     <div className="bg-white rounded-lg shadow-lg p-5 flex items-center">
@@ -263,6 +264,15 @@ const ManagerDashboard: React.FC = () => {
                     ) : (
                         <p className="text-center py-4 text-slate-500">No high-priority tasks for your team.</p>
                     )}
+                </div>
+            </div>
+
+            <div className="mt-8">
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                    <h2 className="text-xl font-bold text-slate-800 mb-4">Work Reports</h2>
+                    <div className="-mx-6 -mb-6">
+                        <WorkReportsDashboardFixed />
+                    </div>
                 </div>
             </div>
         </div>

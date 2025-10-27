@@ -76,6 +76,7 @@ const App: React.FC = () => {
                 <Route path="/onboarding/:submissionId" element={<SubmissionDetail />} />
                 <Route path="/roles" element={<RolesDashboard />} />
                 <Route path="/work-reports" element={<WorkReportsDashboard />} />
+                <Route path="/my-work-reports" element={<WorkReportsDashboard hideAllMembersReports={true} />} />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </MainLayout>
