@@ -9,10 +9,15 @@ import { getToken, getCurrentUser } from './authService'; // Assuming getToken i
 
 // --- API ENDPOINTS ---
 const USERS_API_URL = 'https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users';
+// Provided by user for updating a particular employee
+const USERS_UPDATE_API_BASE_URL = 'https://tvm0j88qzf.execute-api.ap-south-1.amazonaws.com/dev/users';
 const TASKS_GET_ALL_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks';
 const TASKS_CREATE_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task';
 const TASKS_UPDATE_API_BASE_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task'; // Requires /taskId
 const TASKS_DELETE_API_BASE_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task'; // Requires /taskId
+
+// Dedicated delete endpoint for employees
+const EMPLOYEES_DELETE_API_BASE_URL = 'https://lhvzdjkymk.execute-api.ap-south-1.amazonaws.com/Delete/employees'; // Requires /{id}
 
 const PROJECTS_GET_ALL_API_URL = 'https://zmpxbvjnrf.execute-api.ap-south-1.amazonaws.com/get/get-projects';
 const PROJECTS_CREATE_API_URL = 'https://s1mbbsd685.execute-api.ap-south-1.amazonaws.com/pz/Create-projects';
@@ -61,6 +66,61 @@ const year = today.getFullYear();
 const month = (today.getMonth() + 1).toString().padStart(2, '0');
 const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
+};
+
+// Update user via provided Users Update API
+export const updateUser = async (
+    userId: string,
+    updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string }>
+): Promise<User> => {
+    const url = `${USERS_UPDATE_API_BASE_URL}/${encodeURIComponent(userId)}`;
+
+    // Build minimal payload expected by backend; include both managerIds and managerId for compatibility
+    const body: any = {
+        ...(typeof updates.name !== 'undefined' ? { name: updates.name } : {}),
+        ...(typeof updates.role !== 'undefined' ? { role: updates.role } : {}),
+        ...(typeof updates.companyId !== 'undefined' ? { companyId: updates.companyId } : {}),
+        ...(Array.isArray(updates.departmentIds) ? { departmentIds: updates.departmentIds } : {}),
+        ...(Array.isArray((updates as any).managerIds) ? { managerIds: (updates as any).managerIds } : {}),
+        ...(typeof (updates as any).managerId !== 'undefined' ? { managerId: (updates as any).managerId } : {}),
+        ...(typeof updates.rating !== 'undefined' ? { rating: updates.rating } : {}),
+    };
+
+    // Try PUT then PATCH as fallback
+    let response: Response | undefined;
+    let lastErr: any;
+    const methods: Array<'PUT' | 'PATCH' | 'POST'> = ['PUT', 'PATCH', 'POST'];
+    for (const method of methods) {
+        try {
+            response = await authenticatedFetch(url, { method, body: JSON.stringify(body) });
+            if (response.ok) break;
+            lastErr = new Error(`Update failed: ${response.status} ${response.statusText}`);
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+
+    if (!response || !response.ok) {
+        let detail = '';
+        try { detail = response ? await response.text() : String(lastErr); } catch {}
+        throw new Error(`Failed to update user ${userId}. ${detail}`);
+    }
+
+    // Invalidate cache so subsequent reads are fresh
+    invalidateUsersCache();
+
+    // Parse response; if empty, return merged object from cache for immediate UI feedback
+    const data = await parseApiResponse(response);
+    const updated = (data && (data.user || data.User || data.Item || data.item)) || data;
+
+    const mapped = updated && Object.keys(updated).length > 0
+        ? mapApiUserToUser(updated)
+        : (() => {
+            const existing = (cachedAllUsers || []).find(u => u.id === userId);
+            return existing ? { ...existing, ...updates } as User : ({ id: userId, name: String(updates.name || ''), email: existing?.email || '', role: (updates.role as any) || existing?.role || UserRole.EMPLOYEE, companyId: (updates.companyId as any) || existing?.companyId, departmentIds: updates.departmentIds || existing?.departmentIds || [], managerId: (updates as any).managerId || existing?.managerId, rating: updates.rating, skills: existing?.skills, stats: existing?.stats } as unknown as User);
+        })();
+
+    return mapped;
 };
 
 // --- API BASED DATA SERVICE ---
@@ -145,6 +205,12 @@ let cachedAllUsers: User[] | null = null;
 let cachedManagers: User[] | null = null;
 let cachedCompanies: Company[] | null = null;
 
+// Allow views to force refresh of users from the API
+export const invalidateUsersCache = () => {
+    cachedAllUsers = null;
+    cachedManagers = null;
+};
+
 // Retry constants for eventual consistency
 const MAX_RETRIES = 3; 
 const RETRY_DELAY_MS = 500; // milliseconds
@@ -152,7 +218,21 @@ const RETRY_DELAY_MS = 500; // milliseconds
 
 // --- USER SERVICE ---
 const mapApiUserToUser = (apiUser: any): User => {
-    const roleString = apiUser.role || 'employee';
+    // Normalize common fields with safe fallbacks
+    const id = String(
+        apiUser?.id || apiUser?.userId || apiUser?.user_id || apiUser?.pk || apiUser?.PK || `user-${Date.now()}`
+    );
+
+    const email: string = String(
+        apiUser?.email || apiUser?.mail || apiUser?.userEmail || ''
+    ).trim();
+
+    const derivedNameFromEmail = email ? email.split('@')[0].replace(/[._]+/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase()) : 'New User';
+    const name: string = String(
+        apiUser?.name || apiUser?.fullName || apiUser?.full_name || apiUser?.username || derivedNameFromEmail
+    ).trim();
+
+    const roleString = (apiUser?.role || apiUser?.userRole || apiUser?.user_role || 'employee');
     let role: UserRole;
     if (roleString.toUpperCase() === 'HR') {
         role = UserRole.HR;
@@ -178,14 +258,14 @@ const mapApiUserToUser = (apiUser: any): User => {
             : [];
 
     return {
-        id: apiUser.id,
-        name: apiUser.name,
-        email: apiUser.email,
+        id,
+        name,
+        email,
         role: role,
         companyId: companyId,
         managerId: apiUser.managerId || (Array.isArray(apiUser.managerIds) && apiUser.managerIds.length > 0 ? apiUser.managerIds[0] : undefined),
         departmentIds: departmentIds,
-        jobTitle: apiUser.jobTitle,
+        jobTitle: apiUser.jobTitle || apiUser.title || apiUser.position,
         status: apiUser.status || 'Offline',
         joinedDate: apiUser.joinedDate || new Date().toISOString(),
         skills: apiUser.skills || [],
@@ -204,12 +284,43 @@ const mapApiUserToUser = (apiUser: any): User => {
 export const getAllUsersFromApi = async (): Promise<User[]> => {
     if (cachedAllUsers) return cachedAllUsers;
 
-    const response = await authenticatedFetch('https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users');
+    const response = await authenticatedFetch(USERS_API_URL);
     const data = await parseApiResponse(response);
     const usersFromApi = extractArrayFromApiResponse(data, 'users');
     
     cachedAllUsers = usersFromApi.map(mapApiUserToUser);
     return cachedAllUsers;
+};
+
+// Create user via Users API
+export const createUser = async (payload: {
+    name: string;
+    email: string;
+    role: UserRole;
+    companyId?: string;
+    departmentIds?: string[];
+    managerIds?: string[];
+}): Promise<User> => {
+    const body: any = {
+        name: payload.name,
+        email: payload.email,
+        role: payload.role,
+        companyId: payload.companyId,
+        departmentIds: payload.departmentIds || [],
+        managerIds: payload.managerIds || [],
+    };
+
+    const response = await authenticatedFetch(USERS_API_URL, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        // Some endpoints don't like extra headers; rely on authenticatedFetch to set content-type
+    });
+
+    const data = await parseApiResponse(response);
+    // Invalidate cache so next list reflects the new user
+    invalidateUsersCache();
+    const created = (data && (data.user || data.User || data.Item || data.item)) || data;
+    return mapApiUserToUser(created);
 };
 
 export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
@@ -221,6 +332,41 @@ export const getUserByIdFromApi = async (userId: string): Promise<User | undefin
 export const getEmployeesFromApi = async (): Promise<User[]> => {
     const allUsers = await getAllUsersFromApi();
     return allUsers.filter(user => user.role === UserRole.EMPLOYEE);
+};
+
+// Delete user via Users API
+export const deleteUser = async (userId: string): Promise<void> => {
+    const deleteUrl = `${EMPLOYEES_DELETE_API_BASE_URL}/${encodeURIComponent(userId)}`;
+    // Try with and without Authorization header; some API Gateways reject auth on public routes
+    const attemptDelete = async (withAuth: boolean) =>
+        authenticatedFetch(deleteUrl, { method: 'DELETE', skipAuth: !withAuth, noContentType: true });
+
+    let response: Response | undefined;
+    let lastErr: any = null;
+    const attempts = [true, false];
+    for (const withAuth of attempts) {
+        try {
+            response = await attemptDelete(withAuth);
+            if (response.ok) {
+                invalidateUsersCache();
+                return;
+            }
+            lastErr = new Error(`Delete failed ${response.status} ${response.statusText}`);
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+
+    // If we reach here, throw the last error with body if available
+    if (response && !response.ok) {
+        try {
+            const txt = await response.text();
+            throw new Error(`Failed to delete user ${userId}: ${response.status} ${response.statusText} - ${txt}`);
+        } catch {
+            // ignore parse
+        }
+    }
+    throw (lastErr instanceof Error ? lastErr : new Error(`Failed to delete user ${userId}.`));
 };
 
 // Simple wrapper used by various parts of the app
@@ -995,7 +1141,7 @@ export const getCompanies = async (): Promise<Company[]> => {
         const companiesFromApi = extractArrayFromApiResponse(data, 'companies');
 
         cachedCompanies = companiesFromApi.map((company: any): Company => ({
-            id: company.id,
+            id: String(company.id || company.company_id || company.companyId).toLowerCase().trim(),
             name: company.name,
             ownerId: company.ownerId, 
             createdAt: company.createdAt || new Date().toISOString(), 

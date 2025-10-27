@@ -11,10 +11,14 @@ import ViewSwitcher from '../shared/ViewSwitcher';
 import { BuildingOfficeIcon, BriefcaseIcon, CheckCircleIcon, ClockIcon, TrendingUpIcon, StarIcon, MailIcon, CalendarIcon, EditIcon, TrashIcon, LoginIcon } from '../../constants';
 import StarRating from '../shared/StarRating';
 
-const getInitials = (name: string) => {
-    const names = name.split(' ');
-    if (names.length > 1) return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
-    return name.substring(0, 2).toUpperCase();
+const getInitials = (name: any) => {
+    const safe = typeof name === 'string' ? name.trim() : '';
+    if (!safe) return 'NA';
+    const names = safe.split(/\s+/);
+    if (names.length > 1 && names[0] && names[names.length - 1]) {
+        return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
+    }
+    return safe.substring(0, 2).toUpperCase();
 };
 
 const StatItem: React.FC<{ icon: React.ReactNode; value: React.ReactNode; label: string }> = ({ icon, value, label }) => (
@@ -190,27 +194,28 @@ const UserManagement: React.FC = () => {
     const [rating, setRating] = useState(0);
     const [isSubmittingUser, setIsSubmittingUser] = useState(false);
 
+    // Normalize companyId to match lowercased ids from services
+    const normalizedCompanyId = useMemo(() => (companyId ? companyId.toLowerCase() : undefined), [companyId]);
+
+    // Departments filtered by selected company
+    const companyDepartments = useMemo(() => {
+        if (!normalizedCompanyId) return [] as Department[];
+        return departments.filter(d => d.companyId === normalizedCompanyId);
+    }, [departments, normalizedCompanyId]);
+
     // Make loadData async to await API calls
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            // Fetch users from API and local, then merge so newly created (local) appear immediately
-            const [apiUsers, localUsers, fetchedCompanies] = await Promise.all([
+            // Force a fresh fetch from Users API and stop using local AuthService users
+            DataService.invalidateUsersCache();
+            const [apiUsers, fetchedCompanies] = await Promise.all([
                 DataService.getUsers(),
-                AuthService.getUsers(),
                 DataService.getCompanies(),
             ]);
 
-            const byEmail = new Map<string, typeof apiUsers[number]>();
-            for (const u of apiUsers) byEmail.set(u.email.toLowerCase(), u);
-            for (const u of localUsers) {
-                const key = u.email.toLowerCase();
-                if (!byEmail.has(key)) byEmail.set(key, u);
-            }
-            const mergedUsers = Array.from(byEmail.values());
-
-            setUsers(mergedUsers);
-            setManagers(mergedUsers.filter(u => u.role === UserRole.MANAGER));
+            setUsers(apiUsers);
+            setManagers(apiUsers.filter(u => u.role === UserRole.MANAGER));
             setCompanies(fetchedCompanies);
         } catch (error) {
             console.error("Failed to load user data", error);
@@ -244,14 +249,30 @@ const UserManagement: React.FC = () => {
 
     // Managers filtered by selected departments
     const filteredManagers = useMemo(() => {
-        if (departmentIds.length === 0) return [] as typeof managers;
-        return managers.filter(m => Array.isArray(m.departmentIds) && m.departmentIds.some(id => departmentIds.includes(id)));
-    }, [managers, departmentIds]);
+        if (!normalizedCompanyId || departmentIds.length === 0) return [] as typeof managers;
+        return managers.filter(m => (
+            (m.companyId ? m.companyId === normalizedCompanyId : true) &&
+            Array.isArray(m.departmentIds) && m.departmentIds.some(id => departmentIds.includes(id))
+        ));
+    }, [managers, departmentIds, normalizedCompanyId]);
 
     // Prune selected managerIds if they are not in filteredManagers
     useEffect(() => {
         setManagerIds(prev => prev.filter(id => filteredManagers.some(m => m.id === id)));
     }, [filteredManagers]);
+
+    // When company changes, clear departments and managers
+    useEffect(() => {
+        setDepartmentIds(prev => prev.filter(id => companyDepartments.some(d => d.id === id)));
+        setManagerIds([]);
+    }, [companyId, companyDepartments]);
+
+    // When role is not Employee, clear managers selection
+    useEffect(() => {
+        if (role !== UserRole.EMPLOYEE) {
+            setManagerIds([]);
+        }
+    }, [role]);
 
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
@@ -302,7 +323,7 @@ const UserManagement: React.FC = () => {
     const handleDeleteUser = async (userId: string) => {
         if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
         try {
-            await AuthService.deleteUser(userId);
+            await DataService.deleteUser(userId);
             showToast('Employee deleted successfully!', 'success');
             await loadData();
         } catch (error) {
@@ -349,45 +370,36 @@ const UserManagement: React.FC = () => {
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
                     rating: rating,
                 };
-                AuthService.updateUser(editingUser.id, updates); // This is likely a local data update or an old mock
+                await DataService.updateUser(editingUser.id, updates);
                 showToast('Employee updated successfully!', 'success');
             } else {
-                if (!password) {
-                    showToast('Password is required for new users.', 'error');
+                // Validations for guided flow
+                if (!name.trim() || !email.trim()) {
+                    showToast('Name and Email are required.', 'error');
                     return;
                 }
-                // Avoid backend 400 by pre-checking if user email already exists (API or local)
-                try {
-                    const [apiUsers, localUsers] = await Promise.all([
-                        DataService.getUsers(),
-                        AuthService.getUsers()
-                    ]);
-                    const exists = [...apiUsers, ...localUsers].find(u => u.email.toLowerCase() === email.toLowerCase());
-                    if (exists) {
-                        // Treat as update to existing local record
-                        AuthService.updateUser(exists.id, {
-                            role,
-                            departmentIds,
-                            companyId,
-                            managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
-                            managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
-                        });
-                        showToast('Employee record updated.', 'success');
-                        await loadData();
-                        handleCloseModal();
+                if (role === UserRole.EMPLOYEE) {
+                    if (!companyId) {
+                        showToast('Select a company for the employee.', 'error');
                         return;
                     }
-                } catch {}
+                    if (!departmentIds || departmentIds.length === 0) {
+                        showToast('Select at least one department.', 'error');
+                        return;
+                    }
+                    if (!managerIds || managerIds.length === 0) {
+                        showToast('Select at least one manager.', 'error');
+                        return;
+                    }
+                }
 
-                // Register first, which creates and returns the new user.
-                const created = await AuthService.register({ name, email, password });
-                // Immediately enrich the created user with role/departments/company/managers.
-                AuthService.updateUser(created.id, {
+                await DataService.createUser({
+                    name,
+                    email,
                     role,
-                    departmentIds,
                     companyId,
-                    managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
-                    managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
+                    departmentIds,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
                 });
                 showToast('Employee created successfully!', 'success');
             }
@@ -546,7 +558,11 @@ const UserManagement: React.FC = () => {
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
                         <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
-                            {departments.length > 0 ? departments.map(dept => (
+                            {!companyId && <p className="text-sm text-slate-500 col-span-2">Select a company to see departments.</p>}
+                            {companyId && companyDepartments.length === 0 && (
+                                <p className="text-sm text-slate-500 col-span-2">No departments for the selected company.</p>
+                            )}
+                            {companyId && companyDepartments.length > 0 && companyDepartments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -559,7 +575,8 @@ const UserManagement: React.FC = () => {
                                         {dept.name}
                                     </label>
                                 </div>
-                            )) : <p className="text-sm text-slate-500">Loading departments...</p>}
+                            ))}
+                            {departments.length === 0 && <p className="text-sm text-slate-500 col-span-2">Loading departments...</p>}
                         </div>
                     </div>
 
@@ -567,10 +584,10 @@ const UserManagement: React.FC = () => {
                         <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
                             <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
-                                {departmentIds.length === 0 && (
+                                {companyId && departmentIds.length === 0 && (
                                     <p className="text-xs text-slate-500">Select at least one department to see managers.</p>
                                 )}
-                                {departmentIds.length > 0 && filteredManagers.length === 0 && (
+                                {companyId && departmentIds.length > 0 && filteredManagers.length === 0 && (
                                     <p className="text-xs text-slate-500">No managers available in the selected departments.</p>
                                 )}
                                 {filteredManagers.map(m => (
