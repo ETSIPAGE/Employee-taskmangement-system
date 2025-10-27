@@ -1,11 +1,11 @@
 import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
+import { getToken, getCurrentUser } from './authService';
 
 // --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
 // Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
 let COMPANIES: Company[] = [
     { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
 ];
-import { getToken, getCurrentUser } from './authService'; // Assuming getToken is in authService
 
 // --- API ENDPOINTS ---
 const USERS_API_URL = 'https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users';
@@ -194,8 +194,80 @@ export const renameGroupConversation = async (conversationId: string, newName: s
 };
 
 // --- COMMON HELPERS ---
-const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
-    const token = getToken();
+type ExtendedRequestInit = RequestInit & {
+    skipAuth?: boolean;
+    noContentType?: boolean;
+    authRaw?: boolean;
+};
+
+const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
+    const token = getToken?.();
+    const apiKey = typeof window !== 'undefined' ? localStorage.getItem('ets_api_key') : undefined;
+
+    const { skipAuth, noContentType, authRaw, headers: initHeaders, ...fetchInit } = options;
+    const headers = new Headers(initHeaders || {});
+
+    const hasBody = typeof fetchInit.body !== 'undefined' && fetchInit.body !== null;
+    if (!noContentType && hasBody && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
+    }
+
+    if (!skipAuth && token) {
+        const rawToken = String(token);
+        headers.set('Authorization', authRaw ? rawToken : (rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`));
+    }
+
+    if (apiKey && !headers.has('x-api-key')) {
+        headers.set('x-api-key', apiKey);
+    }
+
+    return fetch(url, { ...fetchInit, headers, mode: fetchInit.mode ?? 'cors' });
+};
+
+// Helper to parse AWS API Gateway responses
+const parseApiResponse = async (response: Response) => {
+    const rawText = await response.text();
+    if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${rawText}`);
+    }
+
+    if (!rawText) return null;
+
+    try {
+        const outer = JSON.parse(rawText);
+        if (outer && typeof outer.body === 'string') {
+            try {
+                return JSON.parse(outer.body);
+            } catch {
+                return outer.body;
+            }
+        }
+        return outer;
+    } catch {
+        return { body: rawText } as any;
+    }
+};
+
+const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
+    if (Array.isArray(data)) {
+        return data;
+    }
+    if (data && typeof data === 'object') {
+        const possibleKeys = [primaryKey, primaryKey.toLowerCase(), 'Items', 'items', 'data', 'body'];
+        for (const key of possibleKeys) {
+            if (Array.isArray((data as any)[key])) {
+                return (data as any)[key];
+            }
+        }
+        const arrayValue = Object.values(data).find(value => Array.isArray(value));
+        if (arrayValue && Array.isArray(arrayValue)) {
+            return arrayValue;
+        }
+    }
+    console.warn(`Could not extract array from API response for key "${primaryKey}". Response was:`, data);
+    return [];
+};
+
 // --- ATTENDANCE TIME NORMALIZATION HELPERS ---
 const coerceDateFromEpochAny = (input: string | number): Date | null => {
     const numeric = typeof input === 'number' ? input : Number(String(input).trim());
@@ -235,23 +307,19 @@ const toHHmm = (date: Date): string => {
 
 const normalizeTimeForDisplay = (input: any): string => {
     if (input === undefined || input === null) return '';
-    // Numeric epoch seconds/millis
     if (typeof input === 'number') {
         const d = coerceDateFromEpochAny(input);
         if (d) return toHHmm(d);
     }
     const s = String(input).trim();
-    // Numeric string epoch
     if (/^\d{9,}$/.test(s)) {
         const d = coerceDateFromEpochAny(s);
         if (d) return toHHmm(d);
     }
-    // ISO or date-like string
     const asDate = new Date(s);
     if (!isNaN(asDate.getTime())) {
         return toHHmm(asDate);
     }
-    // Plain clock strings
     const comps = parseClock(s);
     if (comps) {
         const d = new Date();
@@ -260,83 +328,6 @@ const normalizeTimeForDisplay = (input: any): string => {
     }
     return s;
 };
-
-// Helper to add auth token to requests
-const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
-    const token = localStorage.getItem('ets_token') || (typeof getToken === 'function' ? getToken() : undefined);
-    const apiKey = localStorage.getItem('ets_api_key');
-    const headers = new Headers(options.headers || {});
-
-    const { skipAuth, noContentType, authRaw, ...fetchOptions } = (options as any) || {};
-
-    const hasBody = typeof fetchOptions.body !== 'undefined' && fetchOptions.body !== null;
-    if (!noContentType && hasBody && !headers.has('Content-Type')) {
-        headers.set('Content-Type', 'application/json');
-    }
-
-    // Attach Authorization when available and not explicitly skipped
-    if (!skipAuth && token) {
-        const tokenStr = String(token);
-        const authValue = authRaw ? tokenStr : (tokenStr.startsWith('Bearer ') ? tokenStr : `Bearer ${tokenStr}`);
-        headers.set('Authorization', authValue);
-    }
-
-    // Attach API Gateway key if configured (some endpoints require x-api-key regardless of auth)
-    if (apiKey && !headers.has('x-api-key')) {
-        headers.set('x-api-key', apiKey);
-    }
-
-    return fetch(url, { ...fetchOptions, headers, mode: 'cors' });
-};
-
-// Helper to parse AWS API Gateway responses
-const parseApiResponse = async (response: Response) => {
-    const rawText = await response.text();
-    if (!response.ok) {
-        // Include raw body for better diagnostics
-        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${rawText}`);
-    }
-
-    if (!rawText) return null;
-
-    // Try JSON parse of the outer response
-    try {
-        const outer = JSON.parse(rawText);
-        // Lambda proxy: body is a JSON string
-        if (outer && typeof outer.body === 'string') {
-            try {
-                return JSON.parse(outer.body);
-            } catch {
-                return outer.body; // plain string body
-            }
-        }
-        return outer;
-    } catch {
-        // Not JSON, return as text payload wrapper
-        return { body: rawText } as any;
-    }
-};
-
-const extractArrayFromApiResponse = (data: any, primaryKey: string): any[] => {
-    if (Array.isArray(data)) {
-        return data;
-    }
-    if (data && typeof data === 'object') {
-        const possibleKeys = [primaryKey, primaryKey.toLowerCase(), 'Items', 'items', 'data', 'body'];
-        for (const key of possibleKeys) {
-            if (Array.isArray(data[key])) {
-                return data[key];
-            }
-        }
-        // Fallback: find first array property in the object
-        const arrayValue = Object.values(data).find(value => Array.isArray(value));
-        if (arrayValue && Array.isArray(arrayValue)) {
-            return arrayValue;
-        }
-    }
-    console.warn(`Could not extract array from API response for key "${primaryKey}". Response was:`, data);
-    return []; // Return empty array to prevent crashes
-}
 
 // Caching mechanism
 let cachedTasks: Task[] | null = null;
