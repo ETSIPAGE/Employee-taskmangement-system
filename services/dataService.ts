@@ -1,6 +1,11 @@
-// services/dataService.ts
-import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, Company, User, UserRole } from '../types';
-import { getToken } from './authService'; // Assuming getToken is in authService
+import { Project, Task, TaskStatus, ChatConversation, ChatMessage, Department, Note, DependencyLog, MilestoneStatus, OnboardingSubmission, OnboardingStatus, OnboardingStep, Company, User, UserRole } from '../types';
+
+// --- MOCK DATA FOR MODULES WITHOUT PROVIDED APIs ---
+// Companies, Chat, and Onboarding data remains mocked as no APIs were specified for them.
+let COMPANIES: Company[] = [
+    { id: 'comp-1', name: 'Innovate Inc.', ownerId: '1', createdAt: '2023-01-01T00:00:00.000Z' }
+];
+import { getToken, getCurrentUser } from './authService'; // Assuming getToken is in authService
 
 // --- API ENDPOINTS ---
 const USERS_API_URL = 'https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users';
@@ -191,56 +196,124 @@ export const renameGroupConversation = async (conversationId: string, newName: s
 // --- COMMON HELPERS ---
 const authenticatedFetch = async (url: string, options: RequestInit = {}) => {
     const token = getToken();
-    const headers = new Headers(options.headers || {});
-    // Only set Content-Type if not explicitly set by the caller and not a GET/HEAD request
-    if (!headers.has('Content-Type') && options.method !== 'GET' && options.method !== 'HEAD') {
-        headers.set('Content-Type', 'application/json');
-    }
-    if (token) {
-        headers.set('Authorization', `Bearer ${token}`);
-    }
-    return fetch(url, { ...options, headers });
+// --- ATTENDANCE TIME NORMALIZATION HELPERS ---
+const coerceDateFromEpochAny = (input: string | number): Date | null => {
+    const numeric = typeof input === 'number' ? input : Number(String(input).trim());
+    if (!Number.isFinite(numeric)) return null;
+    const millis = numeric > 1e12 ? numeric : numeric > 1e9 ? numeric * 1000 : null;
+    if (!millis) return null;
+    const d = new Date(millis);
+    return isNaN(d.getTime()) ? null : d;
 };
 
-const parseApiResponse = async (response: Response) => {
-    const responseText = await response.text();
-    if (!response.ok) {
-        let errorMessage = responseText;
-        try {
-            const errorJson = JSON.parse(responseText);
-            errorMessage = errorJson.message || JSON.stringify(errorJson);
-        } catch (e) {
-            // Not a JSON error response, use the text.
-        }
-        console.error(`API request failed: ${response.status} ${response.statusText} - ${errorMessage}`);
-        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorMessage}`);
+const parseClock = (value: string): { h: number; m: number } | null => {
+    const s = value.trim();
+    const m12 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+    if (m12) {
+        let h = parseInt(m12[1], 10);
+        const m = parseInt(m12[2], 10);
+        const mer = m12[4].toUpperCase();
+        if (Number.isNaN(h) || Number.isNaN(m) || m < 0 || m > 59) return null;
+        if (mer === 'AM') { if (h === 12) h = 0; }
+        else { if (h !== 12) h += 12; }
+        if (h < 0 || h > 23) return null;
+        return { h, m };
     }
-    
-    // Handle empty successful responses
-    if (!responseText) {
-        return null;
+    const m24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (m24) {
+        const h = parseInt(m24[1], 10);
+        const m = parseInt(m24[2], 10);
+        if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+        return { h, m };
+    }
+    return null;
+};
+
+const toHHmm = (date: Date): string => {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const normalizeTimeForDisplay = (input: any): string => {
+    if (input === undefined || input === null) return '';
+    // Numeric epoch seconds/millis
+    if (typeof input === 'number') {
+        const d = coerceDateFromEpochAny(input);
+        if (d) return toHHmm(d);
+    }
+    const s = String(input).trim();
+    // Numeric string epoch
+    if (/^\d{9,}$/.test(s)) {
+        const d = coerceDateFromEpochAny(s);
+        if (d) return toHHmm(d);
+    }
+    // ISO or date-like string
+    const asDate = new Date(s);
+    if (!isNaN(asDate.getTime())) {
+        return toHHmm(asDate);
+    }
+    // Plain clock strings
+    const comps = parseClock(s);
+    if (comps) {
+        const d = new Date();
+        d.setHours(comps.h, comps.m, 0, 0);
+        return toHHmm(d);
+    }
+    return s;
+};
+
+// Helper to add auth token to requests
+const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}) => {
+    const token = localStorage.getItem('ets_token') || (typeof getToken === 'function' ? getToken() : undefined);
+    const apiKey = localStorage.getItem('ets_api_key');
+    const headers = new Headers(options.headers || {});
+
+    const { skipAuth, noContentType, authRaw, ...fetchOptions } = (options as any) || {};
+
+    const hasBody = typeof fetchOptions.body !== 'undefined' && fetchOptions.body !== null;
+    if (!noContentType && hasBody && !headers.has('Content-Type')) {
+        headers.set('Content-Type', 'application/json');
     }
 
+    // Attach Authorization when available and not explicitly skipped
+    if (!skipAuth && token) {
+        const tokenStr = String(token);
+        const authValue = authRaw ? tokenStr : (tokenStr.startsWith('Bearer ') ? tokenStr : `Bearer ${tokenStr}`);
+        headers.set('Authorization', authValue);
+    }
+
+    // Attach API Gateway key if configured (some endpoints require x-api-key regardless of auth)
+    if (apiKey && !headers.has('x-api-key')) {
+        headers.set('x-api-key', apiKey);
+    }
+
+    return fetch(url, { ...fetchOptions, headers, mode: 'cors' });
+};
+
+// Helper to parse AWS API Gateway responses
+const parseApiResponse = async (response: Response) => {
+    const rawText = await response.text();
+    if (!response.ok) {
+        // Include raw body for better diagnostics
+        throw new Error(`API request failed: ${response.status} ${response.statusText} - ${rawText}`);
+    }
+
+    if (!rawText) return null;
+
+    // Try JSON parse of the outer response
     try {
-        const data = JSON.parse(responseText);
-        
-        // This logic is to handle AWS Lambda Proxy integration responses where the actual content is in a stringified `body`.
-        if (data && typeof data.body === 'string') {
+        const outer = JSON.parse(rawText);
+        // Lambda proxy: body is a JSON string
+        if (outer && typeof outer.body === 'string') {
             try {
-                // If body is a string, it's likely JSON that needs to be parsed again.
-                return JSON.parse(data.body);
-            } catch (e) {
-                // If parsing the body fails, it might just be a simple string message.
-                return data.body;
+                return JSON.parse(outer.body);
+            } catch {
+                return outer.body; // plain string body
             }
         }
-        
-        // This handles cases where the API returns a direct JSON object (not wrapped in a proxy response).
-        return data;
-    } catch (e) {
-        // This handles cases where the API returns a non-JSON string response on success (e.g., just "OK").
-        console.warn("API response was not valid JSON, returning as text:", responseText);
-        return responseText;
+        return outer;
+    } catch {
+        // Not JSON, return as text payload wrapper
+        return { body: rawText } as any;
     }
 };
 
@@ -499,19 +572,23 @@ export const getAllTasks = async (): Promise<Task[]> => {
             return [];
         }
         
-        cachedTasks = tasksFromApi.map((task: any): Task => ({
-            id: task.id,
-            name: task.title,
-            description: task.description,
-            dueDate: task.due_date,
-            projectId: task.project,
-            assigneeIds: Array.isArray(task.assign_to) ? task.assign_to : (task.assign_to ? [task.assign_to] : []),
-            assign_by: task.assign_by,
-            status: mapApiStatusToTaskStatus(task.status),
-            priority: task.priority,
-            estimatedTime: task.est_time ? parseInt(task.est_time, 10) : undefined,
-            // Include other fields if your API returns them
-            notes: task.notes,
+        cachedTasks = tasksFromApi.map((task: any, idx: number): Task => ({
+            id: String(task.id ?? task.taskId ?? `task-${idx}-${Date.now()}`),
+            name: String(task.title ?? task.name ?? 'Untitled Task'),
+            description: typeof task.description === 'string' ? task.description : '',
+            dueDate: task.due_date ?? task.dueDate ?? '',
+            projectId: String(task.project ?? task.projectId ?? ''),
+            assigneeIds: Array.isArray(task.assign_to)
+                ? task.assign_to
+                : (task.assign_to ? [task.assign_to] : []),
+            assign_by: task.assign_by ?? task.created_by ?? task.creatorId,
+            status: mapApiStatusToTaskStatus(String(task.status || 'To-Do')),
+            priority: task.priority ?? 'medium',
+            estimatedTime: (task.est_time ? parseInt(task.est_time, 10) : (task.estimated_time ? parseInt(task.estimated_time, 10) : undefined)),
+            // Prefer backend 'messages' array, map to internal notes structure; fallback to 'notes' if present
+            notes: Array.isArray(task.messages)
+                    ? task.messages.map((m: any) => ({ id: m.messageId || m.id, authorId: m.senderId || m.authorId, content: m.text || m.content, timestamp: m.timestamp }))
+                    : task.notes,
             dependency: task.dependency,
             dependencyLogs: task.dependencyLogs,
             tags: task.tags,
@@ -527,13 +604,124 @@ export const getAllTasks = async (): Promise<Task[]> => {
 };
 
 export const createTask = async (taskData: any): Promise<Task> => {
+    // Normalize incoming object to backend-friendly payload
+    const normalizeDate = (d?: string) => {
+        if (!d) return undefined;
+        const ddmmyyyy = /^\d{2}-\d{2}-\d{4}$/;
+        if (ddmmyyyy.test(d)) {
+            const [dd, mm, yyyy] = d.split('-');
+            return `${yyyy}-${mm}-${dd}`;
+        }
+        return d;
+    };
+
+    const estNum = ((): number | undefined => {
+        const v = (taskData.est_time ?? taskData.estimated_time);
+        if (v === '' || v === undefined || v === null) return undefined;
+        const n = Number(v);
+        return Number.isNaN(n) ? undefined : n;
+    })();
+
+    // Determine current session user and role
+    const sessionUser = getCurrentUser();
+    const sessionUserId = sessionUser?.id;
+    const sessionUserRole = sessionUser?.role ? String(sessionUser.role).toUpperCase() : undefined;
+
+    // Resolve department if missing but project is provided
+    let resolvedDepartment: string | undefined = (taskData.department ?? taskData.departmentId);
+    if ((!resolvedDepartment || resolvedDepartment === '') && (taskData.project || taskData.projectId)) {
+        try {
+            const proj = await getProjectById(String(taskData.project ?? taskData.projectId));
+            if (proj && Array.isArray(proj.departmentIds) && proj.departmentIds.length > 0) {
+                resolvedDepartment = proj.departmentIds[0];
+            }
+        } catch {}
+    }
+
+    const currentUserId = taskData.currentUserId || sessionUserId;
+    if (!currentUserId) {
+        throw new Error('You must be logged in to create a task.');
+    }
+
+    const payload: any = {
+        title: taskData.title ?? taskData.name,
+        description: taskData.description ?? '',
+        project: taskData.project ?? taskData.projectId,
+        department: resolvedDepartment,
+        due_date: normalizeDate(taskData.due_date ?? taskData.dueDate),
+        priority: (taskData.priority ?? 'medium'),
+        est_time: estNum,
+        assign_to: Array.isArray(taskData.assign_to)
+            ? taskData.assign_to
+            : (Array.isArray(taskData.assigneeIds) ? taskData.assigneeIds : []),
+        assign_by: taskData.assign_by ?? currentUserId,
+        status: taskData.status ?? 'To-Do',
+        // Extra metadata to help backend identify caller if needed
+        currentUserId,
+        role: sessionUserRole,
+        currentUserRole: sessionUserRole,
+    };
+
+    // If creator is EMPLOYEE, allow missing department and set to empty string
+    const isEmployee = sessionUserRole === 'EMPLOYEE';
+    if ((!payload.department || payload.department === undefined) && isEmployee) {
+        payload.department = '';
+    }
+
+    // For employees, provide safe defaults to satisfy strict backend validation
+    if (isEmployee) {
+        if (!payload.description || (typeof payload.description === 'string' && payload.description.trim() === '')) {
+            payload.description = ' ';
+        }
+        if (!payload.due_date) {
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            payload.due_date = `${yyyy}-${mm}-${dd}`;
+        }
+        if (!payload.priority) {
+            payload.priority = 'medium';
+        }
+        if (payload.est_time === undefined || payload.est_time === null || Number.isNaN(Number(payload.est_time)) || Number(payload.est_time) === 0) {
+            payload.est_time = 1;
+        }
+    }
+
+    // Final fallbacks
+    if ((!payload.assign_to || payload.assign_to.length === 0) && currentUserId) {
+        payload.assign_to = [currentUserId];
+    }
+
+    // Defensive: ensure minimal required fields are present before hitting API
+    if (!payload.title || !payload.project) {
+        throw new Error('Please fill Title and Project.');
+    }
+    if (!isEmployee) {
+        if (!payload.department || !payload.due_date || !payload.priority) {
+            throw new Error('Please fill Title, Project, Department, Due Date and Priority.');
+        }
+    }
+
+    // Single call to the configured create endpoint
     const response = await authenticatedFetch(TASKS_CREATE_API_URL, {
         method: 'POST',
-        body: JSON.stringify(taskData)
+        body: JSON.stringify(payload),
+        skipAuth: true
     });
+
     if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create task.');
+        let errorMessage = 'Failed to create task.';
+        try {
+            const txt = await response.text();
+            try {
+                const json = JSON.parse(txt);
+                errorMessage = json.message || JSON.stringify(json);
+            } catch {
+                errorMessage = txt || errorMessage;
+            }
+        } catch {}
+        throw new Error(errorMessage);
     }
     
     // Invalidate cache
@@ -583,8 +771,12 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
     return tasks.filter(t => t.assigneeIds?.includes(assigneeId));
 };
 
-export const updateTask = async (taskId: string, updates: { status?: TaskStatus; assigneeIds?: string[] }, currentUserId: string): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string[] } = {
+export const updateTask = async (
+    taskId: string,
+    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string },
+    currentUserId: string
+): Promise<Task> => {
+    const payload: { currentUserId: string; status?: string; assign_to?: string[]; due_date?: string; est_time?: number; message?: string } = {
         currentUserId: currentUserId,
     };
     if (updates.status) {
@@ -594,13 +786,31 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
     if (updates.hasOwnProperty('assigneeIds')) {
         payload.assign_to = updates.assigneeIds || [];
     }
+    if (updates.dueDate) {
+        payload.due_date = updates.dueDate;
+    }
+    if (typeof updates.estimatedTime === 'number') {
+        payload.est_time = updates.estimatedTime;
+    }
+    if (updates.message && updates.message.trim() !== '') {
+        payload.message = updates.message.trim();
+    }
 
     const endpointUrl = `${TASKS_UPDATE_API_BASE_URL}/${taskId}`;
 
-    const response = await authenticatedFetch(endpointUrl, {
-        method: 'PUT',
-        body: JSON.stringify(payload)
-    });
+    let response: Response;
+    try {
+        response = await authenticatedFetch(endpointUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    } catch (networkErr) {
+        console.warn('[DataService.updateTask] POST failed, retrying with PUT...', networkErr);
+        response = await authenticatedFetch(endpointUrl, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    }
 
     if (!response.ok) {
         let errorMessage = 'Failed to update task.';
@@ -629,8 +839,10 @@ export const updateTask = async (taskId: string, updates: { status?: TaskStatus;
         assign_by: updatedTaskData.assign_by,
         status: mapApiStatusToTaskStatus(updatedTaskData.status),
         priority: updatedTaskData.priority,
-        estimatedTime: updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : undefined,
-        notes: updatedTaskData.notes,
+        estimatedTime: (updatedTaskData.est_time ? parseInt(updatedTaskData.est_time, 10) : (updatedTaskData.estimated_time ? parseInt(updatedTaskData.estimated_time, 10) : undefined)),
+        notes: Array.isArray(updatedTaskData.messages)
+                ? updatedTaskData.messages.map((m: any) => ({ id: m.messageId || m.id, authorId: m.senderId || m.authorId, content: m.text || m.content, timestamp: m.timestamp }))
+                : updatedTaskData.notes,
         dependency: updatedTaskData.dependency,
         dependencyLogs: updatedTaskData.dependencyLogs,
         tags: updatedTaskData.tags,
@@ -655,18 +867,17 @@ export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task 
 
 export const deleteTask = async (taskId: string, currentUserId: string): Promise<void> => {
     const response = await authenticatedFetch(`${TASKS_DELETE_API_BASE_URL}/${taskId}`, {
-        method: 'POST', // Or DELETE, depending on your API
-        body: JSON.stringify({ currentUserId: currentUserId })
+        method: 'POST',
+        body: JSON.stringify({ currentUserId })
     });
 
     if (!response.ok) {
         let errorMessage = 'Failed to delete task.';
         try {
             const errorBody = await response.json();
-            errorMessage = errorBody.message || JSON.stringify(errorBody);
+            errorMessage = errorBody.message || 'Failed to delete task.';
         } catch (e) {
-             const errorText = await response.text();
-             errorMessage = errorText || `Request failed with status ${response.status}`;
+            // The response was not JSON, which is fine. The text itself might be the error.
         }
         throw new Error(errorMessage);
     }
@@ -674,7 +885,6 @@ export const deleteTask = async (taskId: string, currentUserId: string): Promise
     // Invalidate cache
     cachedTasks = null;
 };
-
 
 // --- PROJECTS SERVICE ---
 export const getAllProjects = async (): Promise<Project[]> => {
@@ -711,7 +921,7 @@ export const getAllProjects = async (): Promise<Project[]> => {
             estimatedTime: proj.estimated_time ? parseInt(proj.estimated_time, 10) : undefined,
             companyId: String(proj.companyId || proj.company_id || proj.company || 'comp-1').toLowerCase().trim(),
             roadmap: proj.roadmap || [],
-            timestamp: proj.timestamp || new Date().toISOString(), // Ensure timestamp is present
+            timestamp: proj.timestamp || new Date().toISOString(),
         }));
         return cachedProjects;
     } catch (error) {
@@ -753,8 +963,6 @@ export const getProjectsByDepartment = async (departmentId: string): Promise<Pro
     const projects = await getAllProjects();
     return projects.filter(p => p.departmentIds && p.departmentIds.includes(departmentId));
 };
-
-// ... (rest of the code remains the same)
 
 export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp'>): Promise<Project> => {
     const newProjectTimestamp = new Date().toISOString(); 
@@ -815,8 +1023,6 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
     
     return newProject;
 };
-
-// ... (rest of the code remains the same)
 
 export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
     const updateFields: any = {};
@@ -917,8 +1123,6 @@ export const deleteProject = async (projectId: string, projectTimestamp: string)
     cachedProjects = null; // Invalidate cache after deletion
 };
 
-
-// --- DEPARTMENT SERVICE ---
 export const getDepartments = async (): Promise<Department[]> => {
     if (cachedDepartments) return cachedDepartments;
     try {
@@ -951,37 +1155,90 @@ export const getDepartmentsByCompany = async (companyId: string): Promise<Depart
 };
 
 export const createDepartment = async (name: string, companyId: string): Promise<Department> => {
-    const payload = {
-        name,
-        company_id: companyId, 
-        id: `dept-${Date.now()}` // Client-side ID generation
-    };
-    const response = await authenticatedFetch(DEPARTMENTS_API_URL, {
+    // Known working POST endpoint requires no auth and companyIds array
+    const url = 'https://evnlmv27o2.execute-api.ap-south-1.amazonaws.com/prod/postdepartment';
+    const response = await authenticatedFetch(url, {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ name, companyIds: [companyId] }),
+        skipAuth: true
     });
 
     if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to create department.');
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to create department.');
     }
 
-    cachedDepartments = null; // Invalidate cache
-    const responseData = await parseApiResponse(response);
-    const createdDepartmentData = responseData.Department?.Item || responseData.Item || responseData; // Adjust based on actual API response structure
+    cachedDepartments = null; // Invalidate cache after creation
+    const data = await parseApiResponse(response);
+    const created = (data && (data.department || data.Department || data.item || data.Item)) || data;
+    const id = created?.id || `dept-${Date.now()}`;
 
-    const newDepartment: Department = { 
-        id: createdDepartmentData.id, 
-        name: createdDepartmentData.name, 
-        companyId: (Array.isArray(createdDepartmentData.companyIds) && createdDepartmentData.companyIds.length > 0
-                    ? String(createdDepartmentData.companyIds[0])
-                    : String(createdDepartmentData.companyId || createdDepartmentData.company_id || createdDepartmentData.company || 'comp-1')
-                   ).toLowerCase().trim(),
+    const newDepartment: Department = {
+        id,
+        name: created?.name || name,
+        companyId: created?.companyId || (Array.isArray(created?.companyIds) ? created.companyIds[0] : companyId)
     };
     return newDepartment;
 };
 
-// --- COMPANY SERVICE ---
+export const updateDepartment = async (id: string, name: string, companyId: string): Promise<Department> => {
+    // Use same working endpoint with id in payload; no auth
+    const url = 'https://evnlmv27o2.execute-api.ap-south-1.amazonaws.com/prod/postdepartment';
+    const response = await authenticatedFetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ id, name, companyIds: [companyId] }),
+        skipAuth: true
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || 'Failed to update department.');
+    }
+
+    cachedDepartments = null; // Invalidate cache
+    const data = await parseApiResponse(response);
+    const updated = (data && (data.department || data.Department || data.item || data.Item)) || data;
+    const dept: Department = {
+        id: updated?.id || id,
+        name: updated?.name || name,
+        companyId: updated?.companyId || (Array.isArray(updated?.companyIds) ? updated.companyIds[0] : companyId)
+    };
+    return dept;
+};
+
+export const deleteDepartment = async (id: string): Promise<void> => {
+    // Delete only the exact requested department id
+    const base = 'https://n844w7gm0d.execute-api.ap-south-1.amazonaws.com/prod';
+    const attempts: { url: string; method: 'DELETE' | 'POST'; skipAuth?: boolean; noContentType?: boolean; body?: any }[] = [
+        { url: `${base}/deletedepartment/${encodeURIComponent(id)}`, method: 'DELETE', skipAuth: true },
+        { url: `${base}/deletedepartment/${encodeURIComponent(id)}?latest=1`, method: 'DELETE', skipAuth: true },
+        { url: `${base}/deletedepartment`, method: 'POST', body: { id, latest: 1 }, noContentType: true },
+    ];
+    let lastErr: any = null;
+    for (const a of attempts) {
+        try {
+            const res = await authenticatedFetch(a.url, {
+                method: a.method,
+                body: a.body ? JSON.stringify(a.body) : undefined,
+                skipAuth: a.skipAuth,
+                noContentType: a.noContentType
+            });
+            await parseApiResponse(res);
+            lastErr = null;
+            break;
+        } catch (e) {
+            lastErr = e;
+            continue;
+        }
+    }
+    if (lastErr) throw lastErr;
+
+    if (cachedDepartments) {
+        cachedDepartments = cachedDepartments.filter(d => d.id !== id);
+    }
+    cachedDepartments = null; // Invalidate cache for fresh reload
+};
+
 export const getCompanies = async (): Promise<Company[]> => {
     if (cachedCompanies) return cachedCompanies;
 
@@ -998,17 +1255,12 @@ export const getCompanies = async (): Promise<Company[]> => {
         }));
         return cachedCompanies;
     } catch (error) {
-        console.error("Failed to fetch all companies:", error);
-        return []; 
+        console.error('Failed to update department:', error);
+        throw error;
     }
 };
 
-export const getCompanyById = async (id: string): Promise<Company | undefined> => {
-    const allCompanies = await getCompanies();
-    return allCompanies.find(c => c.id === id);
-};
-
-// This remains mocked as no API was provided for creating companies.
+export const getCompanyById = (id: string): Company | undefined => COMPANIES.find(c => c.id === id);
 export const createCompany = (name: string, ownerId: string): Company => {
     const newCompany: Company = { id: `comp-${Date.now()}`, name, ownerId, createdAt: new Date().toISOString() };
     if (cachedCompanies) {
@@ -1025,8 +1277,6 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
     try {
         // --- THIS IS THE CORRECTED LINE ---
         const endpoint = `${ATTENDANCE_GET_BY_DATE_URL}?date=${encodeURIComponent(date)}`;
-        // ----------------------------------
-
         const response = await authenticatedFetch(endpoint, { method: 'GET' });
         const data = await parseApiResponse(response);
         const raw = extractArrayFromApiResponse(data, 'attendance');
@@ -1044,8 +1294,8 @@ export const getAttendanceByDate = async (date: string): Promise<Array<{ userId:
                     userId: String(userId),
                     date: d,
                 };
-                if (punchIn) record.punchInTime = String(punchIn);
-                if (punchOut) record.punchOutTime = String(punchOut);
+                if (punchIn !== undefined && punchIn !== null) record.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) record.punchOutTime = String(punchOut);
                 return record;
             })
             .filter((x: any) => x);
@@ -1063,7 +1313,6 @@ export const getAttendanceForUserByMonth = async (
     month: number
 ): Promise<Array<{ userId: string; date: string; punchInTime?: string; punchOutTime?: string }>> => {
     try {
-        // Always use query parameter as backend requires ?userId even if path includes {userId}
         const baseUserUrl = ATTENDANCE_GET_BY_USER_URL
             .replace('{userId}', '')
             .replace(/\/{userId}/g, '')
@@ -1082,8 +1331,10 @@ export const getAttendanceForUserByMonth = async (
                     userId: String(uid),
                     date: String(d),
                 };
-                if (r?.punchInTime) rec.punchInTime = String(r.punchInTime);
-                if (r?.punchOutTime) rec.punchOutTime = String(r.punchOutTime);
+                const punchIn = r?.punchInTime || r?.punch_in_time || r?.punch_in || r?.punchIn;
+                const punchOut = r?.punchOutTime || r?.punch_out_time || r?.punch_out || r?.punchOut;
+                if (punchIn !== undefined && punchIn !== null) rec.punchInTime = String(punchIn);
+                if (punchOut !== undefined && punchOut !== null) rec.punchOutTime = String(punchOut);
                 return rec;
             })
             .filter((x: any) => x);

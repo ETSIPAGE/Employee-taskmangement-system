@@ -63,8 +63,8 @@ const ManagerAttendanceView: React.FC = () => {
                     const day = dateValue ? extractDay(dateValue as any) : null;
                     if (!day) return false;
                     const targetDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day);
-                    const isWeekend = targetDate.getDay() === 0 || targetDate.getDay() === 6;
-                    if (isWeekend) {
+                    const isSunday = targetDate.getDay() === 0;
+                    if (isSunday) {
                         return false;
                     }
                     return true;
@@ -144,7 +144,7 @@ const ManagerAttendanceView: React.FC = () => {
                 for (let day = 1; day <= daysInMonth; day++) {
                     const iterDate = new Date(currentYear, currentMonthIndex, day);
                     const dayOfWeek = iterDate.getDay();
-                    if (dayOfWeek === 0 || dayOfWeek === 6) {
+                    if (dayOfWeek === 0) {
                         continue;
                     }
 
@@ -156,8 +156,8 @@ const ManagerAttendanceView: React.FC = () => {
                             const recDay = dateValue ? extractDay(dateValue as any) : null;
                             if (!recDay) return false;
                             const normalizedDate = new Date(currentYear, currentMonthIndex, recDay);
-                            const isWeekend = normalizedDate.getDay() === 0 || normalizedDate.getDay() === 6;
-                            if (isWeekend) return false;
+                            const isSunday = normalizedDate.getDay() === 0;
+                            if (isSunday) return false;
                             const resolved = merged.get(String(rec.userId));
                             return resolved ? isEligibleForManager(resolved) : false;
                         });
@@ -339,9 +339,10 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                             const normalizedMatchedId = normalizeIdentifier(match.userId);
                             if (normalizedMatchedId) identifierSet.add(normalizedMatchedId);
                             const dayOfWeek = date.getDay();
-                            if (dayOfWeek === 0 || dayOfWeek === 6) {
+                            if (dayOfWeek === 0) {
                                 return;
                             }
+
                             presentDays.add(day);
                             const existing = punches[day] || {};
                             const dateSource = match.date ?? ds;
@@ -362,9 +363,10 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                         addIdentifier((rec as any)?.userId);
                         const baseDate = new Date(year, month - 1, day);
                         const dayOfWeek = baseDate.getDay();
-                        if (dayOfWeek === 0 || dayOfWeek === 6) {
+                        if (dayOfWeek === 0) {
                             continue;
                         }
+
                         presentDays.add(day);
                         const existing = punches[day] || {};
                         const dateSource = rec.date ?? undefined;
@@ -395,7 +397,7 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                     if (sameMonth) {
                         const selectedDayNumber = presentDate.getDate();
                         const dayOfWeek = new Date(year, month - 1, selectedDayNumber).getDay();
-                        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                        if (dayOfWeek !== 0) {
                             presentDays.add(selectedDayNumber);
                             if (!punches[selectedDayNumber]) {
                                 punches[selectedDayNumber] = {};
@@ -512,12 +514,33 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
         }
 
         if (typeof timeValue === 'string') {
-            const epoch = /^\d{9,}$/.test(timeValue.trim()) ? coerceDateFromEpoch(timeValue) : null;
+            const trimmed = timeValue.trim();
+            const epoch = /^\d{9,}$/.test(trimmed) ? coerceDateFromEpoch(trimmed) : null;
             if (epoch) return epoch;
-
-            const direct = new Date(timeValue);
-            if (!isNaN(direct.getTime())) {
-                return direct;
+            // If ISO-like, extract clock part and compose later
+            if (/T\d{2}:\d{2}/.test(trimmed)) {
+                const match = trimmed.match(/T(\d{2}):(\d{2})/);
+                if (match) {
+                    const hh = parseInt(match[1], 10);
+                    const mm = parseInt(match[2], 10);
+                    if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+                        // Compose below using raw date or fallback
+                        const datePart = rawValue ? String(rawValue).split('T')[0] : null;
+                        if (datePart) {
+                            const iso = `${datePart}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+                            const d = new Date(iso);
+                            if (!isNaN(d.getTime())) return d;
+                        }
+                        const d = new Date(
+                            monthDate.getFullYear(),
+                            monthDate.getMonth(),
+                            day,
+                            hh,
+                            mm,
+                        );
+                        return d;
+                    }
+                }
             }
         }
 
@@ -526,11 +549,7 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                 const rawEpoch = coerceDateFromEpoch(rawValue);
                 if (rawEpoch) return rawEpoch;
             }
-            const rawDirect = new Date(rawValue as any);
-            if (!isNaN(rawDirect.getTime())) {
-                return rawDirect;
-            }
-
+            // Prefer composing from YYYY-MM-DD + HH:mm to avoid TZ shifts
             const datePart = String(rawValue).split('T')[0];
             if (datePart) {
                 const comps = parseTimeComponents(timeValue);
@@ -598,7 +617,7 @@ const EmployeeAttendanceDetailModal: React.FC<{ employee: User; monthDate: Date;
                     {days.map(day => {
                         const date = new Date(year, month, day);
                         const dayOfWeek = date.getDay();
-                        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                        const isWeekend = dayOfWeek === 0; // Only Sunday is non-working
                         const isPresent = presentDates.has(day);
                         const isFuture = date > today;
 
@@ -721,15 +740,24 @@ const CalendarMonthView: React.FC<{
                     const isToday = today.toDateString() === d.toDateString();
                     const isSelected = selectedDate?.toDateString() === d.toDateString();
                     const isPresent = presentSet.has(day);
+                    const isFuture = d > today;
+                    const isSunday = d.getDay() === 0; // Only Sunday is off
 
                     let baseClasses = "w-9 h-9 flex items-center justify-center rounded-full cursor-pointer transition-colors";
                     let selectedClasses = isSelected ? "bg-indigo-600 text-white font-bold shadow-lg" : "hover:bg-indigo-100";
-                    let todayClasses = isToday && !isSelected ? "bg-slate-200 text-slate-800 font-bold" : "";
-                    let presentClasses = isPresent ? "bg-green-500 text-white font-bold" : "";
+                    let statusClasses = "";
+                    if (isPresent) {
+                        statusClasses = "bg-green-500 text-white font-bold";
+                    } else if (isSunday) {
+                        statusClasses = "bg-slate-100 text-slate-400";
+                    } else if (!isFuture) {
+                        statusClasses = "bg-red-100 text-red-700";
+                    }
+                    let todayClasses = isToday && !isSelected && !isPresent ? "ring-2 ring-slate-300" : "";
 
                     return (
                         <div key={day} className="flex justify-center">
-                            <button onClick={() => onDateClick(d)} className={`${baseClasses} ${selectedClasses} ${todayClasses} ${presentClasses}`}>{day}</button>
+                            <button onClick={() => onDateClick(d)} className={`${baseClasses} ${selectedClasses} ${todayClasses} ${statusClasses}`}>{day}</button>
                         </div>
                     );
                 })}

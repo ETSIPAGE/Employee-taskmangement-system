@@ -125,7 +125,7 @@ export const TrendingUpIcon = ({className = "h-6 w-6"}: {className?: string}) =>
 
 export const StarIcon = ({className = "h-6 w-6"}: {className?: string}) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
     </svg>
 );
 
@@ -185,6 +185,12 @@ export const ArrowPathIcon = ({ className = "w-6 h-6" }: { className?: string })
     </svg>
 );
 
+export const UserGroupIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.522c-.119.2-.243.396-.372.589-.129.193-.264.382-.404.565-.14.183-.287.36-.44.533-.153.173-.313.34-.48.502-.167.162-.34.32-.518.473a10.66 10.66 0 01-.519.42 9.094 9.094 0 003.741.479m0 0a9.094 9.094 0 003.741.479m-3.741-.479a9.094 9.094 0 01-3.741-.479M12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m6 0a5.971 5.971 0 00.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.522c-.119.2-.243.396-.372.589-.129.193-.264.382-.404.565-.14.183-.287.36-.44.533-.153.173-.313.34-.48.502-.167.162-.34.32-.518.473a10.66 10.66 0 01-.519.42 9.094 9.094 0 003.741.479m0 0a9.094 9.094 0 003.741.479m-3.741-.479a9.094 9.094 0 01-3.741-.479M12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719" />
+    </svg>
+);
+
 export const LoginIcon = ({ className = "h-5 w-5" }: { className?: string }) => (
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
@@ -195,11 +201,13 @@ export const LoginIcon = ({ className = "h-5 w-5" }: { className?: string }) => 
 export const NAV_ITEMS = {
     [UserRole.ADMIN]: [
         { name: 'Dashboard', href: '/', icon: ChartBarIcon },
+        { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Tasks', href: '/admin-tasks', icon: ClipboardListIcon },
         { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon },
         { name: 'Departments', href: '/departments', icon: BuildingOfficeIcon },
         { name: 'Employees', href: '/users', icon: UsersIcon },
+        // { name: 'Roles', href: '/roles', icon: UserGroupIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],
@@ -209,6 +217,7 @@ export const NAV_ITEMS = {
         { name: 'My Team', href: '/team', icon: UsersIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Team Tasks', href: '/team-tasks', icon: ClipboardListIcon },
+        { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],
@@ -216,6 +225,7 @@ export const NAV_ITEMS = {
         { name: 'Dashboard', href: '/', icon: HomeIcon },
         { name: 'My Profile', href: '/profile', icon: UserCircleIcon },
         { name: 'Tasks', href: '/tasks', icon: ClipboardListIcon },
+        { name: 'Work Reports', href: '/my-work-reports', icon: DocumentTextIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },
     ],

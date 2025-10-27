@@ -82,7 +82,8 @@ export interface User {
   email: string;
   role: UserRole;
   companyId?: string;
-  managerId?: string; // This is the user's direct manager. Project has 'managerIds' for project-level managers.
+  managerId?: string; // Legacy single manager field for backward compatibility
+  managerIds?: string[]; // NEW: support multiple managers per employee
   departmentIds?: string[];
   jobTitle?: string;
   status?: 'Active' | 'Busy' | 'Offline';

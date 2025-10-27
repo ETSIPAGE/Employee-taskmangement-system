@@ -54,7 +54,9 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
     const [isMenuOpen, setIsMenuOpen] = useState(false);
 
     return (
-        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${roleStyles[user.role].border}`}>
+        <div className={`bg-white rounded-xl shadow-md p-5 flex flex-col space-y-5 transition-all hover:shadow-lg border-t-4 ${
+            (roleStyles[user.role] || { border: 'border-slate-200' }).border
+        }`}>
             {/* Header */}
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-4">
@@ -64,7 +66,11 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                     <div>
                          <div className="flex items-center gap-x-2">
                             <h3 className="text-xl font-bold text-slate-800">{user.name}</h3>
-                             <span className={`${roleStyles[user.role].bg} ${roleStyles[user.role].text} text-xs font-semibold px-2 py-0.5 rounded-full`}>
+                            <span className={`${
+                                (roleStyles[user.role] || { bg: 'bg-slate-100', text: 'text-slate-700' }).bg
+                            } ${
+                                (roleStyles[user.role] || { bg: 'bg-slate-100', text: 'text-slate-700' }).text
+                            } text-xs font-semibold px-2 py-0.5 rounded-full`}>
                                 {user.role}
                             </span>
                         </div>
@@ -76,7 +82,7 @@ const UserCard: React.FC<{ user: User; companyName?: string; onEdit: (user: User
                 </div>
                 <div className="relative">
                      <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="flex items-center space-x-2 text-sm border rounded-lg px-3 py-1.5 hover:bg-slate-50">
-                        <span className={`w-2.5 h-2.5 rounded-full ${statusStyles[currentStatus].dot}`}></span>
+                        <span className={`w-2.5 h-2.5 rounded-full ${(statusStyles[currentStatus] || { dot: 'bg-slate-400' }).dot}`}></span>
                         <span>{currentStatus}</span>
                         <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                      </button>
@@ -162,6 +168,11 @@ const UserManagement: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [view, setView] = useState<'card' | 'table'>('card');
+    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+    const showToast = useCallback((message: string, type: 'success' | 'error') => {
+        setToast({ message, type });
+        setTimeout(() => setToast(null), 3000);
+    }, []);
 
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
@@ -172,25 +183,35 @@ const UserManagement: React.FC = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<UserRole>(UserRole.EMPLOYEE);
-    const [managerId, setManagerId] = useState<string | undefined>(undefined);
+    const [managerIds, setManagerIds] = useState<string[]>([]);
+
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
     const [companyId, setCompanyId] = useState<string | undefined>(undefined);
     const [rating, setRating] = useState(0);
+    const [isSubmittingUser, setIsSubmittingUser] = useState(false);
 
     // Make loadData async to await API calls
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            // Use DataService for fetching, assuming it uses the backend API
-            const [fetchedUsers, fetchedManagers, fetchedCompanies] = await Promise.all([
-                DataService.getUsers(), // Assuming getUsers() now fetches all users from API
-                DataService.getManagers(), // Assuming getManagers() now fetches managers from API
-                DataService.getCompanies(), // This is the API call for companies
+            // Fetch users from API and local, then merge so newly created (local) appear immediately
+            const [apiUsers, localUsers, fetchedCompanies] = await Promise.all([
+                DataService.getUsers(),
+                AuthService.getUsers(),
+                DataService.getCompanies(),
             ]);
 
-            setUsers(fetchedUsers);
-            setManagers(fetchedManagers);
-            setCompanies(fetchedCompanies); // This will now be the array of companies
+            const byEmail = new Map<string, typeof apiUsers[number]>();
+            for (const u of apiUsers) byEmail.set(u.email.toLowerCase(), u);
+            for (const u of localUsers) {
+                const key = u.email.toLowerCase();
+                if (!byEmail.has(key)) byEmail.set(key, u);
+            }
+            const mergedUsers = Array.from(byEmail.values());
+
+            setUsers(mergedUsers);
+            setManagers(mergedUsers.filter(u => u.role === UserRole.MANAGER));
+            setCompanies(fetchedCompanies);
         } catch (error) {
             console.error("Failed to load user data", error);
             setUsers([]); // Ensure state is reset on error
@@ -221,6 +242,17 @@ const UserManagement: React.FC = () => {
         fetchDepartments();
     }, []);
 
+    // Managers filtered by selected departments
+    const filteredManagers = useMemo(() => {
+        if (departmentIds.length === 0) return [] as typeof managers;
+        return managers.filter(m => Array.isArray(m.departmentIds) && m.departmentIds.some(id => departmentIds.includes(id)));
+    }, [managers, departmentIds]);
+
+    // Prune selected managerIds if they are not in filteredManagers
+    useEffect(() => {
+        setManagerIds(prev => prev.filter(id => filteredManagers.some(m => m.id === id)));
+    }, [filteredManagers]);
+
     const filteredUsers = useMemo(() => {
         return users.filter(u => {
             const searchMatch = u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase());
@@ -235,7 +267,8 @@ const UserManagement: React.FC = () => {
         setPassword('');
         setRole(UserRole.EMPLOYEE);
         // Default manager/company should be based on fetched data, not just managers.length
-        setManagerId(managers.length > 0 ? managers[0].id : undefined);
+        setManagerIds(managers.length > 0 ? [managers[0].id] : []);
+
         setEditingUser(null);
         setDepartmentIds([]);
         setCompanyId(companies.length > 0 ? companies[0].id : undefined); // Use companies state here
@@ -253,7 +286,8 @@ const UserManagement: React.FC = () => {
         setEmail(userToEdit.email);
         setPassword(''); // Don't show password
         setRole(userToEdit.role);
-        setManagerId(userToEdit.managerId);
+        setManagerIds(userToEdit.managerIds || (userToEdit.managerId ? [userToEdit.managerId] : []));
+
         setDepartmentIds(userToEdit.departmentIds || []);
         setCompanyId(userToEdit.companyId);
         setRating(userToEdit.rating || 0);
@@ -265,10 +299,15 @@ const UserManagement: React.FC = () => {
         resetForm();
     };
     
-    const handleDeleteUser = (userId: string) => {
-        if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-            AuthService.deleteUser(userId); // This is likely a local data deletion or an old mock
-            loadData(); // Reload data after deletion
+    const handleDeleteUser = async (userId: string) => {
+        if (!window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) return;
+        try {
+            await AuthService.deleteUser(userId);
+            showToast('Employee deleted successfully!', 'success');
+            await loadData();
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Failed to delete employee';
+            showToast(msg, 'error');
         }
     };
 
@@ -296,6 +335,8 @@ const UserManagement: React.FC = () => {
     
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isSubmittingUser) return;
+        setIsSubmittingUser(true);
         try {
             if (editingUser) {
                 const updates: Partial<User> = { 
@@ -303,39 +344,77 @@ const UserManagement: React.FC = () => {
                     role, 
                     departmentIds,
                     companyId,
-                    managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                    // Keep legacy managerId as the first selected for compatibility, but store full managerIds array
+                    managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
                     rating: rating,
                 };
                 AuthService.updateUser(editingUser.id, updates); // This is likely a local data update or an old mock
+                showToast('Employee updated successfully!', 'success');
             } else {
                 if (!password) {
-                    alert("Password is required for new users.");
+                    showToast('Password is required for new users.', 'error');
                     return;
                 }
-                // Register first, which creates a default user
-                await AuthService.register({ name, email, password }); // This interacts with your backend API
-                
-                // Then, find that user and update them with the details from the form
-                // Need to re-fetch users from the backend to get the newly registered user's authoritative ID/data
-                const latestUsers = await DataService.getUsers(); 
-                const newUser = latestUsers.find(u => u.email === email);
+                // Avoid backend 400 by pre-checking if user email already exists (API or local)
+                try {
+                    const [apiUsers, localUsers] = await Promise.all([
+                        DataService.getUsers(),
+                        AuthService.getUsers()
+                    ]);
+                    const exists = [...apiUsers, ...localUsers].find(u => u.email.toLowerCase() === email.toLowerCase());
+                    if (exists) {
+                        // Treat as update to existing local record
+                        AuthService.updateUser(exists.id, {
+                            role,
+                            departmentIds,
+                            companyId,
+                            managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
+                            managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
+                        });
+                        showToast('Employee record updated.', 'success');
+                        await loadData();
+                        handleCloseModal();
+                        return;
+                    }
+                } catch {}
 
-                if (newUser) {
-                    // AuthService.updateUser is still local/mocked, ensure DataService has an API for user updates too if needed.
-                    AuthService.updateUser(newUser.id, {
+                // Register first, which creates and returns the new user.
+                const created = await AuthService.register({ name, email, password });
+                // Immediately enrich the created user with role/departments/company/managers.
+                AuthService.updateUser(created.id, {
+                    role,
+                    departmentIds,
+                    companyId,
+                    managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
+                    managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
+                });
+                showToast('Employee created successfully!', 'success');
+            }
+            await loadData(); // Reload data after successful operation
+            handleCloseModal();
+        } catch(err) {
+            const msg = err instanceof Error ? err.message : 'An error occurred';
+            // If backend reports the user already exists, update local record and treat as success
+            if (typeof msg === 'string' && msg.toLowerCase().includes('exist')) {
+                const existing = AuthService.getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
+                if (existing) {
+                    AuthService.updateUser(existing.id, {
                         role,
                         departmentIds,
                         companyId,
-                        managerId: role === UserRole.EMPLOYEE ? managerId : undefined,
+                        managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
+                        managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
                     });
-                } else {
-                    throw new Error("Newly registered user not found after registration.");
+                    showToast('Employee record updated.', 'success');
+                    await loadData();
+                    handleCloseModal();
+                    return;
                 }
             }
-            loadData(); // Reload data after successful operation
-            handleCloseModal();
-        } catch(err) {
-            alert(err instanceof Error ? err.message : 'An error occurred');
+            showToast(msg, 'error');
+        } finally {
+            setIsSubmittingUser(false);
         }
     };
 
@@ -486,11 +565,31 @@ const UserManagement: React.FC = () => {
 
                     {role === UserRole.EMPLOYEE && (
                         <div>
-                            <label htmlFor="manager" className="block text-sm font-medium text-slate-700">Assign Manager</label>
-                            <select id="manager" value={managerId || ''} onChange={e => setManagerId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                                <option value="">No Manager</option>
-                                {managers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                            </select>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
+                            <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                                {departmentIds.length === 0 && (
+                                    <p className="text-xs text-slate-500">Select at least one department to see managers.</p>
+                                )}
+                                {departmentIds.length > 0 && filteredManagers.length === 0 && (
+                                    <p className="text-xs text-slate-500">No managers available in the selected departments.</p>
+                                )}
+                                {filteredManagers.map(m => (
+                                    <label key={m.id} htmlFor={`emp-manager-${m.id}`} className="flex items-center p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                        <input
+                                            id={`emp-manager-${m.id}`}
+                                            type="checkbox"
+                                            value={m.id}
+                                            checked={managerIds.includes(m.id)}
+                                            onChange={(e) => {
+                                                const { value, checked } = e.target;
+                                                setManagerIds(prev => checked ? [...prev, value] : prev.filter(id => id !== value));
+                                            }}
+                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                        />
+                                        <span className="ml-2 text-sm text-slate-800">{m.name}</span>
+                                    </label>
+                                ))}
+                            </div>
                         </div>
                     )}
                     
@@ -509,12 +608,20 @@ const UserManagement: React.FC = () => {
 
                     <div className="pt-4 flex justify-end space-x-3">
                         <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">Cancel</button>
-                        <Button type="submit">{editingUser ? "Save Changes" : "Create Employee"}</Button>
+                        <Button type="submit" disabled={isSubmittingUser}>
+                            {isSubmittingUser ? (editingUser ? 'Saving...' : 'Creating...') : (editingUser ? 'Save Changes' : 'Create Employee')}
+                        </Button>
                     </div>
                 </form>
             </Modal>
+
+            {toast && (
+                <div className={`fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg text-white ${toast.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+                    {toast.message}
+                </div>
+            )}
         </div>
     );
-};
+}
 
 export default UserManagement;
