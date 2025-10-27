@@ -1,15 +1,47 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useAuth } from '../../hooks/useAuth';
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
+import {
+    ChatConversation,
+    ChatMessage,
+    User,
+    UserRole,
+} from '../../types';
 import * as DataService from '../../services/dataService';
-import { ChatConversation, ChatMessage, User } from '../../types';
-import ChatSidebar from './ChatSidebar';
-import ChatWindow from './ChatWindow';
 import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
+import { useAuth } from '../../hooks/useAuth';
+import ChatSidebar from './ChatSidebar';
+import ChatWindow, { areMessagesEquivalent, mergeMessages } from './ChatWindow';
 
 interface ChatContainerProps {
     onClose: () => void;
     refreshKey?: number;
     isOpen?: boolean;
+}
+
+type ToastVariant = 'success' | 'error' | 'info' | 'warning';
+
+interface ToastMessage {
+    message: string;
+    type: ToastVariant;
+}
+
+type MemberModalMode = 'add' | 'remove' | 'view';
+
+interface MemberOption {
+    id: string;
+    label: string;
+}
+
+interface MemberModalState {
+    conversation: ChatConversation;
+    mode: MemberModalMode;
+    options: MemberOption[];
+    selectedIds: string[];
 }
 
 const looksLikeSystemId = (value?: string) => {
@@ -83,44 +115,8 @@ const formatUserDisplayName = (user?: User) => {
 
 const normalizeMessageText = (text?: string) => (text || '').trim().toLowerCase();
 
-const DUPLICATE_WINDOW_MS = 60 * 1000;
-
-const getMessageTime = (message: ChatMessage) => {
-    const value = new Date(message.timestamp).getTime();
-    return Number.isFinite(value) ? value : 0;
-};
-
-const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
-    if (a === b) return true;
-    if (a.conversationId !== b.conversationId) return false;
-    if (normalizeMessageText(a.text) !== normalizeMessageText(b.text)) return false;
-    const timeA = getMessageTime(a);
-    const timeB = getMessageTime(b);
-    if (!timeA || !timeB) return false;
-    if (Math.abs(timeA - timeB) > DUPLICATE_WINDOW_MS) return false;
-    if (a.senderId && b.senderId && a.senderId !== b.senderId) return false;
-    return true;
-};
-
-const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
-    const sorted = messages.slice().sort((a, b) => getMessageTime(a) - getMessageTime(b));
-    const result: ChatMessage[] = [];
-    for (const message of sorted) {
-        const duplicateIndex = result.findIndex(existing => areMessagesEquivalent(existing, message));
-        if (duplicateIndex !== -1) {
-            const existing = result[duplicateIndex];
-            if (existing.isLocal && !message.isLocal) {
-                result[duplicateIndex] = message;
-            }
-            continue;
-        }
-        result.push(message);
-    }
-    return result;
-};
-
 const mergeMessagesById = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
-    return dedupeMessages([...existing, ...incoming]);
+    return mergeMessages(existing, incoming);
 };
 
 const filterOutMatchingLocalEchoes = (messages: ChatMessage[], incoming: ChatMessage): ChatMessage[] => {
@@ -234,6 +230,12 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     const recencyMapRef = useRef<Record<string, number>>({});
     const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
     const loadInProgressRef = useRef(false);
+    const [renameModal, setRenameModal] = useState<{ conversation: ChatConversation; value: string } | null>(null);
+    const [renameSubmitting, setRenameSubmitting] = useState(false);
+    const [toastMessage, setToastMessage] = useState<ToastMessage | null>(null);
+    const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [memberModal, setMemberModal] = useState<MemberModalState | null>(null);
+    const [memberModalSubmitting, setMemberModalSubmitting] = useState(false);
 
     const usersMap = useMemo(() => new Map(allUsers.map(u => [u.id, u])), [allUsers]);
 
@@ -251,6 +253,303 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         } catch (error) {
         }
     }, [user]);
+
+    const removeConversationFromState = useCallback((conversationId: string) => {
+        setConversations(prev => prev.filter(conv => conv.id !== conversationId));
+        setActiveConversation(prev => (prev?.id === conversationId ? null : prev));
+        setCachedMessages(prev => {
+            if (!prev[conversationId]) {
+                return prev;
+            }
+            const { [conversationId]: _removed, ...rest } = prev;
+            cachedMessagesRef.current = rest;
+            return rest;
+        });
+        setPendingMessages(prev => {
+            if (!prev[conversationId]) {
+                return prev;
+            }
+            const { [conversationId]: _removed, ...rest } = prev;
+            return rest;
+        });
+        if (cachedMessagesRef.current[conversationId]) {
+            const { [conversationId]: _removed, ...rest } = cachedMessagesRef.current;
+            cachedMessagesRef.current = rest;
+        }
+        if (recencyMapRef.current[conversationId]) {
+            delete recencyMapRef.current[conversationId];
+            persistRecencyMap();
+        }
+    }, [persistRecencyMap]);
+
+    const clearConversationState = useCallback((conversationId: string) => {
+        setCachedMessages(prev => {
+            if (!prev[conversationId]) {
+                return prev;
+            }
+            const { [conversationId]: _removed, ...rest } = prev;
+            cachedMessagesRef.current = rest;
+            return rest;
+        });
+        setPendingMessages(prev => {
+            if (!prev[conversationId]) {
+                return prev;
+            }
+            const { [conversationId]: _removed, ...rest } = prev;
+            return rest;
+        });
+        setConversations(prev => prev.map(conv => conv.id === conversationId ? { ...conv, lastMessage: undefined } : conv));
+        if (recencyMapRef.current[conversationId]) {
+            delete recencyMapRef.current[conversationId];
+            persistRecencyMap();
+        }
+    }, [persistRecencyMap]);
+
+    useEffect(() => {
+        return () => {
+            if (toastTimeoutRef.current) {
+                clearTimeout(toastTimeoutRef.current);
+                toastTimeoutRef.current = null;
+            }
+        };
+    }, []);
+
+    const showToast = useCallback((message: string, type: ToastVariant = 'info') => {
+        if (toastTimeoutRef.current) {
+            clearTimeout(toastTimeoutRef.current);
+        }
+        setToastMessage({ message, type });
+        toastTimeoutRef.current = setTimeout(() => {
+            setToastMessage(null);
+            toastTimeoutRef.current = null;
+        }, 4000);
+    }, []);
+
+    const dismissToast = useCallback(() => {
+        if (toastTimeoutRef.current) {
+            clearTimeout(toastTimeoutRef.current);
+            toastTimeoutRef.current = null;
+        }
+        setToastMessage(null);
+    }, []);
+
+    const handleConversationDeletion = useCallback(async (conversation: ChatConversation, typeOverride?: 'chat' | 'group') => {
+        const conversationType = typeOverride || (conversation.type === 'group' ? 'group' : 'chat');
+        try {
+            const requesterRole = user?.role;
+            await DataService.deleteConversation(conversation.id, conversationType, requesterRole);
+            removeConversationFromState(conversation.id);
+            loadDataRef.current({ suppressLoading: true });
+            chatSocket.notifyConversationDeleted(conversation.id);
+            showToast('Conversation deleted.', 'success');
+        } catch (error) {
+            console.error('Failed to delete conversation', { conversationId: conversation.id, error });
+            showToast('Failed to delete conversation. Please try again.', 'error');
+        }
+    }, [removeConversationFromState, showToast, user]);
+
+    const handleDirectDeletion = useCallback((conversation: ChatConversation) => {
+        handleConversationDeletion(conversation, 'chat');
+    }, [handleConversationDeletion]);
+
+    const handleGroupDeletion = useCallback((conversation: ChatConversation) => {
+        handleConversationDeletion(conversation, 'group');
+    }, [handleConversationDeletion]);
+
+    const handleClearConversation = useCallback(async (conversation: ChatConversation) => {
+        const conversationType = conversation.type === 'group' ? 'group' : 'chat';
+        try {
+            const requesterRole = user?.role;
+            await DataService.clearConversation(conversation.id, conversationType, requesterRole);
+            clearConversationState(conversation.id);
+            setActiveConversation(prev => (prev?.id === conversation.id ? { ...prev, lastMessage: undefined } : prev));
+            setMessagesRefreshTrigger(Date.now());
+            loadDataRef.current({ suppressLoading: true });
+            chatSocket.notifyConversationCleared(conversation.id);
+            showToast('Conversation cleared.', 'success');
+        } catch (error) {
+            console.error('Failed to clear conversation', { conversationId: conversation.id, error });
+            showToast('Failed to clear conversation. Please try again.', 'error');
+        }
+    }, [clearConversationState, showToast, user]);
+
+    const handleGroupRename = useCallback((conversation: ChatConversation) => {
+        const currentName = conversation.name?.trim() || '';
+        setRenameModal({ conversation, value: currentName });
+    }, []);
+
+    const handleAddGroupMember = useCallback((conversation: ChatConversation) => {
+        const availableUsers = allUsers
+            .filter(userRecord => !(conversation.participantIds || []).includes(userRecord.id))
+            .map<MemberOption>(userRecord => ({
+                id: userRecord.id,
+                label: formatUserDisplayName(userRecord),
+            }));
+
+        if (availableUsers.length === 0) {
+            showToast('All users are already in this group.', 'info');
+            return;
+        }
+
+        setMemberModal({
+            conversation,
+            mode: 'add',
+            options: availableUsers,
+            selectedIds: [availableUsers[0].id],
+        });
+        setMemberModalSubmitting(false);
+    }, [allUsers, showToast]);
+
+    const handleViewGroupDetails = useCallback((conversation: ChatConversation) => {
+        const participantOptions = (conversation.participantIds || []).map<MemberOption>(id => {
+            const userRecord = allUsers.find(userEntry => userEntry.id === id);
+            const displayName = userRecord ? formatUserDisplayName(userRecord) : id;
+            const isAdmin = (conversation.adminIds || []).includes(id);
+            return {
+                id,
+                label: `${displayName}${isAdmin ? ' (Admin)' : ''}`,
+            };
+        });
+
+        setMemberModal({
+            conversation,
+            mode: 'view',
+            options: participantOptions,
+            selectedIds: [],
+        });
+        setMemberModalSubmitting(false);
+    }, [allUsers]);
+
+    const handleRemoveGroupMember = useCallback((conversation: ChatConversation) => {
+        const participants = (conversation.participantIds || [])
+            .map<MemberOption>(id => {
+                const userRecord = allUsers.find(userEntry => userEntry.id === id);
+                return {
+                    id,
+                    label: userRecord ? formatUserDisplayName(userRecord) : id,
+                };
+            });
+
+        if (participants.length === 0) {
+            showToast('No members available to remove.', 'info');
+            return;
+        }
+
+        setMemberModal({
+            conversation,
+            mode: 'remove',
+            options: participants,
+            selectedIds: [participants[0].id],
+        });
+        setMemberModalSubmitting(false);
+    }, [allUsers, showToast]);
+
+    const handleRenameValueChange = useCallback((value: string) => {
+        setRenameModal(prev => (prev ? { ...prev, value } : prev));
+    }, []);
+
+    const handleRenameModalClose = useCallback(() => {
+        setRenameModal(null);
+        setRenameSubmitting(false);
+    }, []);
+
+    const handleRenameModalSubmit = useCallback(async () => {
+        if (!renameModal || !user) return;
+        const trimmed = renameModal.value.trim();
+        if (!trimmed) {
+            showToast('Group name cannot be empty.', 'warning');
+            return;
+        }
+        if (trimmed === (renameModal.conversation.name?.trim() || '')) {
+            handleRenameModalClose();
+            return;
+        }
+        try {
+            setRenameSubmitting(true);
+            const requesterRole = user.role;
+            await DataService.renameGroupConversation(renameModal.conversation.id, trimmed, requesterRole);
+            setConversations(prev => prev.map(conv => (conv.id === renameModal.conversation.id ? { ...conv, name: trimmed } : conv)));
+            setActiveConversation(prev => (prev?.id === renameModal.conversation.id ? { ...prev, name: trimmed } : prev));
+            showToast('Group name updated.', 'success');
+            handleRenameModalClose();
+        } catch (error) {
+            console.error('Failed to rename group conversation', { conversationId: renameModal.conversation.id, error });
+            showToast('Failed to rename group. Please try again.', 'error');
+            setRenameSubmitting(false);
+        }
+    }, [handleRenameModalClose, renameModal, showToast, user]);
+
+    const handleMemberSelectionChange = useCallback((selectedValues: string[]) => {
+        setMemberModal(prev => (prev ? { ...prev, selectedIds: selectedValues } : prev));
+    }, []);
+
+    const handleMemberModalClose = useCallback(() => {
+        setMemberModal(null);
+        setMemberModalSubmitting(false);
+    }, []);
+
+    const handleMemberModalSubmit = useCallback(async () => {
+        if (!memberModal) {
+            return;
+        }
+
+        if (memberModal.mode === 'view') {
+            handleMemberModalClose();
+            return;
+        }
+
+        if ((memberModal.mode === 'add' || memberModal.mode === 'remove') && (!memberModal.selectedIds.length || !user)) {
+            return;
+        }
+
+        try {
+            setMemberModalSubmitting(true);
+            const requesterRole = user.role;
+            if (memberModal.mode === 'add') {
+                await Promise.all(memberModal.selectedIds.map(id => DataService.addGroupMember(memberModal.conversation.id, id, requesterRole)));
+                setConversations(prev => prev.map(conv => (conv.id === memberModal.conversation.id
+                    ? {
+                        ...conv,
+                        participantIds: Array.from(new Set([...(conv.participantIds || []), ...memberModal.selectedIds])),
+                    }
+                    : conv)));
+                setActiveConversation(prev => (prev?.id === memberModal.conversation.id
+                    ? {
+                        ...prev,
+                        participantIds: Array.from(new Set([...(prev.participantIds || []), ...memberModal.selectedIds])),
+                    }
+                    : prev));
+                showToast('Selected members added to the group.', 'success');
+            } else {
+                await Promise.all(memberModal.selectedIds.map(id => DataService.removeGroupMember(memberModal.conversation.id, id, requesterRole)));
+                setConversations(prev => prev.map(conv => (conv.id === memberModal.conversation.id
+                    ? {
+                        ...conv,
+                        participantIds: (conv.participantIds || []).filter(id => !memberModal.selectedIds.includes(id)),
+                        adminIds: (conv.adminIds || []).filter(id => !memberModal.selectedIds.includes(id)),
+                    }
+                    : conv)));
+                setActiveConversation(prev => (prev?.id === memberModal.conversation.id
+                    ? {
+                        ...prev,
+                        participantIds: (prev.participantIds || []).filter(id => !memberModal.selectedIds.includes(id)),
+                        adminIds: (prev.adminIds || []).filter(id => !memberModal.selectedIds.includes(id)),
+                    }
+                    : prev));
+                showToast('Selected members removed from the group.', 'success');
+            }
+            handleMemberModalClose();
+        } catch (error) {
+            console.error('Failed to update group member', {
+                conversationId: memberModal.conversation.id,
+                memberIds: memberModal.selectedIds,
+                mode: memberModal.mode,
+                error,
+            });
+            showToast('Operation failed. Please try again.', 'error');
+            setMemberModalSubmitting(false);
+        }
+    }, [memberModal, user, showToast, handleMemberModalClose, setConversations, setActiveConversation]);
 
     const updateConversationRecency = useCallback((conversationId: string, timestamp?: string | number | Date, fallbackToNow = false) => {
         const normalized = resolveTimestamp(timestamp);
@@ -502,7 +801,26 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             return;
         }
         const listener = (event: ChatSocketEvent) => {
-            if (event.type !== 'newMessage' || !event.conversationId || !event.text || !event.timestamp) {
+            if (!event.conversationId) {
+                return;
+            }
+
+            const eventType = event.type || event.action;
+
+            if (eventType === 'conversationCleared') {
+                clearConversationState(event.conversationId);
+                setMessagesRefreshTrigger(Date.now());
+                loadData({ suppressLoading: true });
+                return;
+            }
+
+            if (eventType === 'conversationDeleted') {
+                removeConversationFromState(event.conversationId);
+                loadData({ suppressLoading: true });
+                return;
+            }
+
+            if (eventType !== 'newMessage' || !event.text || !event.timestamp) {
                 return;
             }
             const lastMessage = {
@@ -534,7 +852,14 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 text: event.text,
                 timestamp: event.timestamp,
             };
+            const isActiveOpen = isOpen && activeConversation?.id === event.conversationId;
+            if (shouldRefreshConversations) {
+                loadData({ suppressLoading: true });
+            }
             setCachedMessages(prev => {
+                if (isActiveOpen) {
+                    return prev;
+                }
                 const existing = prev[event.conversationId] || [];
                 const withoutLocalEcho = filterOutMatchingLocalEchoes(existing, incomingMessage);
                 const merged = mergeMessagesById(withoutLocalEcho, [incomingMessage]);
@@ -547,25 +872,14 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 }
                 return updated;
             });
-            if (shouldRefreshConversations) {
-                loadData({ suppressLoading: true });
-            }
             setPendingMessages(prev => {
-                if (isOpen && activeConversation?.id === event.conversationId) {
+                if (isActiveOpen) {
                     return prev;
                 }
                 const existing = prev[event.conversationId] || [];
                 const withoutLocalEcho = filterOutMatchingLocalEchoes(existing, incomingMessage);
                 const merged = mergeMessagesById(withoutLocalEcho, [incomingMessage]);
-                const updated = {
-                    ...prev,
-                    [event.conversationId]: merged,
-                };
-                const latest = merged[merged.length - 1];
-                if (latest) {
-                    updateConversationRecency(event.conversationId, latest.timestamp, true);
-                    setConversations(prevConvs => sortConversationsByRecency(prevConvs, prevConvs));
-                }
+                const updated = { ...prev, [event.conversationId]: merged };
                 return updated;
             });
         };
@@ -573,7 +887,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         return () => {
             chatSocket.removeListener(listener);
         };
-    }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation]);
+    }, [user, hydrateConversation, sortConversationsByRecency, updateConversationRecency, isOpen, activeConversation, clearConversationState, loadData, removeConversationFromState]);
 
     const buildDirectConversationKey = useCallback((ids: (string | number | undefined)[]) => {
         return ids
@@ -630,7 +944,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         } catch (error) {
         }
     }, [user, findExistingDirectConversation, hydrateConversation, sortConversationsByRecency, updateConversationRecency]);
-    
+
     const handleGroupCreated = useCallback((createdConversation?: ChatConversation) => {
         if (createdConversation) {
             const hydrated = hydrateConversation(createdConversation);
@@ -704,11 +1018,11 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     }
 
     return (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col relative">
             <div className="flex items-center justify-between p-4 border-b border-slate-200 flex-shrink-0">
                 <h2 className="text-xl font-bold text-slate-800">Messenger</h2>
                 <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100">
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
@@ -722,6 +1036,13 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                         onSelectConversation={handleSelectConversation}
                         onSelectUser={handleSelectUser}
                         onGroupCreated={handleGroupCreated}
+                        onClearConversation={handleClearConversation}
+                        onDeleteConversation={handleDirectDeletion}
+                        onAddGroupMember={handleAddGroupMember}
+                        onRemoveGroupMember={handleRemoveGroupMember}
+                        onDeleteGroup={handleGroupDeletion}
+                        onEditGroupName={handleGroupRename}
+                        onViewGroupDetails={handleViewGroupDetails}
                     />
                 ) : (
                     <ChatWindow
@@ -738,8 +1059,195 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                     />
                 )}
             </div>
+
+            {renameModal && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6">
+                        <h3 className="text-lg font-semibold text-slate-800 mb-4">Rename Group</h3>
+                        <label className="block text-sm font-medium text-slate-600 mb-2" htmlFor="rename-group-input">
+                            New group name
+                        </label>
+                        <input
+                            id="rename-group-input"
+                            type="text"
+                            value={renameModal.value}
+                            onChange={(event) => handleRenameValueChange(event.target.value)}
+                            className="w-full border border-slate-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="Enter a group name"
+                            disabled={renameSubmitting}
+                            autoFocus
+                        />
+                        <div className="mt-6 flex justify-end space-x-3">
+                            <button
+                                type="button"
+                                onClick={handleRenameModalClose}
+                                className="px-4 py-2 rounded-md text-slate-600 hover:bg-slate-100"
+                                disabled={renameSubmitting}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleRenameModalSubmit}
+                                className="px-4 py-2 rounded-md bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-70"
+                                disabled={renameSubmitting}
+                            >
+                                {renameSubmitting ? 'Saving…' : 'Save'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {memberModal && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+                        <h3 className="text-lg font-semibold text-slate-800 mb-4">
+                            {memberModal.mode === 'add' ? 'Add Group Member' : 'Remove Group Member'}
+                        </h3>
+                        <label className="block text-sm font-medium text-slate-600 mb-2" htmlFor="member-select">
+                            {memberModal.mode === 'add' ? 'Select a user to add' : 'Select a user to remove'}
+                        </label>
+                        <select
+                            id="member-select"
+                                className="w-full border border-slate-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            value={memberModal.selectedId ?? ''}
+                            onChange={(event) => handleMemberSelectionChange(event.target.value)}
+                            disabled={memberModalSubmitting || memberModal.mode === 'view'}
+                        >
+                            {memberModal.options.map(option => (
+                                <option key={option.id} value={option.id}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+            )}
+
+            {memberModal && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black bg-opacity-50">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+                        {(() => {
+                            const isView = memberModal.mode === 'view';
+                            const title = isView
+                                ? `Group Members (${memberModal.options.length})`
+                                : memberModal.mode === 'add'
+                                    ? 'Add Group Members'
+                                    : 'Remove Group Members';
+                            const helper = isView
+                                ? 'All members currently in this group'
+                                : memberModal.mode === 'add'
+                                    ? 'Select one or more users to add'
+                                    : 'Select one or more users to remove';
+
+                            return (
+                                <>
+                                    <h3 className="text-lg font-semibold text-slate-800 mb-4">{title}</h3>
+                                    <label className="block text-sm font-medium text-slate-600 mb-2" htmlFor="member-select">
+                                        {helper}
+                                    </label>
+                                    {isView ? (
+                                        <div className="border border-slate-200 rounded-md max-h-64 overflow-y-auto">
+                                            {memberModal.options.length === 0 ? (
+                                                <p className="px-3 py-2 text-sm text-slate-500">No members found.</p>
+                                            ) : (
+                                                <ul className="divide-y divide-slate-200">
+                                                    {memberModal.options.map(option => (
+                                                        <li key={option.id} className="px-3 py-2 text-sm text-slate-700">
+                                                            {option.label}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="border border-slate-200 rounded-md max-h-64 overflow-y-auto">
+                                            {memberModal.options.length === 0 ? (
+                                                <p className="px-3 py-2 text-sm text-slate-500">No users available.</p>
+                                            ) : (
+                                                <ul className="divide-y divide-slate-200">
+                                                    {memberModal.options.map(option => {
+                                                        const checked = memberModal.selectedIds.includes(option.id);
+                                                        return (
+                                                            <li key={option.id} className="px-3 py-2 text-sm text-slate-700 flex items-center space-x-3">
+                                                                <label className="inline-flex items-center space-x-2 cursor-pointer">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                                        checked={checked}
+                                                                        onChange={() => {
+                                                                            handleMemberSelectionChange(checked
+                                                                                ? memberModal.selectedIds.filter(id => id !== option.id)
+                                                                                : [...memberModal.selectedIds, option.id]);
+                                                                        }}
+                                                                        disabled={memberModalSubmitting}
+                                                                    />
+                                                                    <span>{option.label}</span>
+                                                                </label>
+                                                            </li>
+                                                        );
+                                                    })}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            );
+                        })()}
+                        <div className="mt-6 flex justify-end space-x-3">
+                            {memberModal.mode !== 'view' && (
+                                <button
+                                    type="button"
+                                    onClick={handleMemberModalClose}
+                                    className="px-4 py-2 rounded-md text-slate-600 hover:bg-slate-100"
+                                    disabled={memberModalSubmitting}
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={handleMemberModalSubmit}
+                                className="px-4 py-2 rounded-md bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-70"
+                                disabled={memberModalSubmitting || (memberModal.mode !== 'view' && memberModal.selectedIds.length === 0)}
+                            >
+                                {memberModal.mode === 'view' ? 'Close' : memberModalSubmitting ? 'Saving…' : memberModal.mode === 'add' ? 'Add Members' : 'Remove Members'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {toastMessage && (
+                <div className="fixed bottom-4 right-4 z-50">
+                    <div
+                        className={`px-4 py-3 rounded-md shadow-lg text-white flex items-center space-x-3 ${
+                            toastMessage.type === 'success'
+                                ? 'bg-green-500'
+                                : toastMessage.type === 'error'
+                                    ? 'bg-red-500'
+                                    : toastMessage.type === 'warning'
+                                        ? 'bg-amber-500'
+                                        : 'bg-blue-500'
+                        }`}
+                    >
+                        <span>{toastMessage.message}</span>
+                        <button
+                            type="button"
+                            onClick={dismissToast}
+                            className="ml-2 text-white/80 hover:text-white"
+                            aria-label="Dismiss toast"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
-};
+}
 
 export default ChatContainer;

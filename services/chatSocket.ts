@@ -3,11 +3,12 @@ const WEBSOCKET_URL = 'wss://4axwbl20th.execute-api.ap-south-1.amazonaws.com/dev
 type OutgoingMessage = {
     action: string;
     conversationId: string;
-    text: string;
+    text?: string;
 };
 
 export interface ChatSocketEvent {
     type?: string;
+    action?: string;
     conversationId?: string;
     senderId?: string;
     text?: string;
@@ -86,12 +87,7 @@ class ChatSocket {
         this.pendingQueue = [];
     }
 
-    sendMessage(conversationId: string, text: string) {
-        const payload: OutgoingMessage = {
-            action: 'sendMessage',
-            conversationId,
-            text,
-        };
+    private enqueue(payload: OutgoingMessage) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify(payload));
             return true;
@@ -99,6 +95,28 @@ class ChatSocket {
         this.pendingQueue.push(payload);
         this.connect(this.lastToken);
         return false;
+    }
+
+    sendMessage(conversationId: string, text: string) {
+        return this.enqueue({
+            action: 'sendMessage',
+            conversationId,
+            text,
+        });
+    }
+
+    notifyConversationCleared(conversationId: string) {
+        return this.enqueue({
+            action: 'conversationCleared',
+            conversationId,
+        });
+    }
+
+    notifyConversationDeleted(conversationId: string) {
+        return this.enqueue({
+            action: 'conversationDeleted',
+            conversationId,
+        });
     }
 
     addListener(listener: ChatSocketListener) {

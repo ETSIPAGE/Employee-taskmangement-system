@@ -25,27 +25,47 @@ const getInitials = (name: string) => {
 const normalizeMessageText = (text?: string) => (text || '').trim().toLowerCase();
 
 const DUPLICATE_WINDOW_MS = 60 * 1000;
+const LOCAL_ECHO_WINDOW_MS = 5 * 1000;
+const REMOTE_DUP_WINDOW_MS = 800;
 
 const getMessageTime = (message: ChatMessage) => {
     const value = new Date(message.timestamp).getTime();
     return Number.isFinite(value) ? value : 0;
 };
 
-const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
+export const areMessagesEquivalent = (a: ChatMessage, b: ChatMessage) => {
     if (a === b) return true;
+    if (a.id && b.id && a.id === b.id) return true;
     if (a.conversationId !== b.conversationId) return false;
     if (normalizeMessageText(a.text) !== normalizeMessageText(b.text)) return false;
-    const timeA = getMessageTime(a);
-    const timeB = getMessageTime(b);
-    if (!timeA || !timeB) return false;
-    if (Math.abs(timeA - timeB) > DUPLICATE_WINDOW_MS) return false;
-    if (a.senderId && b.senderId && a.senderId !== b.senderId) return false;
+
+    const isLocalA = Boolean(a.isLocal);
+    const isLocalB = Boolean(b.isLocal);
+    if (isLocalA === isLocalB) {
+        return false;
+    }
+
+    const localMessage = isLocalA ? a : b;
+    const remoteMessage = isLocalA ? b : a;
+
+    const localTime = getMessageTime(localMessage);
+    const remoteTime = getMessageTime(remoteMessage);
+    if (!localTime || !remoteTime) return false;
+    if (Math.abs(remoteTime - localTime) > LOCAL_ECHO_WINDOW_MS) return false;
+    
+    if (localMessage.senderId && remoteMessage.senderId && localMessage.senderId !== remoteMessage.senderId) return false;
     return true;
 };
 
-const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
+export const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
     const sorted = messages.slice().sort((a, b) => getMessageTime(a) - getMessageTime(b));
     const result: ChatMessage[] = [];
+
+    const getRemoteDedupKey = (message: ChatMessage) => {
+        const timestampKey = message.timestamp ? new Date(message.timestamp).toISOString() : String(getMessageTime(message));
+        return `${message.conversationId}|${timestampKey}|${normalizeMessageText(message.text)}|${message.senderId || ''}`;
+    };
+
     for (const msg of sorted) {
         const duplicateIndex = result.findIndex(existing => areMessagesEquivalent(existing, msg));
         if (duplicateIndex !== -1) {
@@ -55,12 +75,23 @@ const dedupeMessages = (messages: ChatMessage[]): ChatMessage[] => {
             }
             continue;
         }
+
+        if (!msg.isLocal) {
+            const remoteIndex = result.findIndex(existing => !existing.isLocal && getRemoteDedupKey(existing) === getRemoteDedupKey(msg));
+            if (remoteIndex !== -1) {
+                const existing = result[remoteIndex];
+                if (getMessageTime(msg) >= getMessageTime(existing)) {
+                    result[remoteIndex] = msg;
+                }
+                continue;
+            }
+        }
         result.push(msg);
     }
     return result;
 };
 
-const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
+export const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] => {
     return dedupeMessages([...existing, ...incoming]);
 };
 

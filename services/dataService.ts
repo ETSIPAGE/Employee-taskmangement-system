@@ -19,6 +19,11 @@ const DEPARTMENTS_API_URL = 'https://pp02swd0a8.execute-api.ap-south-1.amazonaws
 const COMPANIES_API_URL = 'https://3dgtvtdri1.execute-api.ap-south-1.amazonaws.com/get/get-com';
 const CHAT_CONVERSATIONS_API_URL = 'https://dwzvagakdh.execute-api.ap-south-1.amazonaws.com/dev/conversations';
 const CHAT_CONVERSATION_CREATE_API_URL = 'https://cgdham1ksb.execute-api.ap-south-1.amazonaws.com/dev/conversation';
+const CHAT_CONVERSATION_DELETE_API_URL = 'https://9jaqdh2n8i.execute-api.ap-south-1.amazonaws.com/del/delete';
+const CHAT_CONVERSATION_CLEAR_API_BASE_URL = 'https://2h9az81n7d.execute-api.ap-south-1.amazonaws.com/clr/clear';
+const CHAT_CONVERSATION_RENAME_API_URL = 'https://zixceriuaf.execute-api.ap-south-1.amazonaws.com/edt/edit-name';
+const CHAT_CONVERSATION_MEMBER_ADD_API_URL = 'https://5kgwazn18e.execute-api.ap-south-1.amazonaws.com/add/add';
+const CHAT_CONVERSATION_MEMBER_REMOVE_API_URL = 'https://ikkxv0mnv6.execute-api.ap-south-1.amazonaws.com/rem/remove';
 const CHAT_MESSAGES_API_BASE_URL = 'https://h5jj6yq686.execute-api.ap-south-1.amazonaws.com/dev/conversation/msg';
 
 const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.amazonaws.com/dev/attendance/user';
@@ -44,8 +49,6 @@ CONVERSATIONS.forEach(c => {
     c.lastMessage = conversationMessages[0];
 });
 
-const ONLINE_USERS = new Set(['1', '3', '4', '6']);
-
 let ONBOARDING_SUBMISSIONS: OnboardingSubmission[] = [
     {
         id: 'sub-1', submissionDate: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(), email: 'new.intern@university.edu', fullName: 'Alex Ray', guardianName: 'John Ray', dateOfBirth: '2003-05-12T00:00:00.000Z', gender: 'Male', phone: '123-456-7890', altPhone: '098-765-4321', address: '456 University Ave, College Town, USA 12345', addressProof: 'address_proof.pdf', govtId: '1234 5678 9012', collegeName: 'State University of Technology', gradYear: 2026, cgpa: '8.8 / 10', collegeCertificates: 'transcript.pdf', collegeId: 'college_id.jpg', photo: 'profile_pic.png', signature: 'Alex Ray', workTime: '10:00', meetingTime: '14:00', declaration: true, languagesKnown: ['English', 'Hindi'], status: OnboardingStatus.PENDING_REVIEW,
@@ -58,6 +61,131 @@ const year = today.getFullYear();
 const month = (today.getMonth() + 1).toString().padStart(2, '0');
 const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
+};
+
+export const addGroupMember = async (conversationId: string, memberId: string, requesterRole?: UserRole) => {
+    const payload: Record<string, any> = {
+        conversationId,
+        memberId,
+    };
+    if (requesterRole) {
+        payload.requesterRole = requesterRole.toUpperCase();
+    }
+
+    try {
+        const response = await authenticatedFetch(CHAT_CONVERSATION_MEMBER_ADD_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const data = await parseApiResponse(response);
+
+        CONVERSATIONS = CONVERSATIONS.map(conversation => {
+            if (conversation.id !== conversationId) {
+                return conversation;
+            }
+            const existingParticipants = new Set<string>(conversation.participantIds || []);
+            existingParticipants.add(memberId);
+            return {
+                ...conversation,
+                participantIds: Array.from(existingParticipants),
+            };
+        });
+
+        return data;
+    } catch (error) {
+        console.error(`Failed to add member ${memberId} to group ${conversationId}:`, error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('Failed to add group member.');
+    }
+};
+
+export const removeGroupMember = async (conversationId: string, memberId: string, requesterRole?: UserRole) => {
+    const payload: Record<string, any> = {
+        conversationId,
+        memberId,
+    };
+    if (requesterRole) {
+        payload.requesterRole = requesterRole.toUpperCase();
+    }
+
+    try {
+        const response = await authenticatedFetch(CHAT_CONVERSATION_MEMBER_REMOVE_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const data = await parseApiResponse(response);
+
+        CONVERSATIONS = CONVERSATIONS.map(conversation => {
+            if (conversation.id !== conversationId) {
+                return conversation;
+            }
+            const updatedParticipants = (conversation.participantIds || []).filter(id => id !== memberId);
+            const updatedAdmins = (conversation.adminIds || []).filter(id => id !== memberId);
+            return {
+                ...conversation,
+                participantIds: updatedParticipants,
+                adminIds: updatedAdmins,
+            };
+        });
+
+        return data;
+    } catch (error) {
+        console.error(`Failed to remove member ${memberId} from group ${conversationId}:`, error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('Failed to remove group member.');
+    }
+};
+
+export const renameGroupConversation = async (conversationId: string, newName: string, requesterRole?: UserRole) => {
+    const payload: Record<string, any> = {
+        conversationId,
+        newName,
+    };
+    if (requesterRole) {
+        payload.requesterRole = requesterRole.toUpperCase();
+    }
+
+    try {
+        const response = await authenticatedFetch(CHAT_CONVERSATION_RENAME_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        const data = await parseApiResponse(response);
+
+        CONVERSATIONS = CONVERSATIONS.map(conversation => {
+            if (conversation.id !== conversationId) {
+                return conversation;
+            }
+            return {
+                ...conversation,
+                name: newName,
+            };
+        });
+
+        return data;
+    } catch (error) {
+        console.error(`Failed to rename group ${conversationId}:`, error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('Failed to rename group.');
+    }
 };
 
 // --- COMMON HELPERS ---
@@ -145,6 +273,57 @@ let cachedAllUsers: User[] | null = null;
 let cachedManagers: User[] | null = null;
 let cachedCompanies: Company[] | null = null;
 
+const userPresenceMap = new Map<string, User['status']>();
+
+const normalizeUserStatus = (status?: string | null): User['status'] => {
+    if (!status) {
+        return 'Offline';
+    }
+    const normalized = status.toString().trim().toLowerCase();
+    if (!normalized) {
+        return 'Offline';
+    }
+    if (['active', 'online', 'available'].includes(normalized)) {
+        return 'Active';
+    }
+    if (['busy', 'away', 'do-not-disturb', 'dnd', 'occupied'].includes(normalized)) {
+        return 'Busy';
+    }
+    return 'Offline';
+};
+
+const updateUserPresenceCache = (users: User[]) => {
+    users.forEach(user => {
+        const normalizedStatus = normalizeUserStatus(user.status);
+        userPresenceMap.set(user.id, normalizedStatus);
+    });
+};
+
+export const getUserPresenceStatus = (userId: string): User['status'] => {
+    const cachedStatus = userPresenceMap.get(userId);
+    if (cachedStatus) {
+        return cachedStatus;
+    }
+    const fromCache = cachedAllUsers?.find(u => u.id === userId);
+    if (fromCache) {
+        const normalized = normalizeUserStatus(fromCache.status);
+        userPresenceMap.set(userId, normalized);
+        return normalized;
+    }
+    return 'Offline';
+};
+
+export const setUserPresenceStatus = (userId: string, status?: string | null) => {
+    const normalized = normalizeUserStatus(status);
+    userPresenceMap.set(userId, normalized);
+    if (cachedAllUsers) {
+        const index = cachedAllUsers.findIndex(u => u.id === userId);
+        if (index !== -1) {
+            cachedAllUsers[index] = { ...cachedAllUsers[index], status: normalized };
+        }
+    }
+};
+
 // Retry constants for eventual consistency
 const MAX_RETRIES = 3; 
 const RETRY_DELAY_MS = 500; // milliseconds
@@ -177,6 +356,8 @@ const mapApiUserToUser = (apiUser: any): User => {
             ? [String(apiUser.departmentIds).toLowerCase().trim()]
             : [];
 
+    const normalizedStatus = normalizeUserStatus(apiUser.status);
+
     return {
         id: apiUser.id,
         name: apiUser.name,
@@ -186,7 +367,7 @@ const mapApiUserToUser = (apiUser: any): User => {
         managerId: apiUser.managerId || (Array.isArray(apiUser.managerIds) && apiUser.managerIds.length > 0 ? apiUser.managerIds[0] : undefined),
         departmentIds: departmentIds,
         jobTitle: apiUser.jobTitle,
-        status: apiUser.status || 'Offline',
+        status: normalizedStatus,
         joinedDate: apiUser.joinedDate || new Date().toISOString(),
         skills: apiUser.skills || [],
         stats: { completedTasks: 0, inProgressTasks: 0, efficiency: 0, totalHours: 0, workload: 'Light' }, // Default stats
@@ -202,7 +383,10 @@ const mapApiUserToUser = (apiUser: any): User => {
 };
 
 export const getUsers = async (forceRefresh = false): Promise<User[]> => {
-    if (!forceRefresh && cachedAllUsers) return cachedAllUsers;
+    if (!forceRefresh && cachedAllUsers) {
+        updateUserPresenceCache(cachedAllUsers);
+        return cachedAllUsers;
+    }
 
     try {
         const response = await authenticatedFetch(USERS_API_URL);
@@ -210,6 +394,7 @@ export const getUsers = async (forceRefresh = false): Promise<User[]> => {
         const usersFromApi = extractArrayFromApiResponse(data, 'users');
 
         cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+        updateUserPresenceCache(cachedAllUsers);
         return cachedAllUsers;
     } catch (error) {
         console.error("Failed to fetch all users:", error);
@@ -220,6 +405,7 @@ export const getUsers = async (forceRefresh = false): Promise<User[]> => {
 export const clearUsersCache = () => {
     cachedAllUsers = null;
     cachedManagers = null;
+    userPresenceMap.clear();
 };
 
 export const getUserById = async (userId: string): Promise<User | undefined> => {
@@ -970,7 +1156,7 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
 };
 
 // --- CHAT SERVICE (MOCKED) ---
-export const isUserOnline = (userId: string) => ONLINE_USERS.has(userId);
+export const isUserOnline = (userId: string) => getUserPresenceStatus(userId) === 'Active';
 const sortConversationsByLastMessage = (conversations: ChatConversation[]) => conversations.slice().sort((a,b) => {
     const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
     const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
@@ -1067,15 +1253,155 @@ export const createGroup = async (groupName: string, memberIds: string[], creato
         } as ChatConversation;
     } catch (error) {
         console.error('Failed to create group conversation via API:', error);
-        throw error instanceof Error ? error : new Error('Unable to create group conversation.');
+        if (error instanceof Error) {
+            throw error;
+        } else {
+            throw new Error('Unable to create group conversation.');
+        }
     }
 };
-export const getOrCreateDirectConversation = (userId1: string, userId2: string): ChatConversation => {
-    const existing = CONVERSATIONS.find(c => c.type === 'direct' && c.participantIds.length === 2 && c.participantIds.includes(userId1) && c.participantIds.includes(userId2));
-    if (existing) return existing;
-    const newDM: ChatConversation = { id: `conv-${Date.now()}`, type: 'direct', participantIds: [userId1, userId2] };
-    CONVERSATIONS.unshift(newDM);
-    return newDM;
+
+export const deleteConversation = async (conversationId: string, type: 'chat' | 'group', requesterRole?: UserRole): Promise<void> => {
+    try {
+        const url = new URL(CHAT_CONVERSATION_DELETE_API_URL);
+        url.searchParams.set('conversationId', conversationId);
+        url.searchParams.set('type', type);
+        const payload: Record<string, any> = {
+            conversationId,
+            type,
+        };
+        if (requesterRole) {
+            url.searchParams.set('requesterRole', requesterRole.toUpperCase());
+            payload.requesterRole = requesterRole.toUpperCase();
+        }
+        const response = await authenticatedFetch(url.toString(), {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+        await parseApiResponse(response);
+        CONVERSATIONS = CONVERSATIONS.filter(conversation => conversation.id !== conversationId);
+        MESSAGES = MESSAGES.filter(message => message.conversationId !== conversationId);
+    } catch (error) {
+        console.error(`Failed to delete conversation ${conversationId}:`, error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('Failed to delete conversation.');
+    }
+};
+
+export const clearConversation = async (conversationId: string, type: 'chat' | 'group', requesterRole?: UserRole): Promise<void> => {
+    try {
+        const baseUrl = CHAT_CONVERSATION_CLEAR_API_BASE_URL.replace(/\/$/, '');
+        const url = new URL(`${baseUrl}/${encodeURIComponent(conversationId)}`);
+        url.searchParams.set('type', type);
+        const payload: Record<string, any> = { conversationId, type };
+        if (requesterRole) {
+            const normalizedRole = requesterRole.toUpperCase();
+            url.searchParams.set('requesterRole', normalizedRole);
+            payload.requesterRole = normalizedRole;
+        }
+
+        const response = await authenticatedFetch(url.toString(), {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
+
+        await parseApiResponse(response);
+
+        MESSAGES = MESSAGES.filter(message => message.conversationId !== conversationId);
+        CONVERSATIONS = CONVERSATIONS.map(conversation => conversation.id === conversationId
+            ? { ...conversation, lastMessage: undefined }
+            : conversation
+        );
+    } catch (error) {
+        console.error(`Failed to clear conversation ${conversationId}:`, error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('Failed to clear conversation.');
+    }
+};
+
+export const getOrCreateDirectConversation = async (userId1: string, userId2: string): Promise<ChatConversation> => {
+    const participants = [String(userId1), String(userId2)].sort();
+
+    const normalizeDirectConversation = (conversation: ChatConversation): ChatConversation => ({
+        ...conversation,
+        participantIds: (conversation.participantIds || []).map(id => String(id)).sort(),
+        type: conversation.type?.toLowerCase() === 'group' ? 'group' : 'direct',
+    });
+
+    const matchesParticipants = (conversation: ChatConversation) => {
+        const ids = (conversation.participantIds || []).map(id => String(id)).sort();
+        return ids.length === 2 && ids[0] === participants[0] && ids[1] === participants[1];
+    };
+
+    const syncLocalConversation = (conversation: ChatConversation) => {
+        const normalized = normalizeDirectConversation(conversation);
+        const existingIndex = CONVERSATIONS.findIndex(c => matchesParticipants(c));
+        if (existingIndex !== -1) {
+            CONVERSATIONS[existingIndex] = normalized;
+        } else {
+            CONVERSATIONS.unshift(normalized);
+        }
+        return normalized;
+    };
+
+    const findExistingRemoteConversation = async (): Promise<ChatConversation | null> => {
+        try {
+            const remoteConversations = await getConversationsForUser(userId1);
+            const existing = remoteConversations.find(matchesParticipants);
+            return existing ? syncLocalConversation(existing) : null;
+        } catch (lookupError) {
+            console.error('Failed to lookup direct conversation via API:', lookupError);
+            return null;
+        }
+    };
+
+    const localExisting = CONVERSATIONS.find(matchesParticipants);
+    if (localExisting) {
+        return normalizeDirectConversation(localExisting);
+    }
+
+    const remoteExisting = await findExistingRemoteConversation();
+    if (remoteExisting) {
+        return remoteExisting;
+    }
+
+    try {
+        const payload = {
+            name: 'Direct Chat',
+            participantIds: participants,
+            type: 'direct',
+        };
+        const requestUrl = new URL(`${CHAT_CONVERSATION_CREATE_API_URL}`);
+        requestUrl.searchParams.set('userId', userId1);
+        requestUrl.searchParams.set('conversationType', 'direct');
+        const response = await authenticatedFetch(requestUrl.toString(), {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        const parsed = await parseApiResponse(response);
+        const created = (parsed && parsed.conversation) ? parsed.conversation : parsed;
+        if (created && created.id) {
+            return syncLocalConversation(created as ChatConversation);
+        }
+        throw new Error('Invalid response while creating direct conversation.');
+    } catch (creationError) {
+        console.error('Failed to create direct conversation via API:', creationError);
+        const fetchedAfterFailure = await findExistingRemoteConversation();
+        if (fetchedAfterFailure) {
+            return fetchedAfterFailure;
+        }
+        throw new Error('Unable to create direct conversation. Please try again.');
+    }
 };
 
 // --- ONBOARDING SERVICE (MOCKED) ---
@@ -1106,6 +1432,7 @@ export const getDependencyLogById = (id: string): DependencyLog | undefined => {
     console.warn(`getDependencyLogById(${id}) is mocked and returns undefined.`);
     return undefined;
 }
+
 export const getMilestoneById = (id: string): MilestoneStatus | undefined => {
     console.warn(`getMilestoneById(${id}) is mocked and returns undefined.`);
     return undefined;
