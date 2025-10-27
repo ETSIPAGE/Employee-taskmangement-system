@@ -17,6 +17,8 @@ interface ChatSidebarProps {
     onDeleteGroup: (conversation: ChatConversation) => void;
     onEditGroupName: (conversation: ChatConversation) => void;
     onViewGroupDetails: (conversation: ChatConversation) => void;
+    pendingCounts?: Record<string, number>;
+    activeConversationId?: string;
 }
 
 const getInitials = (name: string) => {
@@ -64,7 +66,7 @@ const formatUserName = (user?: User) => {
     return user.id || 'Unknown User';
 };
 
-const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, currentUser, onSelectConversation, onSelectUser, onGroupCreated, onClearConversation, onDeleteConversation, onAddGroupMember, onRemoveGroupMember, onDeleteGroup, onEditGroupName, onViewGroupDetails }) => {
+const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, currentUser, onSelectConversation, onSelectUser, onGroupCreated, onClearConversation, onDeleteConversation, onAddGroupMember, onRemoveGroupMember, onDeleteGroup, onEditGroupName, onViewGroupDetails, pendingCounts = {}, activeConversationId }) => {
     const [tab, setTab] = useState<'chats' | 'users'>('chats');
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
     const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
@@ -87,19 +89,15 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
     };
 
     const handleGroupMenuAction = (
-        action: 'addMember' | 'removeMember' | 'deleteGroup' | 'editName' | 'clear' | 'viewDetails',
+        action: 'addMember' | 'removeMember' | 'editName' | 'viewDetails',
         conversation: ChatConversation,
     ) => {
         if (action === 'addMember') {
             onAddGroupMember(conversation);
         } else if (action === 'removeMember') {
             onRemoveGroupMember(conversation);
-        } else if (action === 'deleteGroup') {
-            onDeleteGroup(conversation);
         } else if (action === 'editName') {
             onEditGroupName(conversation);
-        } else if (action === 'clear') {
-            onClearConversation(conversation);
         } else {
             onViewGroupDetails(conversation);
         }
@@ -145,8 +143,14 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                 {tab === 'chats' && (
                     <ul>
                         {conversations.map(conv => {
+                            const unreadCount = pendingCounts[conv.id] || 0;
+                            const isActive = activeConversationId === conv.id;
+                            const liClasses = `flex items-center p-3 cursor-pointer transition-colors ${isActive ? 'bg-indigo-100' : unreadCount > 0 ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-slate-100'}`;
                             const display = getConversationDisplay(conv);
                             const lastMessageText = conv.lastMessage?.text || 'No messages yet.';
+                            const subtitleText = unreadCount > 0
+                                ? `${unreadCount} new message${unreadCount === 1 ? '' : 's'} received`
+                                : lastMessageText;
                             console.log('ChatSidebar last message preview', {
                                 conversationId: conv.id,
                                 conversationName: display.name,
@@ -154,7 +158,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                                 lastMessageTimestamp: conv.lastMessage?.timestamp,
                             });
                             return (
-                                <li key={conv.id} className="flex items-center p-3 hover:bg-slate-100 cursor-pointer">
+                                <li key={conv.id} className={liClasses}>
                                     <div onClick={() => { setMenuOpenFor(null); onSelectConversation(conv); }} className="flex items-center flex-1 overflow-hidden">
                                         <div className="relative mr-3">
                                             <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold flex-shrink-0">
@@ -169,48 +173,12 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                                         </div>
                                         <div className="flex-1 overflow-hidden">
                                             <p className="font-semibold text-slate-800 truncate">{display.name}</p>
-                                            <p className="text-sm text-slate-500 truncate">{lastMessageText}</p>
+                                            <p className={`text-sm truncate ${unreadCount > 0 ? 'text-indigo-700 font-semibold' : 'text-slate-500'}`}>
+                                                {subtitleText}
+                                            </p>
                                         </div>
                                     </div>
-                                    {conv.type === 'direct' && (
-                                        <div className="relative flex-shrink-0 ml-2">
-                                            <button
-                                                className="p-1 text-slate-600 hover:text-slate-800 focus:outline-none"
-                                                onClick={(event) => {
-                                                event.stopPropagation();
-                                                setMenuOpenFor(prev => prev === conv.id ? null : conv.id);
-                                            }}
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 10h.01M10 10h.01M14 10h.01" />
-                                                </svg>
-                                            </button>
-                                            {menuOpenFor === conv.id && (
-                                                <div className="absolute right-0 mt-2 w-36 bg-white border border-slate-200 rounded-md shadow-lg z-20">
-                                                    <button
-                                                        type="button"
-                                                        className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            handleMenuAction('clear', conv);
-                                                        }}
-                                                    >
-                                                        Clear Chat
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            handleMenuAction('delete', conv);
-                                                        }}
-                                                    >
-                                                        Delete Chat
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
+                                    {conv.type === 'direct' && null}
                                     {conv.type === 'group' && canManageGroups && (
                                         <div className="relative flex-shrink-0 ml-2">
                                             <button
@@ -226,16 +194,6 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                                             </button>
                                             {groupMenuOpenFor === conv.id && (
                                                 <div className="absolute right-0 mt-2 w-40 bg-white border border-slate-200 rounded-md shadow-lg z-20">
-                                                    <button
-                                                        type="button"
-                                                        className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            handleGroupMenuAction('clear', conv);
-                                                        }}
-                                                    >
-                                                        Clear Chat
-                                                    </button>
                                                     <button
                                                         type="button"
                                                         className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
@@ -275,16 +233,6 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                                                         }}
                                                     >
                                                         View Details
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-                                                        onClick={(event) => {
-                                                            event.stopPropagation();
-                                                            handleGroupMenuAction('deleteGroup', conv);
-                                                        }}
-                                                    >
-                                                        Delete Group
                                                     </button>
                                                 </div>
                                             )}

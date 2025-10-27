@@ -239,6 +239,20 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
 
     const usersMap = useMemo(() => new Map(allUsers.map(u => [u.id, u])), [allUsers]);
 
+    const pendingCounts = useMemo<Record<string, number>>(() => {
+        const counts: Record<string, number> = {};
+        Object.entries(pendingMessages).forEach(([conversationId, messages]) => {
+            const entries = messages as ChatMessage[] | undefined;
+            if (entries && entries.length > 0) {
+                counts[conversationId] = entries.length;
+            }
+        });
+        if (activeConversation?.id) {
+            counts[activeConversation.id] = 0;
+        }
+        return counts;
+    }, [pendingMessages, activeConversation?.id]);
+
     const hydrateConversation = useCallback((conversation: ChatConversation, lookup?: Map<string, User>) => {
         if (!user) return conversation;
         const effectiveLookup = lookup || usersMap;
@@ -334,7 +348,12 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     }, []);
 
     const handleConversationDeletion = useCallback(async (conversation: ChatConversation, typeOverride?: 'chat' | 'group') => {
+        if (conversation.type === 'direct' && !typeOverride) {
+            console.warn('Skipping deletion for direct conversations');
+            return;
+        }
         const conversationType = typeOverride || (conversation.type === 'group' ? 'group' : 'chat');
+
         try {
             const requesterRole = user?.role;
             await DataService.deleteConversation(conversation.id, conversationType, requesterRole);
@@ -349,15 +368,20 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
     }, [removeConversationFromState, showToast, user]);
 
     const handleDirectDeletion = useCallback((conversation: ChatConversation) => {
-        handleConversationDeletion(conversation, 'chat');
-    }, [handleConversationDeletion]);
+        console.warn('Direct conversation deletion is disabled');
+    }, []);
 
     const handleGroupDeletion = useCallback((conversation: ChatConversation) => {
         handleConversationDeletion(conversation, 'group');
     }, [handleConversationDeletion]);
 
     const handleClearConversation = useCallback(async (conversation: ChatConversation) => {
+        if (conversation.type === 'direct') {
+            console.warn('Skipping clear for direct conversations');
+            return;
+        }
         const conversationType = conversation.type === 'group' ? 'group' : 'chat';
+
         try {
             const requesterRole = user?.role;
             await DataService.clearConversation(conversation.id, conversationType, requesterRole);
@@ -800,6 +824,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
         if (!user) {
             return;
         }
+
         const listener = (event: ChatSocketEvent) => {
             if (!event.conversationId) {
                 return;
@@ -823,13 +848,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
             if (eventType !== 'newMessage' || !event.text || !event.timestamp) {
                 return;
             }
-            const lastMessage = {
+
+            const lastMessage: ChatMessage = {
                 id: `${event.conversationId}-${event.timestamp}`,
                 conversationId: event.conversationId,
                 senderId: event.senderId || '',
                 text: event.text,
                 timestamp: event.timestamp,
             };
+
             let shouldRefreshConversations = false;
             setConversations(prev => {
                 const existingIndex = prev.findIndex(conv => conv.id === event.conversationId);
@@ -845,6 +872,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 updateConversationRecency(event.conversationId, lastMessage.timestamp, true);
                 return sortConversationsByRecency([updatedConversation, ...remaining], prev);
             });
+
             const incomingMessage: ChatMessage = {
                 id: `${event.conversationId}-${event.timestamp}`,
                 conversationId: event.conversationId,
@@ -852,10 +880,13 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 text: event.text,
                 timestamp: event.timestamp,
             };
+
             const isActiveOpen = isOpen && activeConversation?.id === event.conversationId;
+
             if (shouldRefreshConversations) {
                 loadData({ suppressLoading: true });
             }
+
             setCachedMessages(prev => {
                 if (isActiveOpen) {
                     return prev;
@@ -868,10 +899,22 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 const latest = merged[merged.length - 1];
                 if (latest) {
                     updateConversationRecency(event.conversationId, latest.timestamp, true);
-                    setConversations(prevConvs => sortConversationsByRecency(prevConvs, prevConvs));
+                    setConversations(prevConvs => {
+                        const index = prevConvs.findIndex(conv => conv.id === event.conversationId);
+                        if (index === -1) {
+                            return prevConvs;
+                        }
+                        const updatedConversation = hydrateConversation({
+                            ...prevConvs[index],
+                            lastMessage: latest,
+                        });
+                        const nextList = prevConvs.map((conv, idx) => (idx === index ? updatedConversation : conv));
+                        return sortConversationsByRecency(nextList, prevConvs);
+                    });
                 }
                 return updated;
             });
+
             setPendingMessages(prev => {
                 if (isActiveOpen) {
                     return prev;
@@ -879,10 +922,10 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                 const existing = prev[event.conversationId] || [];
                 const withoutLocalEcho = filterOutMatchingLocalEchoes(existing, incomingMessage);
                 const merged = mergeMessagesById(withoutLocalEcho, [incomingMessage]);
-                const updated = { ...prev, [event.conversationId]: merged };
-                return updated;
+                return { ...prev, [event.conversationId]: merged };
             });
         };
+
         chatSocket.addListener(listener);
         return () => {
             chatSocket.removeListener(listener);
@@ -1043,6 +1086,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({ onClose, refreshKey, isOp
                         onDeleteGroup={handleGroupDeletion}
                         onEditGroupName={handleGroupRename}
                         onViewGroupDetails={handleViewGroupDetails}
+                        pendingCounts={pendingCounts}
+                        activeConversationId={activeConversation?.id}
                     />
                 ) : (
                     <ChatWindow
