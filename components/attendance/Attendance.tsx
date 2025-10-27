@@ -926,6 +926,8 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
     const [currentDate, setCurrentDate] = useState(new Date());
     const [attendanceStatus, setAttendanceStatus] = useState<Record<string, 'present' | 'absent'>>({});
     const [refreshKey, setRefreshKey] = useState(0);
+    const [detailOpen, setDetailOpen] = useState(false);
+    const [detailDate, setDetailDate] = useState<Date | null>(new Date());
 
     const normalizeIdentifier = (value: string | number | null | undefined): string | null => {
         if (value === null || value === undefined) return null;
@@ -1133,85 +1135,104 @@ const EmployeeAttendanceView: React.FC<{ user: User }> = ({ user }) => {
         });
     };
 
-    const renderCalendar = () => {
-        const year = currentDate.getFullYear();
-        const month = currentDate.getMonth(); // 0-indexed for Date constructor
-        const firstDayOfMonth = new Date(year, month, 1).getDay();
-        const daysInMonth = new Date(year, month + 1, 0).getDate();
-        const today = new Date(); // Current real-world date
+const renderCalendar = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth(); // 0-indexed for Date constructor
+    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const today = new Date(); // Current real-world date
 
-        const blanks = Array(firstDayOfMonth).fill(null);
-        const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const blanks = Array(firstDayOfMonth).fill(null);
+    const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-        return (
-            <div className="bg-white p-6 rounded-lg shadow-lg">
-                <div className="flex justify-between items-center mb-4">
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-lg">
+            <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center space-x-2">
                     <button onClick={() => changeMonth(-1)} className="p-2 rounded-full hover:bg-slate-100">&lt;</button>
                     <h2 className="text-xl font-bold text-slate-800">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h2>
                     <button onClick={() => changeMonth(1)} className="p-2 rounded-full hover:bg-slate-100">&gt;</button>
                 </div>
-                <div className="grid grid-cols-7 gap-2 text-center text-sm text-slate-500 font-semibold mb-2">
-                    {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => <div key={i}>{day}</div>)}
-                </div>
-                <div className="grid grid-cols-7 gap-2">
-                    {blanks.map((_, i) => <div key={`blank-${i}`}></div>)}
-                    {days.map(day => {
-                        const date = new Date(year, month, day);
-                        const isTodayInView = date.toDateString() === today.toDateString(); // Is this date cell "today"?
-
-                        let statusClasses = ""; // Default empty, will be assigned
-
-                        // Determine the status for the current day in the loop based on state
-                        const status = attendanceStatus[day];
-                        // console.log(`Rendering Day ${day}: status=${status}`); // Debug each day's status
-
-                        if (status === 'present') {
-                            statusClasses = "bg-green-500 text-white font-bold";
-                        } else if (status === 'absent') {
-                            statusClasses = "bg-red-500 text-white font-bold";
-                        } else {
-                            // If no explicit 'present'/'absent' status (e.g., future date, weekend, or unrecorded today)
-                            const dayOfWeek = date.getDay();
-                            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                            const isFuture = date > today;
-
-                            if (isWeekend || isFuture) {
-                                statusClasses = "border-2 border-slate-300 text-slate-600"; // Weekend or future
-                            } else if (isTodayInView) {
-                                // If it's today and no status (meaning not yet punched in)
-                                statusClasses = "bg-yellow-100 text-yellow-800"; // Pending/neutral color for today
-                            } else {
-                                // Fallback for past weekdays with no record (should theoretically be 'absent' from fetch, but just in case)
-                                statusClasses = "bg-gray-100 text-gray-500";
-                            }
-                        }
-
-                        return (
-                            <div key={day} className="flex justify-center">
-                                <div className={`w-10 h-10 flex items-center justify-center rounded-full ${statusClasses}`}>{day}</div>
-                            </div>
-                        );
-                    })}
-                </div>
+                <button
+                    type="button"
+                    onClick={() => { setDetailDate(new Date()); setDetailOpen(true); }}
+                    className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+                    title="Show Detailed Attendence"
+                >
+                    Show Detailed Attendence
+                </button>
             </div>
-        );
-    };
+            <div className="grid grid-cols-7 gap-2 text-center text-sm text-slate-500 font-semibold mb-2">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => <div key={i}>{day}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-2">
+                {blanks.map((_, i) => <div key={`blank-${i}`}></div>)}
 
-    return (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2">{renderCalendar()}</div>
-            <div className="lg:col-span-1">
-                <div className="bg-white p-6 rounded-lg shadow-lg h-full">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">Legend</h3>
-                    <ul className="space-y-3">
-                        <li className="flex items-center"><div className="w-5 h-5 rounded-full bg-green-500 mr-3"></div><span className="text-slate-700">Present</span></li>
-                        <li className="flex items-center"><div className="w-5 h-5 rounded-full bg-red-500 mr-3"></div><span className="text-slate-700">Absent</span></li>
+                {days.map(day => {
+                    const date = new Date(year, month, day);
+                    const isTodayInView = date.toDateString() === today.toDateString(); // Is this date cell "today"?
 
-                    </ul>
-                </div>
+                    let statusClasses = ""; // Default empty, will be assigned
+
+                    // Determine the status for the current day in the loop based on state
+                    const status = attendanceStatus[day];
+                    // console.log(`Rendering Day ${day}: status=${status}`); // Debug each day's status
+
+                    if (status === 'present') {
+                        statusClasses = "bg-green-500 text-white font-bold";
+                    } else if (status === 'absent') {
+                        statusClasses = "bg-red-500 text-white font-bold";
+                    } else {
+                        // If no explicit 'present'/'absent' status (e.g., future date, weekend, or unrecorded today)
+                        const dayOfWeek = date.getDay();
+                        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                        const isFuture = date > today;
+
+                        if (isWeekend || isFuture) {
+                            statusClasses = "border-2 border-slate-300 text-slate-600"; // Weekend or future
+                        } else if (isTodayInView) {
+                            // If it's today and no status (meaning not yet punched in)
+                            statusClasses = "bg-yellow-100 text-yellow-800"; // Pending/neutral color for today
+                        } else {
+                            // Fallback for past weekdays with no record (should theoretically be 'absent' from fetch, but just in case)
+                            statusClasses = "bg-gray-100 text-gray-500";
+                        }
+                    }
+
+                    return (
+                        <div key={day} className="flex justify-center">
+                            <div className={`w-10 h-10 flex items-center justify-center rounded-full ${statusClasses}`}>{day}</div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
+};
+
+return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2">{renderCalendar()}</div>
+        <div className="lg:col-span-1">
+            <div className="bg-white p-6 rounded-lg shadow-lg h-full">
+                <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-2">Legend</h3>
+                <ul className="space-y-3">
+                    <li className="flex items-center"><div className="w-5 h-5 rounded-full bg-green-500 mr-3"></div><span className="text-slate-700">Present</span></li>
+                    <li className="flex items-center"><div className="w-5 h-5 rounded-full bg-red-500 mr-3"></div><span className="text-slate-700">Absent</span></li>
+
+                </ul>
+            </div>
+        </div>
+        {detailOpen && detailDate && (
+            <EmployeeAttendanceDetailModal
+                employee={user}
+                monthDate={detailDate}
+                presentDate={detailDate}
+                onClose={() => setDetailOpen(false)}
+            />
+        )}
+    </div>
+);
 }
 
 const Attendance: React.FC = () => {
