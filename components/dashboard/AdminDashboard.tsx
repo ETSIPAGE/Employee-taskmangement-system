@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+
 import { Project, Task, TaskStatus, User, UserRole } from '../../types';
 import { ChartBarIcon, ClipboardListIcon, UsersIcon, ExclamationTriangleIcon, ArrowPathIcon } from '../../constants';
 
@@ -121,7 +121,7 @@ const AdminDashboard: React.FC = () => {
         setIsLoading(true);
         try {
             const [users, projects, tasks] = await Promise.all([
-                AuthService.getUsers(),
+                DataService.getUsers(),
                 DataService.getAllProjects(),
                 DataService.getAllTasks()
             ]);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+
 import { Department, User, UserRole, Project, TaskStatus, Company } from '../../types';
 import { Navigate, useNavigate } from 'react-router-dom';
 import Modal from '../shared/Modal';
@@ -140,7 +140,7 @@ const Departments: React.FC = () => {
         try {
             const [departments, users, projects, allCompanies] = await Promise.all([
                 DataService.getDepartments(),
-                AuthService.getUsers(),
+                DataService.getUsers(),
                 DataService.getAllProjects(),
                 DataService.getCompanies()
             ]);

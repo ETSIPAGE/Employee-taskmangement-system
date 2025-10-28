@@ -4,7 +4,8 @@ import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus, User, Department, Project, MilestoneStatus } from '../../types';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
+
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
@@ -21,11 +22,9 @@ interface CompanyWithStats extends Company {
 }
 
 const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; onDelete?: () => void }> = ({ company, onEdit, onDelete }) => {
-    const navigate = useNavigate();
-
     return (
-        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg hover:-translate-y-1 cursor-pointer">
-            <div onClick={() => navigate(`/companies/${company.id}`)}>
+        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all">
+            <div>
                 <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-3">{company.name}</h3>
 
                 <div className="mb-4">
@@ -35,6 +34,7 @@ const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; on
                             <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{company.employeeCount} Employees</span>
                         </div>
+
                         <div className="flex items-center space-x-2 text-slate-700">
                             <UsersIcon className="h-5 w-5" />
                             <span className="font-medium">{company.managerCount} Managers</span>

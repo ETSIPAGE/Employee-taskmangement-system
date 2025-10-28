@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as AuthService from '../../services/authService';
+import * as DataService from '../../services/dataService';
+
 import { User, UserRole } from '../../types';
 import {
   ArrowPathIcon,
@@ -852,8 +854,9 @@ const RolesDashboard: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            // Fetch users from the existing service
-            const users = await AuthService.getUsers();
+            // Fetch users from API service to avoid local static data
+            const users = await DataService.getUsers();
+
             
             setUsersList(users);
             

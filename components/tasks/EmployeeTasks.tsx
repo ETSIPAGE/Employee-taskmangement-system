@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+
 import { Project, Task, TaskStatus, User, UserRole } from '../../types';
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
@@ -52,7 +52,7 @@ const EmployeeTasks: React.FC = () => {
             const [userTasks, allProjects, users] = await Promise.all([
                 DataService.getTasksByAssignee(user.id),
                 DataService.getAllProjects(),
-                AuthService.getUsers()
+                DataService.getUsers()
             ]);
             
             setProjects(allProjects);

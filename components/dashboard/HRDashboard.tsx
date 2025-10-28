@@ -2,7 +2,6 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
 import { OnboardingSubmission } from '../../types';
 import { UsersIcon, ClipboardListIcon, DocumentPlusIcon, ArrowPathIcon } from '../../constants';
 import Button from '../shared/Button';
@@ -48,15 +47,18 @@ const HRDashboard: React.FC = () => {
     const loadData = useCallback(async () => {
         setIsLoading(true);
         try {
-            const employees = AuthService.getUsers();
-            const projects = await DataService.getAllProjects();
+            const [employees, projects] = await Promise.all([
+                DataService.getUsers(),
+                DataService.getAllProjects(),
+            ]);
             const submissions = DataService.getOnboardingSubmissions();
-    
+
             setStats({
                 totalEmployees: employees.length,
                 totalProjects: projects.length,
                 totalSubmissions: submissions.length,
             });
+
     
             setRecentSubmissions(submissions.slice(0, 5));
         } catch (error) {

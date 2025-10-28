@@ -8,9 +8,12 @@ let COMPANIES: Company[] = [
 ];
 
 // --- API ENDPOINTS ---
-const USERS_API_URL = 'https://uvg7wq8e5a.execute-api.ap-south-1.amazonaws.com/dev/users';
-// Provided by user for updating a particular employee
-const USERS_UPDATE_API_BASE_URL = 'https://tvm0j88qzf.execute-api.ap-south-1.amazonaws.com/dev/users';
+const USERS_API_URL = 'https://1fa241hs8b.execute-api.ap-south-1.amazonaws.com/prod/users';
+// Users Update API bases. Primary provided by user; others retained as fallbacks across environments.
+const USERS_UPDATE_API_PRIMARY_BASE_URL = 'https://dus8tbd855.execute-api.ap-south-1.amazonaws.com/prod/users';
+const USERS_UPDATE_API_PUT_BASE_URL = 'https://jz7cm957ne.execute-api.ap-south-1.amazonaws.com/PUT/employees';
+const USERS_UPDATE_API_EMP_BASE_URL = 'https://jz7cm957ne.execute-api.ap-south-1.amazonaws.com/employees';
+const USERS_UPDATE_API_USERS_BASE_URL = 'https://jz7cm957ne.execute-api.ap-south-1.amazonaws.com/users';
 const TASKS_GET_ALL_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/get-tasks';
 const TASKS_CREATE_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task';
 const TASKS_UPDATE_API_BASE_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task'; // Requires /taskId
@@ -78,7 +81,12 @@ export const updateUser = async (
     userId: string,
     updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string }>
 ): Promise<User> => {
-    const url = `${USERS_UPDATE_API_BASE_URL}/${encodeURIComponent(userId)}`;
+    const candidateUrls = [
+        `${USERS_UPDATE_API_PRIMARY_BASE_URL}/${encodeURIComponent(userId)}`,
+        `${USERS_UPDATE_API_PUT_BASE_URL}/${encodeURIComponent(userId)}`,
+        `${USERS_UPDATE_API_EMP_BASE_URL}/${encodeURIComponent(userId)}`,
+        `${USERS_UPDATE_API_USERS_BASE_URL}/${encodeURIComponent(userId)}`,
+    ];
 
     // Build minimal payload expected by backend; include both managerIds and managerId for compatibility
     const body: any = {
@@ -91,15 +99,14 @@ export const updateUser = async (
         ...(typeof updates.rating !== 'undefined' ? { rating: updates.rating } : {}),
     };
 
-    // Try PUT then PATCH as fallback
+    // Use only PUT method as required; try multiple candidate endpoints
     let response: Response | undefined;
     let lastErr: any;
-    const methods: Array<'PUT' | 'PATCH' | 'POST'> = ['PUT', 'PATCH', 'POST'];
-    for (const method of methods) {
+    for (const url of candidateUrls) {
         try {
-            response = await authenticatedFetch(url, { method, body: JSON.stringify(body) });
+            response = await authenticatedFetch(url, { method: 'PUT', body: JSON.stringify(body) });
             if (response.ok) break;
-            lastErr = new Error(`Update failed: ${response.status} ${response.statusText}`);
+            lastErr = new Error(`HTTP ${response.status} ${response.statusText}`);
         } catch (e) {
             lastErr = e;
         }
@@ -398,6 +405,12 @@ let cachedAllUsers: User[] | null = null;
 let cachedManagers: User[] | null = null;
 let cachedCompanies: Company[] | null = null;
 
+// Allow views to force refresh of users from the API
+export const invalidateUsersCache = () => {
+    cachedAllUsers = null;
+    cachedManagers = null;
+};
+
 const userPresenceMap = new Map<string, User['status']>();
 
 const normalizeUserStatus = (status?: string | null): User['status'] => {
@@ -523,58 +536,50 @@ const mapApiUserToUser = (apiUser: any): User => {
 
 export const getAllUsersFromApi = async (): Promise<User[]> => {
     if (cachedAllUsers) return cachedAllUsers;
+    try {
+        const base = USERS_API_URL.replace(/\/$/, '');
+        const paths = ['', '/employees', '/employee', '/users', '/get-users', '/all'];
+        const methods: Array<'GET' | 'POST'> = ['GET', 'POST'];
+        const authModes = [false, true]; // skipAuth false=>with auth, true=>without auth
 
-    const response = await authenticatedFetch(USERS_API_URL);
-    const data = await parseApiResponse(response);
-    const usersFromApi = extractArrayFromApiResponse(data, 'users');
-    
-    cachedAllUsers = usersFromApi.map(mapApiUserToUser);
-    return cachedAllUsers;
+        let lastErr: any = null;
+        for (const p of paths) {
+            const url = `${base}${p}`;
+            for (const m of methods) {
+                for (const skipAuth of authModes) {
+                    try {
+                        const res = await authenticatedFetch(url, { method: m, skipAuth, body: m === 'POST' ? JSON.stringify({}) : undefined });
+                        if (!res.ok) {
+                            lastErr = new Error(`HTTP ${res.status} ${res.statusText} at ${url} ${m} skipAuth=${skipAuth}`);
+                            continue;
+                        }
+                        const data = await parseApiResponse(res);
+                        const usersFromApi = extractArrayFromApiResponse(data, 'users');
+                        cachedAllUsers = usersFromApi.map(mapApiUserToUser);
+                        return cachedAllUsers;
+                    } catch (e) {
+                        lastErr = e;
+                        continue;
+                    }
+                }
+            }
+        }
+        if (lastErr) {
+            console.error('Failed to fetch users from all attempted endpoints:', lastErr);
+        }
+        return [];
+    } catch (error) {
+        console.error('Unexpected error while fetching users:', error);
+        return [];
+    }
 };
 
 // Create user via Users API
-export const createUser = async (payload: {
-    name: string;
-    email: string;
-    role: UserRole;
-    companyId?: string;
-    departmentIds?: string[];
-    managerIds?: string[];
-}): Promise<User> => {
-    const body: any = {
-        name: payload.name,
-        email: payload.email,
-        role: payload.role,
-        companyId: payload.companyId,
-        departmentIds: payload.departmentIds || [],
-        managerIds: payload.managerIds || [],
-    };
-
-    const response = await authenticatedFetch(USERS_API_URL, {
-        method: 'POST',
-        body: JSON.stringify(body),
-        // Some endpoints don't like extra headers; rely on authenticatedFetch to set content-type
-    });
-
-    const data = await parseApiResponse(response);
-    // Invalidate cache so next list reflects the new user
-    invalidateUsersCache();
-    const created = (data && (data.user || data.User || data.Item || data.item)) || data;
-    return mapApiUserToUser(created);
-};
+// createUser removed; use services/userManagementService.createEmployee for posting new employees/users
 
 export const getUserByIdFromApi = async (userId: string): Promise<User | undefined> => {
     const allUsers = await getAllUsersFromApi();
     return allUsers.find(u => u.id === userId);
-};
-
-        cachedAllUsers = usersFromApi.map(mapApiUserToUser);
-        updateUserPresenceCache(cachedAllUsers);
-        return cachedAllUsers;
-    } catch (error) {
-        console.error("Failed to fetch all users:", error);
-        return [];
-    }
 };
 
 // Delete user via Users API
@@ -1379,20 +1384,33 @@ export const getCompanies = async (): Promise<Company[]> => {
     if (cachedCompanies) return cachedCompanies;
 
     try {
-        const response = await authenticatedFetch(COMPANIES_API_URL);
-        const data = await parseApiResponse(response);
-        const companiesFromApi = extractArrayFromApiResponse(data, 'companies');
-
-        cachedCompanies = companiesFromApi.map((company: any): Company => ({
-            id: String(company.id || company.company_id || company.companyId).toLowerCase().trim(),
-            name: company.name,
-            ownerId: company.ownerId, 
-            createdAt: company.createdAt || new Date().toISOString(), 
-        }));
-        return cachedCompanies;
+        const attempts = [
+            { skipAuth: false },
+            { skipAuth: true },
+        ];
+        let lastErr: any = null;
+        for (const a of attempts) {
+            try {
+                const response = await authenticatedFetch(COMPANIES_API_URL, { method: 'GET', skipAuth: a.skipAuth });
+                const data = await parseApiResponse(response);
+                const companiesFromApi = extractArrayFromApiResponse(data, 'companies');
+                
+                cachedCompanies = companiesFromApi.map((company: any): Company => ({
+                    id: String(company.id || company.company_id || company.companyId).toLowerCase().trim(),
+                    name: company.name,
+                    ownerId: company.ownerId,
+                    createdAt: company.createdAt || new Date().toISOString(),
+                }));
+                return cachedCompanies;
+            } catch (e) {
+                lastErr = e;
+                continue;
+            }
+        }
+        if (lastErr) throw lastErr;
     } catch (error) {
-        console.error('Failed to update department:', error);
-        throw error;
+        console.error('Failed to fetch companies:', error);
+        return [];
     }
 };
 
