@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
-import * as AuthService from '../../services/authService';
 import * as DataService from '../../services/dataService';
+import * as UserManagementService from '../../services/userManagementService';
+
 import { User, UserRole, Department, Company } from '../../types';
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -181,6 +182,8 @@ const UserManagement: React.FC = () => {
     // Filter states
     const [searchTerm, setSearchTerm] = useState('');
     const [roleFilter, setRoleFilter] = useState('all');
+    const [companyFilterIds, setCompanyFilterIds] = useState<string[]>([]);
+    const [deptFilterIds, setDeptFilterIds] = useState<string[]>([]);
 
     // Form state
     const [name, setName] = useState('');
@@ -190,38 +193,47 @@ const UserManagement: React.FC = () => {
     const [managerIds, setManagerIds] = useState<string[]>([]);
 
     const [departmentIds, setDepartmentIds] = useState<string[]>([]);
-    const [companyId, setCompanyId] = useState<string | undefined>(undefined);
+    const [companyIdsSel, setCompanyIdsSel] = useState<string[]>([]);
     const [rating, setRating] = useState(0);
     const [isSubmittingUser, setIsSubmittingUser] = useState(false);
 
     // Normalize companyId to match lowercased ids from services
-    const normalizedCompanyId = useMemo(() => (companyId ? companyId.toLowerCase() : undefined), [companyId]);
+    const normalizedCompanyIds = useMemo(() => companyIdsSel.map(id => id.toLowerCase()), [companyIdsSel]);
 
     // Departments filtered by selected company
     const companyDepartments = useMemo(() => {
-        if (!normalizedCompanyId) return [] as Department[];
-        return departments.filter(d => d.companyId === normalizedCompanyId);
-    }, [departments, normalizedCompanyId]);
+        if (!normalizedCompanyIds || normalizedCompanyIds.length === 0) return [] as Department[];
+        const set = new Set(normalizedCompanyIds);
+        return departments.filter(d => set.has(d.companyId));
+    }, [departments, normalizedCompanyIds]);
 
     // Make loadData async to await API calls
     const loadData = useCallback(async () => {
         setIsLoading(true);
+        // Force a fresh fetch from Users API and stop using local AuthService users
+        DataService.invalidateUsersCache();
         try {
-            // Force a fresh fetch from Users API and stop using local AuthService users
-            DataService.invalidateUsersCache();
-            const [apiUsers, fetchedCompanies] = await Promise.all([
+            const [usersRes, companiesRes] = await Promise.allSettled([
                 DataService.getUsers(),
                 DataService.getCompanies(),
             ]);
 
-            setUsers(apiUsers);
-            setManagers(apiUsers.filter(u => u.role === UserRole.MANAGER));
-            setCompanies(fetchedCompanies);
-        } catch (error) {
-            console.error("Failed to load user data", error);
-            setUsers([]); // Ensure state is reset on error
-            setManagers([]);
-            setCompanies([]);
+            if (usersRes.status === 'fulfilled') {
+                const apiUsers = usersRes.value;
+                setUsers(apiUsers);
+                setManagers(apiUsers.filter((u: User) => u.role === UserRole.MANAGER));
+            } else {
+                console.error('Failed to load users:', usersRes.reason);
+                setUsers([]);
+                setManagers([]);
+            }
+
+            if (companiesRes.status === 'fulfilled') {
+                setCompanies(companiesRes.value as Company[]);
+            } else {
+                console.error('Failed to load companies:', companiesRes.reason);
+                setCompanies([]);
+            }
         } finally {
             setIsLoading(false);
         }
@@ -249,23 +261,24 @@ const UserManagement: React.FC = () => {
 
     // Managers filtered by selected departments
     const filteredManagers = useMemo(() => {
-        if (!normalizedCompanyId || departmentIds.length === 0) return [] as typeof managers;
+        if (departmentIds.length === 0) return [] as typeof managers;
+        const companySet = new Set(normalizedCompanyIds);
         return managers.filter(m => (
-            (m.companyId ? m.companyId === normalizedCompanyId : true) &&
+            (companySet.size === 0 || (m.companyId && companySet.has(m.companyId))) &&
             Array.isArray(m.departmentIds) && m.departmentIds.some(id => departmentIds.includes(id))
         ));
-    }, [managers, departmentIds, normalizedCompanyId]);
+    }, [managers, departmentIds, normalizedCompanyIds]);
 
     // Prune selected managerIds if they are not in filteredManagers
     useEffect(() => {
         setManagerIds(prev => prev.filter(id => filteredManagers.some(m => m.id === id)));
     }, [filteredManagers]);
 
-    // When company changes, clear departments and managers
+    // When companies change, clear departments not in selected companies and reset managers
     useEffect(() => {
         setDepartmentIds(prev => prev.filter(id => companyDepartments.some(d => d.id === id)));
         setManagerIds([]);
-    }, [companyId, companyDepartments]);
+    }, [companyIdsSel, companyDepartments]);
 
     // When role is not Employee, clear managers selection
     useEffect(() => {
@@ -278,9 +291,18 @@ const UserManagement: React.FC = () => {
         return users.filter(u => {
             const searchMatch = u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase());
             const roleMatch = roleFilter === 'all' || u.role === roleFilter;
-            return searchMatch && roleMatch;
+            const companyMatch = companyFilterIds.length === 0 || (u.companyId && companyFilterIds.includes(u.companyId));
+            const deptMatch = deptFilterIds.length === 0 || (Array.isArray(u.departmentIds) && u.departmentIds.some(id => deptFilterIds.includes(id)));
+            return searchMatch && roleMatch && companyMatch && deptMatch;
         });
-    }, [users, searchTerm, roleFilter]);
+    }, [users, searchTerm, roleFilter, companyFilterIds, deptFilterIds]);
+
+    const filterDepartmentsForCompany = useMemo(() => {
+        // If multiple companies selected, show union of their departments
+        if (companyFilterIds.length === 0) return [] as Department[];
+        const selected = new Set(companyFilterIds);
+        return departments.filter(d => selected.has(d.companyId));
+    }, [departments, companyFilterIds]);
 
     const resetForm = useCallback(() => {
         setName('');
@@ -292,12 +314,20 @@ const UserManagement: React.FC = () => {
 
         setEditingUser(null);
         setDepartmentIds([]);
-        setCompanyId(companies.length > 0 ? companies[0].id : undefined); // Use companies state here
+        setCompanyIdsSel(companies.length > 0 ? [companies[0].id] : []); // default to first company if available
         setRating(0);
     }, [managers, companies]); // Dependencies updated
 
-    const handleOpenCreateModal = () => {
+    const handleOpenCreateModal = async () => {
         resetForm();
+        if (companies.length === 0) {
+            try {
+                const fresh = await DataService.getCompanies();
+                setCompanies(fresh);
+            } catch (e) {
+                console.error('Company fetch on modal open failed:', e);
+            }
+        }
         setIsModalOpen(true);
     };
 
@@ -310,7 +340,7 @@ const UserManagement: React.FC = () => {
         setManagerIds(userToEdit.managerIds || (userToEdit.managerId ? [userToEdit.managerId] : []));
 
         setDepartmentIds(userToEdit.departmentIds || []);
-        setCompanyId(userToEdit.companyId);
+        setCompanyIdsSel(userToEdit.companyId ? [userToEdit.companyId] : []);
         setRating(userToEdit.rating || 0);
         setIsModalOpen(true);
     };
@@ -364,13 +394,13 @@ const UserManagement: React.FC = () => {
                     name, 
                     role, 
                     departmentIds,
-                    companyId,
+                    companyId: companyIdsSel[0],
                     // Keep legacy managerId as the first selected for compatibility, but store full managerIds array
                     managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
                     rating: rating,
                 };
-                await DataService.updateUser(editingUser.id, updates);
+                await UserManagementService.updateEmployee(editingUser.id, updates);
                 showToast('Employee updated successfully!', 'success');
             } else {
                 // Validations for guided flow
@@ -379,7 +409,7 @@ const UserManagement: React.FC = () => {
                     return;
                 }
                 if (role === UserRole.EMPLOYEE) {
-                    if (!companyId) {
+                    if (!companyIdsSel || companyIdsSel.length === 0) {
                         showToast('Select a company for the employee.', 'error');
                         return;
                     }
@@ -393,11 +423,11 @@ const UserManagement: React.FC = () => {
                     }
                 }
 
-                await DataService.createUser({
+                await UserManagementService.createEmployee({
                     name,
                     email,
                     role,
-                    companyId,
+                    companyId: companyIdsSel[0],
                     departmentIds,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
                 });
@@ -407,23 +437,6 @@ const UserManagement: React.FC = () => {
             handleCloseModal();
         } catch(err) {
             const msg = err instanceof Error ? err.message : 'An error occurred';
-            // If backend reports the user already exists, update local record and treat as success
-            if (typeof msg === 'string' && msg.toLowerCase().includes('exist')) {
-                const existing = AuthService.getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
-                if (existing) {
-                    AuthService.updateUser(existing.id, {
-                        role,
-                        departmentIds,
-                        companyId,
-                        managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
-                        managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
-                    });
-                    showToast('Employee record updated.', 'success');
-                    await loadData();
-                    handleCloseModal();
-                    return;
-                }
-            }
             showToast(msg, 'error');
         } finally {
             setIsSubmittingUser(false);
@@ -449,11 +462,40 @@ const UserManagement: React.FC = () => {
             </div>
 
             <div className="mb-6 p-4 bg-white rounded-lg shadow-sm">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <input type="text" placeholder="Search by name or email..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md" />
                     <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md">
                         <option value="all">All Roles</option>
                         {Object.values(UserRole).map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <div className="w-full border border-slate-300 rounded-md p-2 max-h-40 overflow-y-auto">
+                        <div className="text-xs font-medium text-slate-600 mb-1">Companies</div>
+                        {companies.length === 0 && <div className="text-xs text-slate-500">No companies</div>}
+                        {companies.map(c => (
+                            <label key={c.id} className="flex items-center gap-2 text-sm py-0.5">
+                                <input
+                                    type="checkbox"
+                                    checked={companyFilterIds.includes(c.id)}
+                                    onChange={(e) => {
+                                        const { checked } = e.target;
+                                        setDeptFilterIds([]); // reset department filter when companies change
+                                        setCompanyFilterIds(prev => checked ? [...prev, c.id] : prev.filter(id => id !== c.id));
+                                    }}
+                                    className="h-4 w-4 text-indigo-600 border-slate-300 rounded"
+                                />
+                                <span className="truncate">{c.name}</span>
+                            </label>
+                        ))}
+                    </div>
+                    <select multiple value={deptFilterIds} onChange={(e) => {
+                        const opts = Array.from(e.target.selectedOptions).map(o => o.value);
+                        setDeptFilterIds(opts);
+                    }} className="w-full px-3 py-2 border border-slate-300 rounded-md min-h-[42px]">
+                        {companyFilterIds.length === 0 ? (
+                            <option value="" disabled>Select company to filter departments</option>
+                        ) : (
+                            filterDepartmentsForCompany.map(d => <option key={d.id} value={d.id}>{d.name}</option>)
+                        )}
                     </select>
                 </div>
             </div>
@@ -548,21 +590,37 @@ const UserManagement: React.FC = () => {
                     </div>
 
                     <div>
-                        <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
-                        <select id="company" value={companyId || ''} onChange={e => setCompanyId(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">
-                            <option value="">No Company</option>
-                            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
+                        <label className="block text-sm font-medium text-slate-700">Companies</label>
+                        <div className="mt-1 border border-slate-300 rounded-md p-2 max-h-40 overflow-y-auto">
+                            {companies.length === 0 && (
+                                <p className="text-sm text-slate-500">No companies available.</p>
+                            )}
+                            {companies.map(c => (
+                                <label key={c.id} className="flex items-center gap-2 p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        value={c.id}
+                                        checked={companyIdsSel.includes(c.id)}
+                                        onChange={(e) => {
+                                            const { checked, value } = e.target;
+                                            setCompanyIdsSel(prev => checked ? [...prev, value] : prev.filter(id => id !== value));
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <span className="text-sm text-slate-800 truncate">{c.name}</span>
+                                </label>
+                            ))}
+                        </div>
                     </div>
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
                         <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
-                            {!companyId && <p className="text-sm text-slate-500 col-span-2">Select a company to see departments.</p>}
-                            {companyId && companyDepartments.length === 0 && (
+                            {companyIdsSel.length === 0 && <p className="text-sm text-slate-500 col-span-2">Select a company to see departments.</p>}
+                            {companyIdsSel.length > 0 && companyDepartments.length === 0 && (
                                 <p className="text-sm text-slate-500 col-span-2">No departments for the selected company.</p>
                             )}
-                            {companyId && companyDepartments.length > 0 && companyDepartments.map(dept => (
+                            {companyIdsSel.length > 0 && companyDepartments.length > 0 && companyDepartments.map(dept => (
                                 <div key={dept.id} className="flex items-center">
                                     <input
                                         id={`dept-${dept.id}`}
@@ -584,10 +642,10 @@ const UserManagement: React.FC = () => {
                         <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
                             <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
-                                {companyId && departmentIds.length === 0 && (
+                                {companyIdsSel.length > 0 && departmentIds.length === 0 && (
                                     <p className="text-xs text-slate-500">Select at least one department to see managers.</p>
                                 )}
-                                {companyId && departmentIds.length > 0 && filteredManagers.length === 0 && (
+                                {companyIdsSel.length > 0 && departmentIds.length > 0 && filteredManagers.length === 0 && (
                                     <p className="text-xs text-slate-500">No managers available in the selected departments.</p>
                                 )}
                                 {filteredManagers.map(m => (

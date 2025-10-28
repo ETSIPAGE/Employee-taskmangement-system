@@ -17,128 +17,8 @@ const TOKEN_KEY = 'ets_token';
 const ORIGINAL_USER_KEY = 'ets_original_user_id';
 
 const getInitialUsers = (): User[] => {
-    return [
-        { 
-            id: '1', name: 'Admin User', email: 'admin@test.com', role: UserRole.ADMIN, companyId: 'comp-1', departmentIds: ['dept-1'],
-            jobTitle: 'Administrator', status: 'Active', joinedDate: '2022-01-10T00:00:00.000Z',
-            skills: ['System Admin', 'Database Mgmt', 'Security'],
-            stats: { completedTasks: 5, inProgressTasks: 1, efficiency: 95, totalHours: 45, workload: 'Light' },
-            rating: 9.5
-        },
-        { 
-            id: '2', name: 'Manager User', email: 'manager@test.com', role: UserRole.MANAGER, companyId: 'comp-1', departmentIds: ['dept-7', 'dept-5'],
-            jobTitle: 'Project Manager', status: 'Active', joinedDate: '2022-05-20T00:00:00.000Z',
-            skills: ['Agile', 'Scrum', 'JIRA', 'Leadership'],
-            stats: { completedTasks: 25, inProgressTasks: 5, efficiency: 91, totalHours: 350, workload: 'Normal' },
-            rating: 9.1,
-            personalDetails: {
-                dateOfBirth: '1985-08-15T00:00:00.000Z',
-                nationality: 'American',
-                maritalStatus: 'Married',
-                gender: 'Female',
-            },
-            contactNumber: '+1 123-456-7890',
-            address: {
-                street: '456 Oak Avenue',
-                city: 'Metropolis',
-                state: 'CA',
-                zipCode: '90210',
-                country: 'USA'
-            },
-            familyMembers: [
-                { id: 'fm-1', name: 'John Doe', relationship: 'Spouse', dateOfBirth: '1984-07-20T00:00:00.000Z' }
-            ],
-            education: [
-                { id: 'edu-1', degree: 'MBA', institution: 'State University', yearOfCompletion: 2010 }
-            ],
-            compensation: {
-                salary: 120000,
-                payFrequency: 'Monthly',
-                bankDetails: {
-                    bankName: 'Metropolis Bank',
-                    accountNumber: '**** **** **** 1234',
-                    ifscCode: 'METB00001'
-                }
-            },
-            documents: [
-                { id: 'doc-1', name: 'Passport', status: 'Verified' },
-                { id: 'doc-2', name: 'Degree Certificate', status: 'Submitted' },
-                { id: 'doc-3', name: 'Address Proof', status: 'Pending' }
-            ]
-        },
-        { 
-            id: '3', name: 'Drone TV', email: 'drone@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
-            jobTitle: 'Developer', status: 'Active', joinedDate: '2024-01-15T00:00:00.000Z',
-            skills: ['React', 'TypeScript', 'Node.js', 'Python'],
-            stats: { completedTasks: 12, inProgressTasks: 3, efficiency: 92, totalHours: 156, workload: 'Normal' },
-            rating: 9.2,
-            personalDetails: {
-                dateOfBirth: '1992-03-22T00:00:00.000Z',
-                nationality: 'Canadian',
-                maritalStatus: 'Single',
-                gender: 'Male',
-            },
-            contactNumber: '+1 987-654-3210',
-            address: {
-                street: '123 Maple Street',
-                city: 'Toronto',
-                state: 'ON',
-                zipCode: 'M5V 2E9',
-                country: 'Canada'
-            },
-            education: [
-                { id: 'edu-2', degree: 'B.Sc. Computer Science', institution: 'University of Toronto', yearOfCompletion: 2014 }
-            ],
-            compensation: {
-                salary: 95000,
-                payFrequency: 'Bi-Weekly',
-                bankDetails: {
-                    bankName: 'CIBC',
-                    accountNumber: '**** **** **** 5678',
-                    ifscCode: 'CIBCCATT'
-                }
-            },
-            documents: [
-                { id: 'doc-4', name: 'Work Permit', status: 'Verified' },
-                { id: 'doc-5', name: 'Address Proof', status: 'Submitted' },
-            ]
-        },
-        { 
-            id: '4', name: 'Sarah Chen', email: 'sarah.chen@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-5'],
-            jobTitle: 'Designer', status: 'Active', joinedDate: '2024-02-01T00:00:00.000Z',
-            skills: ['UI/UX', 'Figma', 'Adobe Creative Suite', 'Prototyping'],
-            stats: { completedTasks: 8, inProgressTasks: 2, efficiency: 88, totalHours: 98, workload: 'Light' },
-            rating: 8.8
-        },
-        { 
-            id: '5', name: 'Mike Rodriguez', email: 'mike.rodriguez@example.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
-            jobTitle: 'Developer', status: 'Busy', joinedDate: '2023-11-10T00:00:00.000Z',
-            skills: ['Vue.js', 'Python', 'Docker', 'AWS'],
-            stats: { completedTasks: 18, inProgressTasks: 4, efficiency: 85, totalHours: 234, workload: 'Heavy' },
-            rating: 8.5
-        },
-        { 
-            id: '6', name: 'Jessica Brown', email: 'jessica.b@test.com', role: UserRole.EMPLOYEE, managerId: '2', companyId: 'comp-1', departmentIds: ['dept-7'],
-            jobTitle: 'QA Engineer', status: 'Offline', joinedDate: '2023-03-12T00:00:00.000Z',
-            skills: ['Jest', 'Cypress', 'Automation', 'CI/CD'],
-            stats: { completedTasks: 35, inProgressTasks: 1, efficiency: 98, totalHours: 180, workload: 'Light' },
-            rating: 9.8
-        },
-        { 
-            id: '7', name: 'David Miller', email: 'david.m@test.com', role: UserRole.EMPLOYEE, companyId: 'comp-1', departmentIds: ['dept-7'], // Belongs to no manager
-            jobTitle: 'DevOps Engineer', status: 'Active', joinedDate: '2022-08-01T00:00:00.000Z',
-            skills: ['Kubernetes', 'Terraform', 'Jenkins', 'GCP'],
-            stats: { completedTasks: 22, inProgressTasks: 2, efficiency: 93, totalHours: 210, workload: 'Normal' },
-            rating: 9.3
-        },
-        { 
-            id: '8', name: 'HR User', email: 'hr@test.com', role: UserRole.HR, companyId: 'comp-1', departmentIds: ['dept-3'],
-            jobTitle: 'HR Specialist', status: 'Active', joinedDate: '2023-01-10T00:00:00.000Z',
-            skills: ['Recruiting', 'Onboarding', 'Employee Relations'],
-            stats: { completedTasks: 10, inProgressTasks: 2, efficiency: 96, totalHours: 40, workload: 'Normal' },
-            rating: 9.6
-        },
-    ];
+    // Do not seed any static users; initialize as empty.
+    return [];
 };
 
 export const getUsers = (): User[] => {
@@ -146,9 +26,9 @@ export const getUsers = (): User[] => {
   if (usersJson) {
     return JSON.parse(usersJson);
   }
-  const initialUsers = getInitialUsers();
-  localStorage.setItem(USERS_KEY, JSON.stringify(initialUsers));
-  return initialUsers;
+  const emptyUsers: User[] = getInitialUsers();
+  localStorage.setItem(USERS_KEY, JSON.stringify(emptyUsers));
+  return emptyUsers;
 };
 
 const saveUsers = (users: User[]) => {

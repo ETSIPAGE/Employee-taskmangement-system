@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { ClockIcon, DocumentCheckIcon, ExclamationTriangleIcon, ArrowPathIcon } from '../../constants';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService';
+
 import { Project, Task, TaskStatus, User } from '../../types';
 import WorkReportsDashboardFixed from './WorkReportsDashboardFixed';
 
@@ -134,7 +134,7 @@ const ManagerDashboard: React.FC = () => {
             return;
         }
         try {
-            const allUsers = AuthService.getUsers();
+            const allUsers = await DataService.getUsers();
             const team = allUsers.filter(u => u.managerId === user.id);
             setTeamMembers(team);
 

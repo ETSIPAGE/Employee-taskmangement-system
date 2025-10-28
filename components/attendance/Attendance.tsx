@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types';
 import * as DataService from '../../services/dataService';
-import * as AuthService from '../../services/authService'; // Assuming this is for local user data
+
 import Modal from '../shared/Modal';
 
 const getInitials = (name: string) => {
@@ -86,24 +86,10 @@ const ManagerAttendanceView: React.FC = () => {
                 });
 
                 const presentIds = Array.from(new Set(filteredAttendance.map(rec => String(rec.userId))));
-                const apiUsers = await DataService.getUsers(true);
-                const localUsers = AuthService.getUsers(); // Assuming this fetches some local user data
+                const apiUsers = await DataService.getUsers();
 
                 const merged = new Map<string, User>();
-                for (const u of localUsers) merged.set(u.id, u);
-                for (const u of apiUsers) {
-                    const existing = merged.get(u.id);
-                    if (existing) {
-                        merged.set(u.id, {
-                            ...existing,
-                            ...u,
-                            departmentIds: (u.departmentIds && u.departmentIds.length > 0) ? u.departmentIds : existing.departmentIds,
-                            managerId: u.managerId !== undefined ? u.managerId : existing.managerId,
-                        });
-                    } else {
-                        merged.set(u.id, u);
-                    }
-                }
+                for (const u of apiUsers) merged.set(u.id, u);
 
                 const managerDeptIds = currentUser.departmentIds || [];
 
@@ -794,24 +780,10 @@ const AdminAttendanceView: React.FC = () => {
                     const dateString = formatLocalDate(selectedDate);
                     const attendanceRecords = await DataService.getAttendanceByDate(dateString);
                     const presentIds = Array.from(new Set(attendanceRecords.map(rec => String(rec.userId))));
-                    const apiUsers = await DataService.getUsers(true);
-                    const localUsers = AuthService.getUsers();
+                    const apiUsers = await DataService.getUsers();
 
                     const merged = new Map<string, User>();
-                    for (const u of localUsers) merged.set(u.id, u);
-                    for (const u of apiUsers) {
-                        const existing = merged.get(u.id);
-                        if (existing) {
-                            merged.set(u.id, {
-                                ...existing,
-                                ...u,
-                                departmentIds: (u.departmentIds && u.departmentIds.length > 0) ? u.departmentIds : existing.departmentIds,
-                                managerId: u.managerId !== undefined ? u.managerId : existing.managerId,
-                            });
-                        } else {
-                            merged.set(u.id, u);
-                        }
-                    }
+                    for (const u of apiUsers) merged.set(u.id, u);
 
                     const displayUsers: User[] = presentIds.map(id => {
                         const resolved = merged.get(id);
