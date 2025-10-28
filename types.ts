@@ -18,6 +18,7 @@ export interface Department {
   id: string;
   name: string;
   companyId: string; // Department should have a single companyId
+  timestamp?: string; // SK from DynamoDB for update operations
 }
 
 export interface UserStats {

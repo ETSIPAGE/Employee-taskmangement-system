@@ -287,22 +287,29 @@ const UserManagement: React.FC = () => {
         }
     }, [role]);
 
+    // Departments list for company filter chips in the header filter bar
+    const filterDepartmentsForCompany = useMemo(() => {
+        if (companyFilterIds.length === 0) return [] as Department[];
+        const selected = new Set(companyFilterIds);
+        return departments.filter(d => selected.has(d.companyId));
+    }, [departments, companyFilterIds]);
+
+    // Users filtered by search/filters and sorted by most recently created (joinedDate) first
     const filteredUsers = useMemo(() => {
-        return users.filter(u => {
+        const list = users.filter(u => {
             const searchMatch = u.name.toLowerCase().includes(searchTerm.toLowerCase()) || u.email.toLowerCase().includes(searchTerm.toLowerCase());
             const roleMatch = roleFilter === 'all' || u.role === roleFilter;
             const companyMatch = companyFilterIds.length === 0 || (u.companyId && companyFilterIds.includes(u.companyId));
             const deptMatch = deptFilterIds.length === 0 || (Array.isArray(u.departmentIds) && u.departmentIds.some(id => deptFilterIds.includes(id)));
             return searchMatch && roleMatch && companyMatch && deptMatch;
         });
+        list.sort((a, b) => {
+            const aT = (a.joinedDate && Date.parse(a.joinedDate)) || 0;
+            const bT = (b.joinedDate && Date.parse(b.joinedDate)) || 0;
+            return bT - aT; // Newest first
+        });
+        return list;
     }, [users, searchTerm, roleFilter, companyFilterIds, deptFilterIds]);
-
-    const filterDepartmentsForCompany = useMemo(() => {
-        // If multiple companies selected, show union of their departments
-        if (companyFilterIds.length === 0) return [] as Department[];
-        const selected = new Set(companyFilterIds);
-        return departments.filter(d => selected.has(d.companyId));
-    }, [departments, companyFilterIds]);
 
     const resetForm = useCallback(() => {
         setName('');
@@ -399,6 +406,7 @@ const UserManagement: React.FC = () => {
                     managerId: role === UserRole.EMPLOYEE ? (managerIds[0] || undefined) : undefined,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : undefined,
                     rating: rating,
+                    ...(password && password.trim() ? ({ password } as any) : {}),
                 };
                 await UserManagementService.updateEmployee(editingUser.id, updates);
                 showToast('Employee updated successfully!', 'success');
@@ -430,10 +438,12 @@ const UserManagement: React.FC = () => {
                     companyId: companyIdsSel[0],
                     departmentIds,
                     managerIds: role === UserRole.EMPLOYEE ? managerIds : [],
+                    password,
                 });
                 showToast('Employee created successfully!', 'success');
             }
             await loadData(); // Reload data after successful operation
+            setPassword('');
             handleCloseModal();
         } catch(err) {
             const msg = err instanceof Error ? err.message : 'An error occurred';
@@ -488,7 +498,7 @@ const UserManagement: React.FC = () => {
                         ))}
                     </div>
                     <select multiple value={deptFilterIds} onChange={(e) => {
-                        const opts = Array.from(e.target.selectedOptions).map(o => o.value);
+                        const opts = Array.from(e.currentTarget.selectedOptions).map(o => o.value);
                         setDeptFilterIds(opts);
                     }} className="w-full px-3 py-2 border border-slate-300 rounded-md min-h-[42px]">
                         {companyFilterIds.length === 0 ? (
@@ -581,7 +591,7 @@ const UserManagement: React.FC = () => {
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <Input id="name" type="text" label="Full Name" value={name} onChange={e => setName(e.target.value)} required />
                     <Input id="email" type="email" label="Email Address" value={email} onChange={e => setEmail(e.target.value)} required disabled={!!editingUser} />
-                    {!editingUser && <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required />}
+                    <Input id="password" type="password" label="Password" value={password} onChange={e => setPassword(e.target.value)} required={!editingUser} />
                      <div>
                         <label htmlFor="role" className="block text-sm font-medium text-slate-700">Role</label>
                         <select id="role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="mt-1 block w-full pl-3 pr-10 py-2 border-slate-300 rounded-md">

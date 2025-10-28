@@ -79,7 +79,7 @@ const ATTENDANCE_DATA: Record<string, string[]> = {
 // Update user via provided Users Update API
 export const updateUser = async (
     userId: string,
-    updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string }>
+    updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string; password?: string }>
 ): Promise<User> => {
     const candidateUrls = [
         `${USERS_UPDATE_API_PRIMARY_BASE_URL}/${encodeURIComponent(userId)}`,
@@ -97,6 +97,7 @@ export const updateUser = async (
         ...(Array.isArray((updates as any).managerIds) ? { managerIds: (updates as any).managerIds } : {}),
         ...(typeof (updates as any).managerId !== 'undefined' ? { managerId: (updates as any).managerId } : {}),
         ...(typeof updates.rating !== 'undefined' ? { rating: updates.rating } : {}),
+        ...((updates as any).password ? { password: (updates as any).password } : {}),
     };
 
     // Use only PUT method as required; try multiple candidate endpoints
@@ -1165,6 +1166,48 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
     return newProject;
 };
 
+// Delete department requires both PK (id) and SK (timestamp). Endpoint path-param id.
+export const deleteDepartment = async (id: string, timestamp?: string): Promise<void> => {
+    const BASE = 'https://yenhyjqy6h.execute-api.ap-south-1.amazonaws.com/prod/department';
+
+    // Resolve timestamp from cache/list if not provided
+    let ts = timestamp;
+    if (!ts && cachedDepartments && cachedDepartments.length > 0) {
+        ts = cachedDepartments.find(d => d.id === id)?.timestamp;
+    }
+    if (!ts) {
+        const all = await getDepartments();
+        ts = all.find(d => d.id === id)?.timestamp;
+    }
+    if (!ts) {
+        throw new Error("Department timestamp not available for delete. Ensure departments are loaded or pass timestamp explicitly.");
+    }
+
+    const payload = JSON.stringify({ id, timestamp: ts });
+    const candidates = [
+        `${BASE}/${encodeURIComponent(id)}`,
+        `${BASE}/${encodeURIComponent(id)}/`,
+    ];
+
+    let response: Response | undefined;
+    let lastErr = '';
+    for (const url of candidates) {
+        try {
+            const res = await authenticatedFetch(url, { method: 'DELETE', body: payload, skipAuth: true });
+            if (res.ok) { response = res; break; }
+            lastErr = await res.text().catch(() => `${res.status} ${res.statusText}`);
+        } catch (e: any) {
+            lastErr = String(e?.message || e);
+        }
+    }
+    if (!response) {
+        throw new Error(lastErr || `Failed to delete department ${id}.`);
+    }
+
+    // Invalidate cache so UI refreshes
+    cachedDepartments = null;
+};
+
 export const updateProject = async (projectId: string, projectTimestamp: string, updates: Partial<Project>): Promise<Project> => {
     const updateFields: any = {};
     if (updates.name !== undefined) updateFields.name = updates.name;
@@ -1277,6 +1320,8 @@ export const getDepartments = async (): Promise<Department[]> => {
                         ? String(dept.companyIds[0])
                         : String(dept.companyId || dept.company_id || dept.company || 'comp-1')
                        ).toLowerCase().trim(),
+            // Carry SK through UI if backend includes it in list payload
+            timestamp: dept.timestamp || dept.Timestamp || dept.sk || dept.SK || dept.sortKey,
         }));
         return cachedDepartments;
     } catch (error) {
@@ -1323,61 +1368,76 @@ export const createDepartment = async (name: string, companyId: string): Promise
 };
 
 export const updateDepartment = async (id: string, name: string, companyId: string): Promise<Department> => {
-    // Use same working endpoint with id in payload; no auth
-    const url = 'https://evnlmv27o2.execute-api.ap-south-1.amazonaws.com/prod/postdepartment';
-    const response = await authenticatedFetch(url, {
-        method: 'POST',
-        body: JSON.stringify({ id, name, companyIds: [companyId] }),
-        skipAuth: true
-    });
+    // New UPDATE endpoint (path-param id). Requires both id (PK) and timestamp (SK)
+    const BASE = 'https://x6ibvfh0od.execute-api.ap-south-1.amazonaws.com/prod/department';
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Failed to update department.');
+    // Prefer cached departments to retrieve the SK (timestamp)
+    let ts: string | undefined = undefined;
+    if (cachedDepartments && cachedDepartments.length > 0) {
+        ts = cachedDepartments.find(d => d.id === id)?.timestamp;
+    }
+    if (!ts) {
+        // Try refreshing departments to get timestamp from list payload
+        const all = await getDepartments();
+        ts = all.find(d => d.id === id)?.timestamp;
+    }
+    if (!ts) {
+        throw new Error("Department timestamp not available. Load departments first so SK is present, or provide a read endpoint.");
+    }
+
+    // Attempt update with multiple variants to avoid 'Missing Authentication Token'
+    const payload = JSON.stringify({ id, timestamp: ts, name, companyIds: [companyId] });
+    const updateVariants: Array<{ url: string; method: 'PUT' | 'PATCH' }> = [
+        { url: `${BASE}/${encodeURIComponent(id)}`, method: 'PUT' },
+        { url: `${BASE}/${encodeURIComponent(id)}/`, method: 'PUT' },
+        { url: `${BASE}/${encodeURIComponent(id)}`, method: 'PATCH' },
+        { url: `${BASE}/${encodeURIComponent(id)}/`, method: 'PATCH' },
+    ];
+    let response: Response | null = null;
+    let lastErrText = '';
+    for (const v of updateVariants) {
+        const res = await authenticatedFetch(v.url, { method: v.method, body: payload, skipAuth: true });
+        if (res.ok) { response = res; break; }
+        lastErrText = await res.text().catch(() => `${res.status} ${res.statusText}`);
+    }
+    if (!response) {
+        throw new Error(lastErrText || 'Failed to update department.');
     }
 
     cachedDepartments = null; // Invalidate cache
     const data = await parseApiResponse(response);
-    const updated = (data && (data.department || data.Department || data.item || data.Item)) || data;
+    // Backend returns { message, updatedData: resp.Attributes } where Attributes are DynamoDB AV map
+    const updated = (data && (data.department || data.Department || data.item || data.Item || data.updatedData)) || data;
+    let newId: string = id;
+    let newName: string = name;
+    let newCompanyId: string = companyId;
+    let newTimestamp: string = ts;
+    // Try to extract from DynamoDB AttributeValue map
+    if (updated && typeof updated === 'object' && updated.id && updated.timestamp) {
+        const av: any = updated; // AttributeValue map like { id: { S: '...' }, ... }
+        const getS = (x: any) => (x && typeof x === 'object' && 'S' in x) ? String(x.S) : undefined;
+        const getL0S = (x: any) => (x && typeof x === 'object' && Array.isArray(x.L) && x.L[0] && x.L[0].S) ? String(x.L[0].S) : undefined;
+        newId = getS(av.id) || newId;
+        newTimestamp = getS(av.timestamp) || newTimestamp;
+        newName = getS(av.name) || newName;
+        newCompanyId = getL0S(av.companyIds) || newCompanyId;
+    } else if (updated && typeof updated === 'object') {
+        // Plain object response
+        newId = (updated.id || newId);
+        newTimestamp = (updated.timestamp || newTimestamp);
+        newName = (updated.name || newName);
+        const compIds = (updated.companyIds || []);
+        if (Array.isArray(compIds) && compIds.length > 0) newCompanyId = String(compIds[0]);
+    }
     const dept: Department = {
-        id: updated?.id || id,
-        name: updated?.name || name,
-        companyId: updated?.companyId || (Array.isArray(updated?.companyIds) ? updated.companyIds[0] : companyId)
+        id: newId,
+        name: newName,
+        companyId: String(newCompanyId).toLowerCase().trim(),
+        timestamp: newTimestamp,
     };
+
+    // New endpoint updates in place by id; just return the normalized department
     return dept;
-};
-
-export const deleteDepartment = async (id: string): Promise<void> => {
-    // Delete only the exact requested department id
-    const base = 'https://n844w7gm0d.execute-api.ap-south-1.amazonaws.com/prod';
-    const attempts: { url: string; method: 'DELETE' | 'POST'; skipAuth?: boolean; noContentType?: boolean; body?: any }[] = [
-        { url: `${base}/deletedepartment/${encodeURIComponent(id)}`, method: 'DELETE', skipAuth: true },
-        { url: `${base}/deletedepartment/${encodeURIComponent(id)}?latest=1`, method: 'DELETE', skipAuth: true },
-        { url: `${base}/deletedepartment`, method: 'POST', body: { id, latest: 1 }, noContentType: true },
-    ];
-    let lastErr: any = null;
-    for (const a of attempts) {
-        try {
-            const res = await authenticatedFetch(a.url, {
-                method: a.method,
-                body: a.body ? JSON.stringify(a.body) : undefined,
-                skipAuth: a.skipAuth,
-                noContentType: a.noContentType
-            });
-            await parseApiResponse(res);
-            lastErr = null;
-            break;
-        } catch (e) {
-            lastErr = e;
-            continue;
-        }
-    }
-    if (lastErr) throw lastErr;
-
-    if (cachedDepartments) {
-        cachedDepartments = cachedDepartments.filter(d => d.id !== id);
-    }
-    cachedDepartments = null; // Invalidate cache for fresh reload
 };
 
 export const getCompanies = async (): Promise<Company[]> => {
