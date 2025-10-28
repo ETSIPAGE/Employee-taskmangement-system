@@ -77,6 +77,7 @@ export const createEmployee = async (payload: {
   companyId?: string;
   departmentIds?: string[];
   managerIds?: string[];
+  password?: string;
 }): Promise<User> => {
   const body: any = {
     name: payload.name,
@@ -86,6 +87,9 @@ export const createEmployee = async (payload: {
     departmentIds: payload.departmentIds || [],
     managerIds: payload.managerIds || [],
   };
+  if (typeof payload.password !== 'undefined') {
+    body.password = payload.password;
+  }
 
   const response = await fetch(EMPLOYEE_CREATE_API_URL, {
     method: 'POST',
@@ -101,9 +105,9 @@ export const createEmployee = async (payload: {
 
 export const updateEmployee = async (
   userId: string,
-  updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string }>
+  updates: Partial<Pick<User, 'name' | 'role' | 'departmentIds' | 'companyId' | 'rating'> & { managerIds?: string[]; managerId?: string; password?: string }>
 ): Promise<User> => {
-  const updated = await DataService.updateUser(userId, updates);
+  const updated = await DataService.updateUser(userId, updates as any);
   // Ensure consumers get fresh data next calls
   DataService.invalidateUsersCache();
   return updated;
