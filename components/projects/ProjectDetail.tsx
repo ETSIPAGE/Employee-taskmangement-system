@@ -449,6 +449,9 @@ const ProjectDetail: React.FC = () => {
         <div>
             <div className="flex justify-between items-start mb-6">
                 <div>
+                    <Link to="/projects" className="inline-block mb-2">
+                        <Button>Back to Projects</Button>
+                    </Link>
                     <h1 className="text-3xl font-bold text-slate-800">{project.name}</h1>
                     <div className="flex items-center space-x-6 mt-2 text-sm text-slate-600">
                         {company && (
@@ -490,7 +493,6 @@ const ProjectDetail: React.FC = () => {
                         <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
                             {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
                         </Button>
-                        <Button onClick={handleOpenModal}>Create New Task</Button>
                     </div>
                 )}
             </div>

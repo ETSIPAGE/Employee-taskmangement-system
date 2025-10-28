@@ -486,8 +486,8 @@ const UserManagement: React.FC = () => {
                                 <input
                                     type="checkbox"
                                     checked={companyFilterIds.includes(c.id)}
-                                    onChange={(e) => {
-                                        const { checked } = e.target;
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                                        const { checked } = e.currentTarget;
                                         setDeptFilterIds([]); // reset department filter when companies change
                                         setCompanyFilterIds(prev => checked ? [...prev, c.id] : prev.filter(id => id !== c.id));
                                     }}
@@ -605,6 +605,20 @@ const UserManagement: React.FC = () => {
                             {companies.length === 0 && (
                                 <p className="text-sm text-slate-500">No companies available.</p>
                             )}
+                            {companies.length > 0 && (
+                                <label className="flex items-center gap-2 p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={companyIdsSel.length === companies.length}
+                                        onChange={(e) => {
+                                            const { checked } = e.currentTarget;
+                                            setCompanyIdsSel(checked ? companies.map(c => c.id) : []);
+                                        }}
+                                        className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                    />
+                                    <span className="text-sm text-slate-800 truncate">Select All</span>
+                                </label>
+                            )}
                             {companies.map(c => (
                                 <label key={c.id} className="flex items-center gap-2 p-1 rounded hover:bg-slate-50 cursor-pointer">
                                     <input
@@ -612,7 +626,7 @@ const UserManagement: React.FC = () => {
                                         value={c.id}
                                         checked={companyIdsSel.includes(c.id)}
                                         onChange={(e) => {
-                                            const { checked, value } = e.target;
+                                            const { checked, value } = e.currentTarget;
                                             setCompanyIdsSel(prev => checked ? [...prev, value] : prev.filter(id => id !== value));
                                         }}
                                         className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
@@ -625,6 +639,26 @@ const UserManagement: React.FC = () => {
 
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">Departments</label>
+                        {companyDepartments.length > 0 && (
+                            <label className="flex items-center mb-2 text-sm text-slate-800">
+                                <input
+                                    type="checkbox"
+                                    checked={companyDepartments.length > 0 && companyDepartments.every(d => departmentIds.includes(d.id))}
+                                    onChange={(e) => {
+                                        const { checked } = e.currentTarget;
+                                        if (checked) {
+                                            const allIds = companyDepartments.map(d => d.id);
+                                            setDepartmentIds(prev => Array.from(new Set([...prev, ...allIds])));
+                                        } else {
+                                            const removeSet = new Set(companyDepartments.map(d => d.id));
+                                            setDepartmentIds(prev => prev.filter(id => !removeSet.has(id)));
+                                        }
+                                    }}
+                                    className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                />
+                                <span className="ml-2">Select All</span>
+                            </label>
+                        )}
                         <div className="grid grid-cols-2 gap-2 border border-slate-300 rounded-md p-2 max-h-32 overflow-y-auto">
                             {companyIdsSel.length === 0 && <p className="text-sm text-slate-500 col-span-2">Select a company to see departments.</p>}
                             {companyIdsSel.length > 0 && companyDepartments.length === 0 && (
@@ -652,6 +686,26 @@ const UserManagement: React.FC = () => {
                         <div>
                             <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
                             <div className="mt-1 max-h-40 overflow-y-auto border border-slate-300 rounded-md p-2 space-y-2">
+                                {filteredManagers.length > 0 && (
+                                    <label className="flex items-center p-1 rounded hover:bg-slate-50 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={filteredManagers.length > 0 && filteredManagers.every(m => managerIds.includes(m.id))}
+                                            onChange={(e) => {
+                                                const { checked } = e.currentTarget;
+                                                if (checked) {
+                                                    const allIds = filteredManagers.map(m => m.id);
+                                                    setManagerIds(prev => Array.from(new Set([...prev, ...allIds])));
+                                                } else {
+                                                    const removeSet = new Set(filteredManagers.map(m => m.id));
+                                                    setManagerIds(prev => prev.filter(id => !removeSet.has(id)));
+                                                }
+                                            }}
+                                            className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                        />
+                                        <span className="ml-2 text-sm text-slate-800">Select All</span>
+                                    </label>
+                                )}
                                 {companyIdsSel.length > 0 && departmentIds.length === 0 && (
                                     <p className="text-xs text-slate-500">Select at least one department to see managers.</p>
                                 )}
@@ -666,7 +720,7 @@ const UserManagement: React.FC = () => {
                                             value={m.id}
                                             checked={managerIds.includes(m.id)}
                                             onChange={(e) => {
-                                                const { value, checked } = e.target;
+                                                const { value, checked } = e.currentTarget;
                                                 setManagerIds(prev => checked ? [...prev, value] : prev.filter(id => id !== value));
                                             }}
                                             className="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
