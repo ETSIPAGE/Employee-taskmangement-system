@@ -271,11 +271,17 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
     return sessionUser;
 };
 
-
 export const logout = (): void => {
-  localStorage.removeItem(CURRENT_USER_KEY);
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(ORIGINAL_USER_KEY);
+  try {
+    localStorage.clear();
+  } catch (e) {
+    console.error('Failed to clear localStorage on logout', e);
+  }
+  try {
+    sessionStorage.clear();
+  } catch (e) {
+    console.error('Failed to clear sessionStorage on logout', e);
+  }
 };
 
 export const getCurrentUser = (): User | null => {
