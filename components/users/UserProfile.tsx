@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link, Navigate } from 'react-router-dom';
+import { useParams, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+
 import * as AuthService from '../../services/authService'; // Keep if needed for local user data
 import * as DataService from '../../services/dataService';
 import { User, Task, Project, TaskStatus, UserRole, Department } from '../../types';
 import { MailIcon, CalendarIcon, BriefcaseIcon, ClockIcon, CheckCircleIcon, ExclamationTriangleIcon, TrendingUpIcon } from '../../constants';
 import { useAuth } from '../../hooks/useAuth';
-import StarRating from '../shared/StarRating';
 
 const getInitials = (name: string) => {
     if (!name) return '';
@@ -29,7 +29,10 @@ const StatCard: React.FC<{ icon: React.ReactNode; value: string | number; label:
 const UserProfile: React.FC = () => {
     const { userId } = useParams<{ userId: string }>();
     const { user: currentUser } = useAuth();
-    
+    const location = useLocation();
+    const navigate = useNavigate();
+    const from: any = (location.state as any)?.from;
+
     const [user, setUser] = useState<User | null>(null);
     const [tasks, setTasks] = useState<Task[]>([]);
     const [projects, setProjects] = useState<Record<string, Project>>({});
@@ -51,13 +54,13 @@ const UserProfile: React.FC = () => {
                     userTasks, 
                     allProjects, 
                     allDepts, 
-                    allUsers // CORRECTED: Use DataService.getUsers()
+                    allUsers 
                 ] = await Promise.all([
-                    DataService.getUserById(userId), // CORRECTED: Use DataService.getUserById()
+                    DataService.getUserById(userId), 
                     DataService.getTasksByAssignee(userId),
                     DataService.getAllProjects(),
                     DataService.getDepartments(),
-                    DataService.getUsers() // CORRECTED: Use DataService.getUsers()
+                    DataService.getUsers() 
                 ]);
 
                 if (fetchedUser) {
@@ -100,21 +103,31 @@ const UserProfile: React.FC = () => {
         return <div className="text-center p-10">User not found.</div>;
     }
     
-    // Authorization check: Only Admin can view *any* profile for now.
-    // You might want to extend this to allow managers to view their team, or employees to view their own.
-    if (currentUser?.role !== UserRole.ADMIN) {
-        // Redirect if not authorized.
-        // You could also show a "Access Denied" message here.
-        return <Navigate to="/" />; 
+    // Authorization: Allow Admin, Manager, HR, or the user themselves to view this profile
+    const canViewProfile = !!currentUser && (
+        currentUser.role === UserRole.ADMIN ||
+        currentUser.role === UserRole.MANAGER ||
+        currentUser.role === UserRole.HR ||
+        currentUser.id === userId
+    );
+    if (!canViewProfile) {
+        return <Navigate to="/" />;
     }
 
     return (
         <div>
             <div className="mb-6">
-                <Link to="/users" className="text-sm font-medium text-indigo-600 hover:text-indigo-500 flex items-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
-                    Back to All Employees
-                </Link>
+                {from ? (
+                    <button onClick={() => navigate(-1)} className="text-sm font-medium text-indigo-600 hover:text-indigo-500 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                        Back to Previous
+                    </button>
+                ) : (
+                    <Link to="/users" className="text-sm font-medium text-indigo-600 hover:text-indigo-500 flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                        Back to All Employees
+                    </Link>
+                )}
             </div>
 
             {/* Header */}
@@ -193,7 +206,11 @@ const UserProfile: React.FC = () => {
                                 <tbody className="divide-y divide-slate-200">
                                     {tasks.map(task => (
                                         <tr key={task.id}>
-                                            <td className="px-4 py-3 font-medium text-slate-800">{task.name}</td>
+                                            <td className="px-4 py-3 font-medium text-slate-800">
+                                                <Link to={`/tasks/${task.id}`} state={{ from: location }} className="text-indigo-600 hover:text-indigo-500">
+                                                    {task.name}
+                                                </Link>
+                                            </td>
                                             <td className="px-4 py-3 text-slate-600">{projects[task.projectId]?.name || 'N/A'}</td>
                                             <td className="px-4 py-3 text-slate-600">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                             <td className="px-4 py-3">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
@@ -48,6 +48,9 @@ export interface ProjectDisplayData extends Project {
 
 const ProjectDetail: React.FC = () => {
     const { projectId } = useParams<{ projectId: string }>();
+    const location = useLocation();
+    const navigate = useNavigate();
+    const from: any = (location.state as any)?.from;
     const { user } = useAuth();
 
     const [project, setProject] = useState<ProjectDisplayData | null>(null);
@@ -55,6 +58,7 @@ const ProjectDetail: React.FC = () => {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [departments, setDepartments] = useState<Department[]>([]);
     const [assignableEmployees, setAssignableEmployees] = useState<User[]>([]);
+    const [allUsersState, setAllUsersState] = useState<User[]>([]);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -177,7 +181,19 @@ const ProjectDetail: React.FC = () => {
                 DataService.getDepartments()
             ]);
 
-            setCompany(projectCompany || null);
+            if (projectCompany) {
+                setCompany(projectCompany);
+            } else {
+                // Fallback: fetch all companies and try to resolve by ID
+                try {
+                    const allCompanies = await DataService.getCompanies();
+                    const resolved = allCompanies.find(c => c.id === projectWithDisplayData.companyId) || null;
+                    setCompany(resolved);
+                } catch {
+                    setCompany(null);
+                }
+            }
+            setAllUsersState(allUsers);
             
             const employeesInProjectCompany = allUsers.filter(u => 
                 u.role === UserRole.EMPLOYEE && 
@@ -215,6 +231,46 @@ const ProjectDetail: React.FC = () => {
         }, {} as Record<TaskStatus, Task[]>);
         return categorized;
     }, [tasks]);
+
+    // IMPORTANT: Hooks must be declared before any conditional returns
+    const managerNames = useMemo(() => {
+        if (!project) return 'Unassigned';
+        const names = (project.managerIds || [])
+            .map(id => allUsersState.find(u => u.id === id)?.name)
+            .filter(Boolean)
+            .join(', ');
+        return names || 'Unassigned';
+    }, [project, allUsersState]);
+
+    const employeeNames = useMemo(() => {
+        if (!tasks || tasks.length === 0) return '—';
+        const ids = new Set<string>();
+        tasks.forEach(t => (t.assigneeIds || []).forEach(id => ids.add(id)));
+        const names = Array.from(ids)
+            .map(id => allUsersState.find(u => u.id === id && u.role === UserRole.EMPLOYEE))
+            .filter((u): u is User => !!u)
+            .map(u => u.name)
+            .join(', ');
+        return names || '—';
+    }, [tasks, allUsersState]);
+
+    const managerList = useMemo(() => {
+        const list = (project?.managerIds || [])
+            .map(id => allUsersState.find(u => u.id === id))
+            .filter((u): u is User => !!u)
+            .map(u => ({ id: u.id, name: u.name }));
+        return list;
+    }, [project, allUsersState]);
+
+    const employeeList = useMemo(() => {
+        const ids = new Set<string>();
+        tasks.forEach(t => (t.assigneeIds || []).forEach(id => ids.add(id)));
+        const list = Array.from(ids)
+            .map(id => allUsersState.find(u => u.id === id && u.role === UserRole.EMPLOYEE))
+            .filter((u): u is User => !!u)
+            .map(u => ({ id: u.id, name: u.name }));
+        return list;
+    }, [tasks, allUsersState]);
 
     const handleOpenModal = () => setIsTaskModalOpen(true);
     const handleCloseModal = () => {
@@ -404,9 +460,9 @@ const ProjectDetail: React.FC = () => {
             <div className="text-center p-8">
                 <h2 className="text-2xl font-bold text-slate-700">Project Not Found</h2>
                 <p className="text-slate-500 mt-2">The project you are looking for does not exist.</p>
-                <Link to="/projects" className="mt-4 inline-block">
-                    <Button>Back to Projects</Button>
-                </Link>
+                <button onClick={() => (from ? navigate(-1) : navigate('/projects'))} className="mt-4 inline-block">
+                    <Button>Back</Button>
+                </button>
                 {toast && <Toast message={toast} onClose={hideToast} />}
             </div>
         );
@@ -437,21 +493,23 @@ const ProjectDetail: React.FC = () => {
             <div className="text-center p-8">
                 <h2 className="text-2xl font-bold text-slate-700">Access Denied</h2>
                 <p className="text-slate-500 mt-2">You are not authorized to view the details of this project.</p>
-                <Link to="/projects" className="mt-4 inline-block">
-                    <Button>Back to Projects</Button>
-                </Link>
+                <button onClick={() => (from ? navigate(-1) : navigate('/projects'))} className="mt-4 inline-block">
+                    <Button>Back</Button>
+                </button>
                 {toast && <Toast message={toast} onClose={hideToast} />}
             </div>
         );
     }
 
+    
+
     return (
         <div>
             <div className="flex justify-between items-start mb-6">
                 <div>
-                    <Link to="/projects" className="inline-block mb-2">
-                        <Button>Back to Projects</Button>
-                    </Link>
+                    <button onClick={() => (from ? navigate(-1) : navigate('/projects'))} className="inline-block mb-2">
+                        <Button>Back</Button>
+                    </button>
                     <h1 className="text-3xl font-bold text-slate-800">{project.name}</h1>
                     <div className="flex items-center space-x-6 mt-2 text-sm text-slate-600">
                         {company && (
@@ -488,13 +546,51 @@ const ProjectDetail: React.FC = () => {
                         </div>
                     </div>
                 </div>
-                {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
-                    <div className="flex items-center space-x-3 flex-shrink-0">
+                <div className="flex flex-col items-stretch space-y-3 flex-shrink-0 w-80">
+                    {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
                         <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
                             {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
                         </Button>
+                    )}
+                    <div className="bg-white rounded-lg shadow p-4 text-sm text-slate-700">
+                        <div className="mb-2">
+                            <div className="text-slate-500">Company</div>
+                            <div className="font-medium">{company?.name || 'N/A'}</div>
+                        </div>
+                        <div className="mb-2">
+                            <div className="text-slate-500">Departments</div>
+                            <div className="font-medium">{project.departmentIds?.map(id => departments.find(d => d.id === id)?.name).filter(Boolean).join(', ') || 'N/A'}</div>
+                        </div>
+                        <div className="mb-2">
+                            <div className="text-slate-500">Managers</div>
+                            <div className="font-medium flex flex-wrap gap-2">
+                                {managerList.length > 0 ? (
+                                    managerList.map(m => (
+                                        <Link key={m.id} to={`/users/${m.id}`} state={{ from: location }} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full hover:bg-slate-200 hover:text-slate-900 transition-colors">
+                                            {m.name}
+                                        </Link>
+                                    ))
+                                ) : (
+                                    <span className="text-slate-500">Unassigned</span>
+                                )}
+                            </div>
+                        </div>
+                        <div>
+                            <div className="text-slate-500">Employees</div>
+                            <div className="font-medium flex flex-wrap gap-2">
+                                {employeeList.length > 0 ? (
+                                    employeeList.map(emp => (
+                                        <Link key={emp.id} to={`/users/${emp.id}`} state={{ from: location }} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full hover:bg-slate-200 hover:text-slate-900 transition-colors">
+                                            {emp.name}
+                                        </Link>
+                                    ))
+                                ) : (
+                                    <span className="text-slate-500">—</span>
+                                )}
+                            </div>
+                        </div>
                     </div>
-                )}
+                </div>
             </div>
 
             {project.roadmap && project.roadmap.length > 0 ? (

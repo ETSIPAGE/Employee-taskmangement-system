@@ -63,12 +63,6 @@ const Login: React.FC = () => {
                         {isLoading ? 'Signing In...' : 'Sign In'}
                     </Button>
                 </form>
-                <p className="text-center text-sm text-slate-500 mt-6">
-                    Don't have an account?{' '}
-                    <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
-                        Sign up
-                    </Link>
-                </p>
             </div>
         </div>
     );

@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
-import { Task, TaskStatus, User, UserRole } from '../../types';
+import { Task, TaskStatus, User, UserRole, Project } from '../../types';
+
 import { ArrowPathIcon, ClipboardListIcon, CheckCircleIcon, ClockIcon, EditIcon, TrashIcon } from '../../constants';
 import Toast from '../shared/Toast';
 
@@ -126,6 +127,7 @@ type Props = { hideAllMembersReports?: boolean };
 const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [notes, setNotes] = useState<Record<string, any>>(() => {
@@ -161,14 +163,16 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     const load = async () => {
       setIsLoading(true);
       try {
-        const [u, allTasks] = await Promise.all([
-          Promise.resolve(AuthService.getUsers?.() as User[] || []),
-          Promise.resolve(DataService.getAllTasks?.() as Promise<Task[]>)
+        const [u, allTasks, allProjects] = await Promise.all([
+          DataService.getUsers(),
+          DataService.getAllTasks(),
+          DataService.getAllProjects()
         ]);
         if (cancelled) return;
         setUsers(Array.isArray(u) ? u : []);
         const t = Array.isArray(allTasks) ? allTasks : [];
         setTasks(t);
+        setProjects(Array.isArray(allProjects) ? allProjects : []);
       } catch {
         if (!cancelled) {
           setUsers([]);
@@ -357,11 +361,13 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
             // re-run effect by toggling loading and calling loaders
             setIsLoading(true);
             Promise.all([
-              Promise.resolve(AuthService.getUsers?.() as User[] || []),
-              Promise.resolve(DataService.getAllTasks?.() as Promise<Task[]>)
-            ]).then(([u, t]) => {
+              DataService.getUsers(),
+              DataService.getAllTasks(),
+              DataService.getAllProjects()
+            ]).then(([u, t, p]) => {
               setUsers(Array.isArray(u) ? u : []);
               setTasks(Array.isArray(t) ? t : []);
+              setProjects(Array.isArray(p) ? p : []);
             }).finally(() => setIsLoading(false));
           }}
           disabled={isLoading}
@@ -387,13 +393,13 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
         getStatus={getStatusFor}
       />
       {selectedDate && isTeamView && isTeamModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl">
-            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">Team Work Reports • {selectedDate}</h3>
-              <button onClick={() => { setIsTeamModal(false); setSelectedDate(null); }} className="text-slate-500 hover:text-slate-700">✕</button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl ring-1 ring-slate-200">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-white rounded-t-2xl">
+              <h3 className="text-2xl font-bold text-slate-800">Team Work Reports • {selectedDate}</h3>
+              <button onClick={() => { setIsTeamModal(false); setSelectedDate(null); }} className="h-9 w-9 inline-flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-700">✕</button>
             </div>
-            <div className="p-5 max-h-[70vh] overflow-y-auto">
+            <div className="p-6 max-h-[72vh] overflow-y-auto">
               {(() => {
                 // Manager view with assigned employees
                 const managerId = user?.id ? String(user.id) : '';
@@ -413,17 +419,60 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                 } catch {}
 
                 // Employees assigned under this manager
-                const assignedEmployees = (users || []).filter(u => {
-                  if (String(u.id) === managerId) return false;
-                  // only employees
-                  if (u.role !== UserRole.EMPLOYEE) return false;
-                  const m1 = u.managerId ? String(u.managerId) === managerId : false;
-                  const m2 = Array.isArray(u.managerIds) ? u.managerIds.map(String).includes(managerId) : false;
-                  const m3 = (tasks || []).some(t => String(t.assign_by || '') === managerId && (t.assigneeIds || []).includes(u.id));
-                  return m1 || m2 || m3;
+                // Build comprehensive team for manager
+                const managedProjects = (projects || []).filter(p => (p.managerIds || []).map(String).includes(managerId));
+                const managedProjectIds = new Set(managedProjects.map(p => p.id));
+                const managedDeptIds = new Set<string>(managedProjects.flatMap(p => p.departmentIds || []));
+                const employeeIdsFromManagedTasks = new Set<string>();
+                (tasks || []).forEach(t => {
+                  if (managedProjectIds.has(t.projectId)) {
+                    (t.assigneeIds || []).forEach(id => employeeIdsFromManagedTasks.add(String(id)));
+                  }
                 });
+                const byId: Record<string, User> = {};
+                (users || []).forEach(u => {
+                  if (String(u.id) === managerId) return;
+                  if (u.role !== UserRole.EMPLOYEE) return;
+                  const direct = u.managerId ? String(u.managerId) === managerId : false;
+                  const multiMgr = Array.isArray(u.managerIds) ? u.managerIds.map(String).includes(managerId) : false;
+                  const inDept = (u.departmentIds || []).some(id => managedDeptIds.has(id));
+                  const fromTasks = employeeIdsFromManagedTasks.has(String(u.id));
+                  if (direct || multiMgr || inDept || fromTasks) {
+                    byId[String(u.id)] = u;
+                  }
+                });
+                // Include anyone with a note for this date (from users list)
+                (users || []).forEach(u => {
+                  if (u.role !== UserRole.EMPLOYEE) return;
+                  const note = getNoteForUser(selectedDate, u.id);
+                  if (note && (note.text || '').trim().length > 0) {
+                    byId[String(u.id)] = u;
+                  }
+                });
+                // Also include note-only user IDs not present in users list (create stubs)
+                try {
+                  const noteUserIds = Object.keys(notes || {}).filter(k => k.endsWith(`:${selectedDate}`)).map(k => k.split(':')[0]);
+                  noteUserIds.forEach(uid => {
+                    if (String(uid) === String(managerId)) return; // never include manager in employee list
+                    if (!byId[String(uid)]) {
+                      const note = getNoteForUser(selectedDate, uid);
+                      if (note && (note.text || '').trim().length > 0) {
+                        const stub: User = {
+                          id: String(uid),
+                          name: 'Employee',
+                          email: '',
+                          role: UserRole.EMPLOYEE,
+                          status: 'Active',
+                          joinedDate: new Date().toISOString(),
+                        } as User;
+                        byId[String(uid)] = stub;
+                      }
+                    }
+                  });
+                } catch {}
+                const assignedEmployees = Object.values(byId);
                 // Build employees list for the right column
-                // Manager view: show only employees who actually have report text for that date
+                // Manager view: show ONLY employees who saved a report for this date
                 let employeesForDate = assignedEmployees.filter(u => {
                   const note = getNoteForUser(selectedDate, u.id);
                   return !!(note && (note.text || '').trim().length > 0);
@@ -451,6 +500,29 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                     const note = getNoteForUser(selectedDate, u.id);
                     return !!(note && (note.text || '').trim().length > 0);
                   });
+                  // Augment with any note-only user IDs so reports are visible even if user list misses them
+                  try {
+                    const noteUserIds = Object.keys(notes || {}).filter(k => k.endsWith(`:${selectedDate}`)).map(k => k.split(':')[0]);
+                    const existingIds = new Set(employeesForDate.map(u => String(u.id)));
+                    const managerIdsSet = new Set(managerUsers.map(m => String(m.id)));
+                    noteUserIds.forEach(uid => {
+                      if (managerIdsSet.has(String(uid))) return; // do not add manager notes to employee list
+                      if (!existingIds.has(String(uid))) {
+                        const note = getNoteForUser(selectedDate, uid);
+                        if (note && (note.text || '').trim().length > 0) {
+                          const stub: User = {
+                            id: String(uid),
+                            name: 'Employee',
+                            email: '',
+                            role: UserRole.EMPLOYEE,
+                            status: 'Active',
+                            joinedDate: new Date().toISOString(),
+                          } as User;
+                          employeesForDate.push(stub);
+                        }
+                      }
+                    });
+                  } catch {}
                 }
 
                 // Build Admin view filters + pagination datasets
@@ -482,7 +554,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                   <div className={`grid grid-cols-1 ${isAdmin ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6`}>
                     <div className="space-y-3">
                       <div className="text-sm font-semibold text-slate-700">{sectionLabel}</div>
-                      <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                      <div className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm">
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <div className="text-sm font-semibold text-slate-800">{user?.name}</div>
@@ -517,16 +589,16 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                             value={teamDrafts[managerId] || ''}
                             onChange={e => setTeamDrafts(prev => ({ ...prev, [managerId]: e.target.value }))}
                             placeholder={`Add your report...`}
-                            className="w-full h-24 rounded border px-3 py-2 text-sm border-slate-300 focus:ring-2 focus:ring-indigo-500"
+                            className="w-full h-28 rounded-md border px-3 py-2 text-sm border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                           />
                           <div className="mt-2 flex justify-end space-x-2">
                             {teamEditing[managerId] && (
-                              <button onClick={() => cancelEditTeamNote(managerId)} className="px-2 py-1 text-sm rounded bg-slate-100 hover:bg-slate-200">Cancel</button>
+                              <button onClick={() => cancelEditTeamNote(managerId)} className="px-3 py-1.5 text-sm rounded-md bg-slate-100 hover:bg-slate-200">Cancel</button>
                             )}
                             <button
                               onClick={() => saveTeamNoteForUser(managerId)}
                               disabled={!(teamDrafts[managerId] || '').trim()}
-                              className={`px-3 py-1.5 text-sm rounded text-white ${((teamDrafts[managerId] || '').trim()) ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-300 cursor-not-allowed'}`}
+                              className={`px-4 py-1.5 text-sm rounded-md text-white ${((teamDrafts[managerId] || '').trim()) ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-300 cursor-not-allowed'}`}
                             >
                               Save
                             </button>
@@ -544,11 +616,11 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                             value={adminMgrQuery}
                             onChange={e => { setAdminMgrQuery(e.target.value); setAdminMgrPage(1); }}
                             placeholder="Search"
-                            className="text-sm border border-slate-300 rounded px-2 py-1"
+                            className="text-sm border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-indigo-500"
                           />
                         </div>
                         {mgrTotal === 0 ? (
-                          <div className="text-slate-500 text-sm border border-slate-200 rounded-lg p-4 bg-slate-50">No manager reports or tasks for this date.</div>
+                          <div className="text-slate-500 text-sm border border-slate-200 rounded-xl p-5 bg-slate-50">No manager reports or tasks for this date.</div>
                         ) : (
                           <div className="space-y-4">
                             {mgrPageItems.map(m => {
@@ -556,7 +628,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                               const text = note?.text || '';
                               const savedAt = note?.savedAt ? new Date(note.savedAt).toLocaleString() : undefined;
                               return (
-                                <div key={m.id} className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                                <div key={m.id} className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm">
                                   <div className="flex items-center justify-between mb-2">
                                     <div>
                                       <div className="text-sm font-semibold text-slate-800">{m.name}</div>
@@ -588,13 +660,13 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                             value={adminEmpQuery}
                             onChange={e => { setAdminEmpQuery(e.target.value); setAdminEmpPage(1); }}
                             placeholder="Search"
-                            className="text-sm border border-slate-300 rounded px-2 py-1"
+                            className="text-sm border border-slate-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-indigo-500"
                           />
                         )}
                       </div>
                       {isAdmin ? (
                         empTotal === 0 ? (
-                          <div className="text-slate-500 text-sm border border-slate-200 rounded-lg p-4 bg-slate-50">No employee reports for this date.</div>
+                          <div className="text-slate-500 text-sm border border-slate-200 rounded-xl p-5 bg-slate-50">No employee reports for this date.</div>
                         ) : (
                           <div className="space-y-4">
                             {empPageItems.map(u => {
@@ -602,7 +674,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                               const text = note?.text || '';
                               const savedAt = note?.savedAt ? new Date(note.savedAt).toLocaleString() : undefined;
                               return (
-                                <div key={u.id} className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                                <div key={u.id} className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm">
                                   <div className="flex items-center justify-between mb-2">
                                     <div>
                                       <div className="text-sm font-semibold text-slate-800">{u.name}</div>
@@ -625,7 +697,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                         )
                       ) : (
                       employeesForDate.length === 0 ? (
-                        <div className="text-slate-500 text-sm border border-slate-200 rounded-lg p-4 bg-slate-50">No employee reports for this date.</div>
+                        <div className="text-slate-500 text-sm border border-slate-200 rounded-xl p-5 bg-slate-50">No employee reports for this date.</div>
                       ) : (
                         <div className="space-y-4">
                           {employeesForDate.map(u => {
@@ -633,7 +705,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                             const text = note?.text || '';
                             const savedAt = note?.savedAt ? new Date(note.savedAt).toLocaleString() : undefined;
                             return (
-                              <div key={u.id} className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                              <div key={u.id} className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm">
                                 <div className="flex items-center justify-between mb-2">
                                   <div>
                                     <div className="text-sm font-semibold text-slate-800">{u.name}</div>
@@ -641,7 +713,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                                   </div>
                                   {savedAt && <div className="text-xs text-slate-500">Saved: {savedAt}</div>}
                                 </div>
-                                <div className="text-sm whitespace-pre-wrap text-slate-700 min-h-[2rem]">{text}</div>
+                                <div className="text-sm whitespace-pre-wrap text-slate-700 min-h-[2rem]">{text || 'No report for this date.'}</div>
                               </div>
                             );
                           })}
@@ -653,56 +725,74 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                 );
               })()}
             </div>
-            <div className="px-5 pb-5 flex justify-end items-center space-x-2">
-              <button onClick={() => { setIsTeamModal(false); setSelectedDate(null); }} className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded">Close</button>
+            <div className="px-6 py-4 border-t border-slate-200 text-right rounded-b-2xl bg-white/60">
+              <button onClick={() => { setIsTeamModal(false); setSelectedDate(null); }} className="inline-flex items-center px-4 py-2 rounded-md bg-slate-800 text-white hover:bg-slate-700">Close</button>
             </div>
           </div>
         </div>
       )}
       {selectedDate && !isTeamView && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-slate-800">End of Day Work Report • {selectedDate}</h3>
-              <button onClick={closeModal} className="text-slate-500 hover:text-slate-700">✕</button>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl ring-1 ring-slate-200">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-white rounded-t-2xl">
+              <h3 className="text-xl font-bold text-slate-800">End of Day Work Report • {selectedDate}</h3>
+              <button onClick={closeModal} className="h-9 w-9 inline-flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-700">✕</button>
             </div>
-            <div className="p-5">
-              <div className="mb-3 flex items-center justify-end">
-                <div className="flex items-center space-x-2">
-                  <button
-                    type="button"
-                    onClick={() => { setIsEditing(true); const el = document.getElementById('eod-note-area') as HTMLTextAreaElement | null; el?.focus(); }}
-                    title="Edit"
-                    className="p-1 rounded hover:bg-slate-100 text-slate-600"
-                  >
-                    <EditIcon className="w-5 h-5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteNote}
-                    disabled={!getNote(selectedDate)?.text}
-                    title="Delete"
-                    className={`p-1 rounded ${getNote(selectedDate)?.text ? 'hover:bg-red-50 text-red-600' : 'text-slate-300 cursor-not-allowed'}`}
-                  >
-                    <TrashIcon className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-              {!isTeamView && getStatusFor(selectedDate) === 'missed' && (
-                <div className="mb-3 text-sm text-red-600">You missed submitting your report for this day.</div>
-              )}
-              <textarea
-                id="eod-note-area"
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                placeholder="Write what you worked on..."
-                readOnly={!isEditing}
-                className={`w-full h-32 rounded border px-3 py-2 text-sm focus:outline-none ${isEditing ? 'border-slate-300 focus:ring-2 focus:ring-indigo-500' : 'border-slate-200 bg-slate-50 cursor-not-allowed'}`}
-              />
+            <div className="p-6">
+              {(() => {
+                const note = selectedDate ? getNote(selectedDate) : undefined;
+                const status = selectedDate ? getStatusFor(selectedDate) : 'none';
+                const hasText = !!(note && (note.text || '').trim().length > 0);
+                return (
+                  <div>
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="text-sm">
+                        {hasText ? (
+                          <div className="text-emerald-600">You have a report for this day{note?.savedAt ? ` • Saved: ${new Date(note.savedAt).toLocaleString()}` : ''}.</div>
+                        ) : status === 'missed' ? (
+                          <div className="text-red-600">Missed report. Add your report:</div>
+                        ) : (
+                          <div className="text-slate-500">Add your report for this day:</div>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {hasText && !isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => { setIsEditing(true); setDraft(note?.text || ''); }}
+                            title="Edit"
+                            className="p-1 rounded hover:bg-slate-100 text-slate-600"
+                          >
+                            <EditIcon className="w-5 h-5" />
+                          </button>
+                        )}
+                        {hasText && (
+                          <button
+                            type="button"
+                            onClick={deleteNote}
+                            title="Delete"
+                            className="p-1 rounded hover:bg-red-50 text-red-600"
+                          >
+                            <TrashIcon className="w-5 h-5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <textarea
+                      id="eod-note-area"
+                      value={draft}
+                      onChange={e => setDraft(e.target.value)}
+                      placeholder="Write what you worked on..."
+                      readOnly={!isEditing && hasText}
+                      className={`w-full h-40 rounded-md border px-3 py-2 text-sm focus:outline-none ${(!isEditing && hasText) ? 'border-slate-200 bg-slate-50' : 'border-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500'}`}
+                    />
+                  </div>
+                );
+              })()}
             </div>
-            <div className="px-5 pb-5 flex justify-end items-center space-x-2">
-              <button onClick={closeModal} className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded">Cancel</button>
-              <button onClick={saveNote} disabled={!isEditing} className={`px-3 py-1.5 rounded text-white ${isEditing ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-300 cursor-not-allowed'}`}>Save</button>
+            <div className="px-6 pb-6 flex justify-end items-center space-x-2">
+              <button onClick={closeModal} className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-md">Cancel</button>
+              <button onClick={saveNote} disabled={!isEditing || !draft.trim()} className={`px-4 py-1.5 rounded-md text-white ${(!isEditing || !draft.trim()) ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>Save</button>
             </div>
           </div>
         </div>

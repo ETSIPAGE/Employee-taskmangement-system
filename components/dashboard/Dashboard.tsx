@@ -6,7 +6,7 @@ import ManagerDashboard from './ManagerDashboard';
 import EmployeeDashboard from './EmployeeDashboard';
 import HRDashboard from './HRDashboard';
 import RolesDashboard from './RolesDashboard';
-import WorkReportsDashboardFixed from './WorkReportsDashboardFixed';
+import WorkReportsDashboard from './WorkReportsDashboard';
 import { useLocation } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
@@ -28,7 +28,7 @@ const Dashboard: React.FC = () => {
     }
     
     if (user.role === UserRole.ADMIN && isWorkReportsView) {
-        return <WorkReportsDashboardFixed />;
+        return <WorkReportsDashboard />;
     }
 
     switch (user.role) {
