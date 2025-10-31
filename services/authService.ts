@@ -280,6 +280,16 @@ export const logout = (): void => {
   try {
     if (preservedNotes !== null) localStorage.setItem('ets_work_notes', preservedNotes);
   } catch {}
+  try {
+    localStorage.clear();
+  } catch (e) {
+    console.error('Failed to clear localStorage on logout', e);
+  }
+  try {
+    sessionStorage.clear();
+  } catch (e) {
+    console.error('Failed to clear sessionStorage on logout', e);
+  }
 };
 
 export const getCurrentUser = (): User | null => {

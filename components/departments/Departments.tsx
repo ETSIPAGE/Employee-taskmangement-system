@@ -28,6 +28,8 @@ const DepartmentCard: React.FC<{ department: DepartmentWithStats; onEdit: (dept:
     return (
         <div 
             className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all hover:shadow-lg cursor-pointer"
+            onClick={() => navigate(`/departments/${department.id}`)}
+            title="View department analytics"
         >
             <div>
                 <div className="mb-4 border-b pb-3">

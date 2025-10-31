@@ -21,6 +21,7 @@ import Departments from './components/departments/Departments';
 import Companies from './components/companies/Companies';
 import CompanyProjects from './components/companies/CompanyProjects';
 import DepartmentProjects from './components/departments/DepartmentProjects';
+import DepartmentAnalytics from './components/departments/DepartmentAnalytics';
 import Profile from './components/profile/Profile';
 import TaskDetail from './components/tasks/TaskDetail';
 import OnboardingForm from './components/onboarding/OnboardingForm';
@@ -67,7 +68,7 @@ const App: React.FC = () => {
                 <Route path="/companies" element={<Companies />} />
                 <Route path="/companies/:companyId" element={<CompanyProjects />} />
                 <Route path="/departments" element={<Departments />} />
-                <Route path="/departments/:departmentId" element={<DepartmentProjects />} />
+                <Route path="/departments/:departmentId" element={<DepartmentAnalytics />} />
                 <Route path="/admin-tasks" element={<AdminTasks />} />
                 <Route path="/attendance" element={<Attendance />} />
                 <Route path="/settings" element={<Settings />} />
