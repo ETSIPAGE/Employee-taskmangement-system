@@ -14,6 +14,7 @@ export interface ProjectDisplayData extends Project {
     departmentNames: string;
     companyName: string;
     overallStatus: string;
+    employeeNames?: string;
     // 'timestamp' is already inherited from Project
 }
 
@@ -40,12 +41,17 @@ const CompanyProjects: React.FC = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const currentCompany = await DataService.getCompanyById(companyId); 
-            console.log("CompanyProjects: Fetched currentCompany details:", currentCompany);
-            
+            // Normalize incoming ID (Companies list uses lowercase IDs)
+            const normalizedCompanyId = String(companyId).toLowerCase().trim();
+
+            // Fetch companies and locate target by normalized id
+            const allCompanies = await DataService.getCompanies();
+            const currentCompany = allCompanies.find(c => String(c.id).toLowerCase().trim() === normalizedCompanyId);
+            console.log("CompanyProjects: Fetched companies, resolved currentCompany:", currentCompany);
+
             if (!currentCompany) {
                 setCompany(null);
-                setIsLoading(false); 
+                setIsLoading(false);
                 setError(`Company with ID '${companyId}' not found.`);
                 console.warn(`CompanyProjects: Company with ID '${companyId}' not found.`);
                 return;
@@ -66,8 +72,8 @@ const CompanyProjects: React.FC = () => {
 
 
             const companyProjects = allProjects.filter(p => {
-                const projectCompanyId = typeof p.companyId === 'string' ? p.companyId.trim() : String(p.companyId).trim();
-                const targetCompanyId = companyId.trim();
+                const projectCompanyId = String(p.companyId || '').toLowerCase().trim();
+                const targetCompanyId = String(currentCompany.id || '').toLowerCase().trim();
                 return projectCompanyId === targetCompanyId;
             });
 
@@ -143,6 +149,17 @@ const CompanyProjects: React.FC = () => {
                     ? p.departmentIds.map(id => allDepartments.find(d => d.id === id)?.name).filter(Boolean).join(', ')
                     : 'N/A';
                 
+                // *** 4. Compute employees working on this project from tasks ***
+                const employeeIds = Array.from(new Set(
+                    allTasks
+                        .filter(t => t.projectId === p.id)
+                        .flatMap(t => t.assigneeIds || [])
+                ));
+                const employeeNames = employeeIds
+                    .map(id => allUsers.find(u => u.id === id && u.role)?.name)
+                    .filter(Boolean)
+                    .join(', ');
+                
                 return {
                     ...p,
                     managerNames: managerNames || 'Unassigned', // Add managerNames
@@ -150,6 +167,7 @@ const CompanyProjects: React.FC = () => {
                     overallStatus, // Add overallStatus
                     departmentNames,
                     companyName: currentCompany.name, 
+                    employeeNames,
                 };
             }));
             setProjects(projectsWithDetails);
@@ -202,6 +220,8 @@ const CompanyProjects: React.FC = () => {
                             overallStatus={project.overallStatus}
                             // Also pass managerNames if ProjectCard displays it
                             managerNames={project.managerNames}
+                            employeeNames={project.employeeNames}
+                            linkState={{ from: { pathname: `/companies/${company.id}` } }}
                         />
                     ))}
                 </div>

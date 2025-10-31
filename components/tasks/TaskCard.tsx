@@ -15,9 +15,10 @@ const TaskCard: React.FC<{
     task: Task;
     projectName?: string;
     assigneeNames?: string[];
+    assigneeName?: string;
     onDelete?: (taskId: string) => void;
     onEdit?: (task: Task) => void;
-}> = ({ task, projectName, assigneeNames, onDelete, onEdit }) => {
+}> = ({ task, projectName, assigneeNames, assigneeName, onDelete, onEdit }) => {
     const navigate = useNavigate();
 
     const statusStyles: Record<TaskStatus, string> = {
@@ -106,23 +107,33 @@ const TaskCard: React.FC<{
             {/* Bottom Row */}
             <div className="flex justify-between items-center">
                 <div className="flex items-center -space-x-2">
-                    {(assigneeNames && assigneeNames.length > 0) ? (
-                        assigneeNames.slice(0, 3).map((name, index) => (
+                    {(() => {
+                        const names = assigneeNames && assigneeNames.length > 0
+                            ? assigneeNames
+                            : (assigneeName ? assigneeName.split(',').map(s => s.trim()).filter(Boolean) : []);
+                        return names.length > 0 ? (
+                            names.slice(0, 3).map((name, index) => (
                             <div key={index} title={name} className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-600 font-bold text-xs ring-2 ring-white">
                                 {getInitials(name)}
                             </div>
                         ))
-                    ) : (
+                        ) : (
                         <div className="flex items-center">
                             <UserCircleIcon className="h-5 w-5 text-slate-400" />
                             <span className="ml-2 text-sm font-medium text-slate-700">Unassigned</span>
                         </div>
-                    )}
-                    {assigneeNames && assigneeNames.length > 3 && (
+                        );
+                    })()}
+                    {(() => {
+                        const names = assigneeNames && assigneeNames.length > 0
+                            ? assigneeNames
+                            : (assigneeName ? assigneeName.split(',').map(s => s.trim()).filter(Boolean) : []);
+                        return names.length > 3 ? (
                         <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-xs ring-2 ring-white">
-                            +{assigneeNames.length - 3}
+                            +{names.length - 3}
                         </div>
-                    )}
+                        ) : null;
+                    })()}
                 </div>
                 
                 <div className="flex items-center space-x-2">

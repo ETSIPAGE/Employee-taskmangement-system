@@ -4,8 +4,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { ClockIcon, DocumentCheckIcon, ExclamationTriangleIcon, ArrowPathIcon } from '../../constants';
 import * as DataService from '../../services/dataService';
 
-import { Project, Task, TaskStatus, User } from '../../types';
-import WorkReportsDashboardFixed from './WorkReportsDashboardFixed';
+import { Project, Task, TaskStatus, User, MilestoneStatus } from '../../types';
+import WorkReportsDashboard from './WorkReportsDashboard';
 
 const StatCard = ({ icon, title, value, color }: { icon: React.ReactNode, title: string, value: string, color: string }) => (
     <div className="bg-white rounded-lg shadow-lg p-5 flex items-center">
@@ -141,9 +141,13 @@ const ManagerDashboard: React.FC = () => {
             const managerProjects = await DataService.getProjectsByManager(user.id);
 
             const projectsWithProgressPromises = managerProjects.map(async p => {
-                const projectTasks = await DataService.getTasksByProject(p.id);
-                const completedTasks = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                const progress = projectTasks.length > 0 ? Math.round((completedTasks / projectTasks.length) * 100) : 0;
+                const roadmap = p.roadmap || [];
+                const progress = roadmap.length > 0
+                    ? Math.round(((
+                        roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length * 1 +
+                        roadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length * 0.5
+                      ) / roadmap.length) * 100)
+                    : 0;
                 
                 let status = "On Track";
                 let statusColor = "bg-green-500";
@@ -271,7 +275,7 @@ const ManagerDashboard: React.FC = () => {
                 <div className="bg-white rounded-lg shadow-lg p-6">
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Work Reports</h2>
                     <div className="-mx-6 -mb-6">
-                        <WorkReportsDashboardFixed />
+                        <WorkReportsDashboard />
                     </div>
                 </div>
             </div>

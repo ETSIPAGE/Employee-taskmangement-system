@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService'; // Make sure this is imported
@@ -19,12 +19,12 @@ export interface ProjectDisplayData extends Project {
     departmentNames: string;
     companyName: string;
     overallStatus: string;
+    employeeNames: string;
 }
 
 // NOTE: parseApiResponse is not used internally by DataService.fetchData
 // and is not directly used in this component's CRUD operations.
 // Keeping it for backward compatibility if other parts of your app use it.
-// Removed as it's not used and DataService has its own robust parsing.
 /*
 const parseApiResponse = async (response: Response) => {
     if (!response.ok) {
@@ -55,6 +55,7 @@ const parseApiResponse = async (response: Response) => {
 const Projects: React.FC = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
 
     const [projects, setProjects] = useState<ProjectDisplayData[]>([]);
     const [allManagers, setAllManagers] = useState<User[]>([]);
@@ -103,6 +104,15 @@ const Projects: React.FC = () => {
 
         let progress = 0;
         let overallStatus: string = 'Pending';
+        // Collect assigned employee names from tasks under this project
+        const projectTasksForEmployees = await DataService.getTasksByProject(project.id);
+        const uniqueEmployeeIds = Array.from(new Set(projectTasksForEmployees.flatMap(t => t.assigneeIds || [])));
+        const employeeNames = uniqueEmployeeIds
+            .map((id) => usersList.find((u) => u.id === id && u.role === UserRole.EMPLOYEE))
+            .filter((u): u is User => !!u)
+            .map(u => u.name)
+            .join(', ');
+
 
         if (project.roadmap && project.roadmap.length > 0) {
             const totalMilestones = project.roadmap.length;
@@ -135,7 +145,7 @@ const Projects: React.FC = () => {
             // Fallback to tasks if no roadmap
             // IMPORTANT: Fetch tasks here to ensure fresh data for this specific project
             // Make sure DataService.getTasksByProject is implemented in dataService.ts
-            const projectTasks = await DataService.getTasksByProject(project.id);
+            const projectTasks = projectTasksForEmployees;
             const completedTasks = projectTasks.filter(
                 (t) => t.status === TaskStatus.COMPLETED
             ).length;
@@ -170,6 +180,7 @@ const Projects: React.FC = () => {
             overallStatus,
             departmentNames,
             companyName: company?.name || 'N/A',
+            employeeNames: employeeNames || '—',
         };
     }, []);
 
@@ -239,6 +250,18 @@ const Projects: React.FC = () => {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    // When navigated with ?companyId=, preselect that company filter once companies are loaded
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const qCompanyId = params.get('companyId');
+        if (qCompanyId && companies.length > 0) {
+            const exists = companies.some(c => c.id === qCompanyId);
+            if (exists) {
+                setCompanyFilter(qCompanyId);
+            }
+        }
+    }, [location.search, companies]);
 
 
     // Effect to fetch departments when company changes in the modal
@@ -674,7 +697,6 @@ const Projects: React.FC = () => {
                     <ViewSwitcher view={view} setView={setView} />
                 </div>
             </div>
-
             {filteredProjects.length === 0 ? (
                 <div className="text-center py-12 bg-white rounded-lg shadow">
                     <h3 className="text-xl font-semibold text-slate-700">No Projects Found</h3>
@@ -689,6 +711,7 @@ const Projects: React.FC = () => {
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Departments</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Managers</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assigned Employees</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Deadline</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Priority</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
@@ -707,11 +730,14 @@ const Projects: React.FC = () => {
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 whitespace-no-wrap">{project.companyName || 'N/A'}</p>
                                     </td>
-                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-600 whitespace-no-wrap">{project.departmentNames}</p>
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 whitespace-no-wrap">{project.managerNames}</p>
+                                    </td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
+                                        <p className="text-slate-900 whitespace-no-wrap">{project.employeeNames}</p>
                                     </td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
                                         <p className="text-slate-900 whitespace-no-wrap">{project.deadline ? new Date(project.deadline).toLocaleDateString() : 'N/A'}</p>
@@ -745,9 +771,6 @@ const Projects: React.FC = () => {
                                             >
                                                 View Roadmap
                                             </button>
-                                            {/* Only allow edit/delete for ADMIN or MANAGERS. */}
-                                            {/* Managers can only edit/delete their own projects (backend logic for this). */}
-                                            {/* UI-wise, we show the buttons, but backend should enforce permissions. */}
                                             {[UserRole.ADMIN, UserRole.MANAGER].includes(user?.role as UserRole) && (
                                                 <>
                                                     <button

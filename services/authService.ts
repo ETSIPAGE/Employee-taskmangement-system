@@ -271,17 +271,20 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
     return sessionUser;
 };
 
-
 export const logout = (): void => {
-  localStorage.removeItem(CURRENT_USER_KEY);
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(ORIGINAL_USER_KEY);
+  // Preserve employee work reports so admin/manager views can aggregate after relogin
+  let preservedNotes: string | null = null;
+  try { preservedNotes = localStorage.getItem('ets_work_notes'); } catch {}
+  try { localStorage.clear(); } catch {}
+  try { sessionStorage.clear(); } catch {}
+  try {
+    if (preservedNotes !== null) localStorage.setItem('ets_work_notes', preservedNotes);
+  } catch {}
 };
 
 export const getCurrentUser = (): User | null => {
   // Prime the user store if it doesn't exist
   getUsers();
-  
   const userJson = localStorage.getItem(CURRENT_USER_KEY);
   return userJson ? JSON.parse(userJson) : null;
 };

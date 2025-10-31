@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Company, UserRole, TaskStatus, User, Department, Project, MilestoneStatus } from '../../types';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 
 import Modal from '../shared/Modal';
 import Button from '../shared/Button';
@@ -21,11 +21,13 @@ interface CompanyWithStats extends Company {
     projectsPending: number;
 }
 
-const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; onDelete?: () => void }> = ({ company, onEdit, onDelete }) => {
+const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; onDelete?: () => void; onOpenProjects?: () => void }> = ({ company, onEdit, onDelete, onOpenProjects }) => {
     return (
-        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all">
+        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col justify-between transition-all cursor-pointer hover:shadow-lg" onClick={onOpenProjects} role="button" aria-label={`Open ${company.name} projects`}>
             <div>
-                <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-3">{company.name}</h3>
+                <h3 className="text-xl font-bold text-slate-800 mb-4 border-b pb-3">
+                    <span className="hover:text-indigo-600">{company.name}</span>
+                </h3>
 
                 <div className="mb-4">
                     <h4 className="text-sm font-semibold text-slate-500 mb-2">Organization</h4>
@@ -65,7 +67,7 @@ const CompanyCard: React.FC<{ company: CompanyWithStats; onEdit?: () => void; on
                 </div>
             </div>
 
-            <div className="mt-4 flex justify-end space-x-2">
+            <div className="mt-4 flex justify-end space-x-2" onClick={e => e.stopPropagation()}>
                 <button
                     type="button"
                     onClick={onEdit}
@@ -93,6 +95,8 @@ type ToastMessage = {
 
 const Companies: React.FC = () => {
     const { user } = useAuth();
+    const navigate = useNavigate();
+
     const [companiesWithStats, setCompaniesWithStats] = useState<CompanyWithStats[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isCreateEditModalOpen, setIsCreateEditModalOpen] = useState(false);
@@ -122,7 +126,6 @@ const Companies: React.FC = () => {
     const CREATE_COMPANY_API_URL = "https://j5dfp9hh9k.execute-api.ap-south-1.amazonaws.com/del/Ets-Create-Com-pz";
     const EDIT_COMPANY_BASE_URL = "https://f25828ro5f.execute-api.ap-south-1.amazonaws.com/edt/Ets-edit-com";
     const DELETE_COMPANY_BASE_URL = "https://o46q7fnoel.execute-api.ap-south-1.amazonaws.com/prod/Ets-del-pz";
-
 
     const loadData = useCallback(async () => {
         setIsLoading(true);
@@ -171,7 +174,7 @@ const Companies: React.FC = () => {
 
                 // --- COMPANY-SPECIFIC DEBUGGING LOGS ---
                 console.log(`\n--- Processing Company: ${comp.name} (Normalized ID: ${companyId}) ---`);
-                
+
                 // Filter users for this company with consistent normalization
                 const usersInCompany = allUsers.filter(u => {
                     const normalizedUserCompanyId = String(u.companyId || '').toLowerCase().trim();
@@ -203,14 +206,14 @@ const Companies: React.FC = () => {
                     return matches;
                 });
                 const projectCount = projectsInCompany.length;
-                
+
                 let projectsCompleted = 0;
                 let projectsInProgress = 0;
                 let projectsPending = 0;
 
                 projectsInCompany.forEach(project => {
                     let projectStatus: string = 'Pending';
-                    
+
                     if (project.roadmap && project.roadmap.length > 0) {
                         const totalMilestones = project.roadmap.length;
                         const completedMilestones = project.roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
@@ -231,13 +234,13 @@ const Companies: React.FC = () => {
                     } else {
                         // Simplified project status if no roadmap, based on deadline
                         if (project.deadline && new Date(project.deadline) < new Date()) {
-                            projectStatus = 'Overdue'; 
+                            projectStatus = 'Overdue';
                         }
                     }
 
                     // Final check for overdue status
                     if (projectStatus !== 'Completed' && project.deadline && new Date(project.deadline) < new Date()) {
-                        projectStatus = 'Overdue'; 
+                        projectStatus = 'Overdue';
                     }
 
                     if (projectStatus === 'Completed') {
@@ -267,7 +270,7 @@ const Companies: React.FC = () => {
 
             setCompaniesWithStats(companiesWithCalculatedStats);
             if (rawCompanies.length > 0) {
-                 addToast('Companies loaded successfully!', 'success');
+                addToast('Companies loaded successfully!', 'success');
             }
         } catch (error: any) {
             console.error("Failed to load company data:", error.message || error);
@@ -276,7 +279,7 @@ const Companies: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [user, addToast]); 
+    }, [user, addToast]);
 
     useEffect(() => {
         let isMounted = true;
@@ -397,7 +400,7 @@ const Companies: React.FC = () => {
 
     if (user?.role !== UserRole.ADMIN) {
         if (!currentToast || currentToast.message !== "You do not have permission to view this page.") {
-             addToast("You do not have permission to view this page.", "error");
+            addToast("You do not have permission to view this page.", "error");
         }
         return <Navigate to="/" />;
     }
@@ -440,6 +443,7 @@ const Companies: React.FC = () => {
                     <CompanyCard
                         key={comp.id}
                         company={comp}
+                        onOpenProjects={() => navigate(`/companies/${comp.id}`)}
                         onEdit={() => {
                             setEditingCompany(comp);
                             setNewCompanyName(comp.name);

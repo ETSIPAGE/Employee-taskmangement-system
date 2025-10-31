@@ -18,7 +18,8 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
 
     useEffect(() => {
         if (isOpen) {
-            setRoadmap(project.roadmap || []);
+            const sorted = [...(project.roadmap || [])].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+            setRoadmap(sorted);
         }
     }, [isOpen, project.roadmap]);
 
@@ -39,11 +40,17 @@ const RoadmapBuilderModal: React.FC<RoadmapBuilderModalProps> = ({ isOpen, onClo
     };
 
     const handleChange = (id: string, field: keyof ProjectMilestone, value: string) => {
-        setRoadmap(prev => prev.map(ms => ms.id === id ? { ...ms, [field]: value } : ms));
+        setRoadmap(prev => {
+            const updated = prev.map(ms => ms.id === id ? { ...ms, [field]: value } : ms);
+            // Re-sort when startDate is changed to keep UI ordered
+            const sorted = [...updated].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+            return sorted;
+        });
     };
 
     const handleSave = () => {
-        onSave(roadmap);
+        const sorted = [...roadmap].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+        onSave(sorted);
     };
 
     const formatDateForInput = (isoDate: string) => isoDate ? isoDate.split('T')[0] : '';

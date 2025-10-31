@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { User, UserRole } from '../../types';
+import { User, UserRole, Project, Task } from '../../types';
 import * as DataService from '../../services/dataService'; // Ensure this import is correct
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link, useLocation } from 'react-router-dom';
 import StarRating from '../shared/StarRating';
 
 const getInitials = (name: string) => {
@@ -13,7 +13,7 @@ const getInitials = (name: string) => {
     return name.substring(0, 2).toUpperCase();
 }
 
-const EmployeeCard: React.FC<{ employee: User }> = ({ employee }) => {
+const EmployeeCard: React.FC<{ employee: User; fromState: any }> = ({ employee, fromState }) => {
     // Note: DataService.isUserOnline(employee.id) would be better here for real-time status.
     // For now, keeping the random logic as in your original code.
     const isOnline = useMemo(() => Math.random() > 0.5, []); 
@@ -36,15 +36,16 @@ const EmployeeCard: React.FC<{ employee: User }> = ({ employee }) => {
                     <StarRating rating={employee.rating} />
                 </div>
             )}
-            <button className="w-full mt-2 px-4 py-2 text-sm font-medium rounded-md bg-white text-slate-700 hover:bg-slate-100 transition-colors border border-slate-300 shadow-sm">
+            <Link to={`/users/${employee.id}`} state={{ from: fromState }} className="w-full mt-2 px-4 py-2 text-sm font-medium rounded-md bg-white text-slate-700 hover:bg-slate-100 transition-colors border border-slate-300 shadow-sm text-center">
                 View Profile
-            </button>
+            </Link>
         </div>
     );
 };
 
 const MyTeam: React.FC = () => {
     const { user } = useAuth();
+    const location = useLocation();
     const [teamMembers, setTeamMembers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -53,15 +54,44 @@ const MyTeam: React.FC = () => {
             if (user && user.role === UserRole.MANAGER) {
                 setLoading(true);
                 try {
-                    // CORRECTED: Use DataService.getUsers() as per dataService.ts
-                    const apiUsers = await DataService.getUsers(); 
-                    
-                    // Filter to find the current manager (if present in the API users)
-                    // and employees who report to this manager.
+                    // Load users, projects, tasks to infer team members comprehensively
+                    const [apiUsers, projects, allTasks] = await Promise.all([
+                        DataService.getUsers(),
+                        DataService.getAllProjects(),
+                        DataService.getAllTasks(),
+                    ]);
+
                     const me = apiUsers.find(u => u.id === user.id);
-                    const members = apiUsers.filter(u => u.role === UserRole.EMPLOYEE && u.managerId === user.id);
-                    
-                    // Include the manager themselves at the beginning of the list, if found.
+
+                    // Direct reports by explicit managerId
+                    const directReports = apiUsers.filter(u => u.role === UserRole.EMPLOYEE && u.managerId === user.id);
+
+                    // Employees working on projects managed by this manager (via tasks)
+                    const managedProjects = projects.filter(p => (p.managerIds || []).includes(user.id));
+                    const managedProjectIds = new Set(managedProjects.map(p => p.id));
+                    const managedDeptIds = new Set<string>(managedProjects.flatMap(p => p.departmentIds || []));
+                    const employeeIdsFromManagedTasks = new Set<string>();
+                    allTasks.forEach((t: Task) => {
+                        if (managedProjectIds.has(t.projectId)) {
+                            (t.assigneeIds || []).forEach(id => employeeIdsFromManagedTasks.add(id));
+                        }
+                    });
+                    const employeesFromManagedTasks = apiUsers.filter(
+                        u => u.role === UserRole.EMPLOYEE && employeeIdsFromManagedTasks.has(u.id)
+                    );
+
+                    // Employees in departments of manager's projects
+                    const employeesInManagedDepts = apiUsers.filter(u => {
+                        if (u.role !== UserRole.EMPLOYEE) return false;
+                        const uDepts = u.departmentIds || [];
+                        return uDepts.some(id => managedDeptIds.has(id));
+                    });
+
+                    // Union of employees
+                    const byId: Record<string, User> = {};
+                    [...directReports, ...employeesFromManagedTasks, ...employeesInManagedDepts].forEach(u => { byId[u.id] = u; });
+                    const members = Object.values(byId);
+
                     setTeamMembers(me ? [me, ...members] : members);
                 } catch (error) {
                     console.error("Failed to fetch team members", error);
@@ -99,7 +129,7 @@ const MyTeam: React.FC = () => {
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {teamMembers.map(member => (
-                        <EmployeeCard key={member.id} employee={member} />
+                        <EmployeeCard key={member.id} employee={member} fromState={location} />
                     ))}
                 </div>
             )}

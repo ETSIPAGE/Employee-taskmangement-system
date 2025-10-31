@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 
-import { Project, Task, TaskStatus, User, UserRole } from '../../types';
+import { Project, Task, TaskStatus, User, UserRole, MilestoneStatus } from '../../types';
 import { ChartBarIcon, ClipboardListIcon, UsersIcon, ExclamationTriangleIcon, ArrowPathIcon } from '../../constants';
 
 const StatCard = ({ icon, title, value, color }: { icon: React.ReactNode, title: string, value: string, color: string }) => (
@@ -130,13 +130,17 @@ const AdminDashboard: React.FC = () => {
             setProjectsMap(new Map(projects.map(p => [p.id, p])));
 
             const projectProgressPromises = projects.map(async p => {
-                const projectTasks = await DataService.getTasksByProject(p.id);
-                const completed = projectTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-                return {
-                    label: p.name,
-                    value: projectTasks.length > 0 ? Math.round((completed / projectTasks.length) * 100) : 0,
-                };
+                const roadmap = p.roadmap || [];
+                if (roadmap.length === 0) {
+                    return { label: p.name, value: 0 };
+                }
+                const total = roadmap.length;
+                const completed = roadmap.filter(m => m.status === MilestoneStatus.COMPLETED).length;
+                const inProgress = roadmap.filter(m => m.status === MilestoneStatus.IN_PROGRESS).length;
+                const progress = Math.round(((completed * 1 + inProgress * 0.5) / total) * 100);
+                return { label: p.name, value: progress };
             });
+
             const projectProgress = await Promise.all(projectProgressPromises);
             
             const overdueTasks = tasks.filter(t => t.dueDate && new Date(t.dueDate) < new Date() && t.status !== TaskStatus.COMPLETED)

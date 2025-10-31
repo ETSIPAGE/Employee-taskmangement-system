@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
-import { Task, TaskStatus, User, Project, UserRole, Note } from '../../types';
+import { Task, TaskStatus, User, Project, UserRole, Note, Department, Company } from '../../types';
+
 import Button from '../shared/Button';
 import { ClockIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
 
@@ -28,6 +29,7 @@ const TaskDetail: React.FC = () => {
     const { taskId } = useParams<{ taskId: string }>();
     const { user: currentUser } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
 
     const [task, setTask] = useState<Task | null>(null);
     const [project, setProject] = useState<Project | null>(null);
@@ -38,6 +40,8 @@ const TaskDetail: React.FC = () => {
     const [saveError, setSaveError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isEditingAssignees, setIsEditingAssignees] = useState(false);
+    const [departments, setDepartments] = useState<Department[]>([]);
+    const [company, setCompany] = useState<Company | null>(null);
 
     // Initial state for editedTask should be based on task, or empty if task is null
     const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number }>({});
@@ -83,11 +87,25 @@ const TaskDetail: React.FC = () => {
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
-                DataService.getUsers() // CORRECTED: Use DataService.getUsers()
+                DataService.getUsers()
             ]);
 
             setProject(taskProject || null);
             setAllUsers(users);
+
+            if (taskProject) {
+                const [allDepts, companies] = await Promise.all([
+                    DataService.getDepartments(),
+                    DataService.getCompanies().catch(() => [])
+                ]);
+                const deptSet = new Set(taskProject.departmentIds || []);
+                setDepartments(allDepts.filter(d => deptSet.has(d.id)));
+                const comp = companies.find((c: Company) => c.id === taskProject.companyId);
+                setCompany(comp || null);
+            } else {
+                setDepartments([]);
+                setCompany(null);
+            }
             setIsEditingAssignees(false);
 
         } catch (error) {
@@ -235,9 +253,44 @@ const TaskDetail: React.FC = () => {
                     </button>
                     <h1 className="text-3xl font-bold text-slate-800">{task.name}</h1>
                     {project && (
-                        <p className="text-slate-500 mt-1">
-                            Part of project: <Link to={`/projects/${project.id}`} className="font-semibold text-indigo-600 hover:underline">{project.name}</Link>
-                        </p>
+                        <div className="text-slate-600 mt-2 space-y-1">
+                            <p>
+                                <span className="text-slate-500">Part of project: </span>
+                                <Link to={`/projects/${project.id}`} className="font-semibold text-indigo-600 hover:underline">{project.name}</Link>
+                            </p>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                                {departments.length > 0 && (
+                                    <p>
+                                        <span className="text-slate-500">Departments: </span>
+                                        <span className="font-medium text-slate-700">{departments.map(d => d.name).join(', ')}</span>
+                                    </p>
+                                )}
+                                {company && (
+                                    <p>
+                                        <span className="text-slate-500">Company: </span>
+                                        <span className="font-medium text-slate-700">{company.name}</span>
+                                    </p>
+                                )}
+                                <p>
+                                    <span className="text-slate-500">Assignees: </span>
+                                    <span className="font-medium text-slate-700">{(task.assigneeIds?.length || 0)}</span>
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {(task.assigneeIds && task.assigneeIds.length > 0) ? (
+                                    task.assigneeIds.map(id => {
+                                        const assignee = allUsers.find(u => u.id === id);
+                                        return (
+                                            <Link key={id} to={`/users/${id}`} state={{ from: { pathname: location.pathname, state: location.state } }} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full hover:bg-slate-200 hover:text-slate-900 transition-colors" title={assignee?.name || 'Profile'}>
+                                                {assignee?.name || 'Unknown'}
+                                            </Link>
+                                        );
+                                    })
+                                ) : (
+                                    <span className="text-sm text-slate-500">No assignees</span>
+                                )}
+                            </div>
+                        </div>
                     )}
                 </div>
                 <div className="flex items-center space-x-4">
@@ -319,20 +372,6 @@ const TaskDetail: React.FC = () => {
                             <DetailItem icon={<UserCircleIcon />} label="Assignees">
                                 {!isEditingAssignees && (
                                     <div className="flex items-start justify-between">
-                                        <div className="flex flex-wrap gap-2 mt-1">
-                                            {(task.assigneeIds && task.assigneeIds.length > 0) ? (
-                                                task.assigneeIds.map(id => {
-                                                    const assignee = allUsers.find(u => u.id === id);
-                                                    return (
-                                                        <span key={id} className="bg-slate-100 text-slate-800 text-xs font-medium px-2.5 py-1 rounded-full">
-                                                            {assignee?.name || 'Unknown'}
-                                                        </span>
-                                                    );
-                                                })
-                                            ) : (
-                                                <span className="text-slate-500">Unassigned</span>
-                                            )}
-                                        </div>
                                         {canChangeAssignee && (
                                             <Button onClick={() => {
                                                 // Start editing with current task assignees
