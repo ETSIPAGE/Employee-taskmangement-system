@@ -40,11 +40,19 @@ const TaskDetail: React.FC = () => {
     const [saveError, setSaveError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isEditingAssignees, setIsEditingAssignees] = useState(false);
+    const [isEditingDescription, setIsEditingDescription] = useState(false);
+    const [editedDescription, setEditedDescription] = useState('');
     const [departments, setDepartments] = useState<Department[]>([]);
     const [company, setCompany] = useState<Company | null>(null);
 
     // Initial state for editedTask should be based on task, or empty if task is null
-    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number }>({});
+    const [editedTask, setEditedTask] = useState<{
+        status?: TaskStatus;
+        assigneeIds?: string[];
+        dueDate?: string;
+        estimatedTime?: number;
+        description?: string;
+    }>({});
 
     const isDirty = useMemo(() => {
         if (!task) return false;
@@ -59,8 +67,9 @@ const TaskDetail: React.FC = () => {
 
         const hasDueDateChanged = editedTask.dueDate !== undefined && editedTask.dueDate !== (task.dueDate || undefined);
         const hasEstimatedChanged = editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task.estimatedTime || undefined);
+        const hasDescriptionChanged = editedTask.description !== undefined && editedTask.description !== (task.description || '');
 
-        return hasStatusChanged || hasAssigneeChanged || hasDueDateChanged || hasEstimatedChanged;
+        return hasStatusChanged || hasAssigneeChanged || hasDueDateChanged || hasEstimatedChanged || hasDescriptionChanged;
     }, [task, editedTask]);
 
     const loadData = useCallback(async () => {
@@ -82,8 +91,10 @@ const TaskDetail: React.FC = () => {
                 status: currentTask.status,
                 assigneeIds: currentTask.assigneeIds || [],
                 dueDate: currentTask.dueDate || undefined,
-                estimatedTime: currentTask.estimatedTime || undefined
+                estimatedTime: currentTask.estimatedTime || undefined,
+                description: currentTask.description || ''
             });
+            setEditedDescription(currentTask.description || '');
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
@@ -170,37 +181,53 @@ const TaskDetail: React.FC = () => {
     };
 
     const handleSaveChanges = async () => {
-        if (!taskId || !currentUser || !isDirty) return;
+        if (!taskId || !currentUser) return;
+        
+        // Check if there are any changes to save
+        const hasStatusChanged = editedTask.status !== undefined && editedTask.status !== task?.status;
+        const originalAssignees = new Set(task?.assigneeIds || []);
+        const editedAssignees = new Set(editedTask.assigneeIds || []);
+        const hasAssigneeChanged = originalAssignees.size !== editedAssignees.size ||
+            ![...originalAssignees].every(id => editedAssignees.has(id));
+        const hasDueDateChanged = editedTask.dueDate !== undefined && editedTask.dueDate !== (task?.dueDate || undefined);
+        const hasEstimatedChanged = editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task?.estimatedTime || undefined);
+        const hasDescriptionChanged = editedTask.description !== undefined && editedTask.description !== (task?.description || '');
+
+        if (!hasStatusChanged && !hasAssigneeChanged && !hasDueDateChanged && !hasEstimatedChanged && !hasDescriptionChanged) {
+            return; // No changes to save
+        }
+
         setIsSaving(true);
         setSaveError('');
         setSaveSuccess(false);
 
         try {
-            const updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number } = {};
+            const updates: {
+                status?: TaskStatus;
+                assigneeIds?: string[];
+                dueDate?: string;
+                estimatedTime?: number;
+                description?: string;
+            } = {};
 
-            // Only add status to updates if it has actually changed
-            if (editedTask.status !== undefined && editedTask.status !== task?.status) {
+            if (hasStatusChanged) {
                 updates.status = editedTask.status;
             }
 
-            // Compare assigneeIds for changes
-            const originalAssignees = new Set(task?.assigneeIds || []);
-            const editedAssignees = new Set(editedTask.assigneeIds || []);
-
-            const assigneesChanged = originalAssignees.size !== editedAssignees.size ||
-                ![...originalAssignees].every(id => editedAssignees.has(id));
-
-            if (assigneesChanged) {
+            if (hasAssigneeChanged) {
                 updates.assigneeIds = editedTask.assigneeIds;
             }
 
-            // Due date change
-            if (editedTask.dueDate !== undefined && editedTask.dueDate !== (task?.dueDate || undefined)) {
+            if (hasDueDateChanged) {
                 updates.dueDate = editedTask.dueDate;
             }
-            // Estimated time change
-            if (editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task?.estimatedTime || undefined)) {
+
+            if (hasEstimatedChanged) {
                 updates.estimatedTime = editedTask.estimatedTime;
+            }
+            
+            if (hasDescriptionChanged) {
+                updates.description = editedTask.description;
             }
 
             if (Object.keys(updates).length > 0) {
@@ -308,8 +335,52 @@ const TaskDetail: React.FC = () => {
                 {/* Left Column */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Description</h3>
-                        <p className="text-slate-700 whitespace-pre-wrap">{task.description || 'No description provided.'}</p>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-slate-800">Description</h3>
+                            {!isEditingDescription && canChangeStatus && (
+                                <button
+                                    onClick={() => setIsEditingDescription(true)}
+                                    className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                                >
+                                    Edit
+                                </button>
+                            )}
+                        </div>
+                        {isEditingDescription ? (
+                            <div className="space-y-4">
+                                <textarea
+                                    value={editedDescription}
+                                    onChange={(e) => setEditedDescription(e.target.value)}
+                                    rows={6}
+                                    className="w-full p-3 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder="Enter task description..."
+                                />
+                                <div className="flex justify-end space-x-3">
+                                    <button
+                                        type="button"
+                                        className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50"
+                                        onClick={() => {
+                                            setEditedDescription(task.description || '');
+                                            setIsEditingDescription(false);
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                        onClick={() => {
+                                            setEditedTask(prev => ({ ...prev, description: editedDescription }));
+                                            setIsEditingDescription(false);
+                                        }}
+                                    >
+                                        Save
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-slate-700 whitespace-pre-wrap">{editedDescription || 'No description provided.'}</p>
+                        )}
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Activity</h3>

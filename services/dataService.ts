@@ -915,27 +915,44 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
 
 export const updateTask = async (
     taskId: string,
-    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string },
+    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string; description?: string },
     currentUserId: string
 ): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string[]; due_date?: string; est_time?: number; message?: string } = {
+    const payload: { 
+        currentUserId: string; 
+        status?: string; 
+        assign_to?: string[]; 
+        due_date?: string; 
+        est_time?: number; 
+        message?: string;
+        description?: string;
+    } = {
         currentUserId: currentUserId,
     };
+    
     if (updates.status) {
         payload.status = updates.status;
     }
+    
     // Ensure assigneeIds is sent as an array, or empty array if undefined/null
     if (updates.hasOwnProperty('assigneeIds')) {
         payload.assign_to = updates.assigneeIds || [];
     }
+    
     if (updates.dueDate) {
         payload.due_date = updates.dueDate;
     }
+    
     if (typeof updates.estimatedTime === 'number') {
         payload.est_time = updates.estimatedTime;
     }
+    
     if (updates.message && updates.message.trim() !== '') {
         payload.message = updates.message.trim();
+    }
+    
+    if (updates.description !== undefined) {
+        payload.description = updates.description;
     }
 
     const endpointUrl = `${TASKS_UPDATE_API_BASE_URL}/${taskId}`;
