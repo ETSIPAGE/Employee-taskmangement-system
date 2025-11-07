@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { getToken } from '../../services/authService';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Task, TaskStatus, User, Project, UserRole, Note, Department, Company } from '../../types';
 
 import Button from '../shared/Button';
-import { ClockIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
+import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon } from '../../constants';
+import Modal from '../shared/Modal';
 
 const DetailItem: React.FC<{ icon: React.ReactNode, label: string, children: React.ReactNode }> = ({ icon, label, children }) => (
     <div className="flex items-start py-3">
@@ -44,6 +46,10 @@ const TaskDetail: React.FC = () => {
     const [editedDescription, setEditedDescription] = useState('');
     const [departments, setDepartments] = useState<Department[]>([]);
     const [company, setCompany] = useState<Company | null>(null);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleteReason, setDeleteReason] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
 
     // Initial state for editedTask should be based on task, or empty if task is null
     const [editedTask, setEditedTask] = useState<{
@@ -177,6 +183,66 @@ const TaskDetail: React.FC = () => {
             await loadData();
         } catch (e) {
             console.error('Failed to add note:', e);
+        }
+    };
+
+    const handleSoftDelete = async () => {
+        if (!taskId || !currentUser || !deleteReason.trim()) return;
+        
+        setIsDeleting(true);
+        setDeleteError('');
+        
+        try {
+            // Create the request body with only the required fields
+            const requestBody = {
+                taskId: taskId,
+                reason: deleteReason.trim(),
+                deletedBy: currentUser.id
+            };
+            
+            // Log the request for debugging
+            console.log('Sending soft delete request with data:', JSON.stringify(requestBody, null, 2));
+            
+            // Get API key and token
+            const apiKey = process.env.REACT_APP_API_KEY || '';
+            const token = getToken() || '';
+            
+            // Log headers for debugging
+            console.log('API Key present:', !!apiKey);
+            console.log('Auth token present:', !!token);
+            
+            // Make the request
+            const response = await fetch('https://h1fgyiqkmb.execute-api.ap-south-1.amazonaws.com/dev/soft-delete', {
+                method: 'POST',
+                mode: 'cors',
+                cache: 'no-cache',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'x-api-key': apiKey,
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                redirect: 'follow',
+                referrerPolicy: 'no-referrer',
+                body: JSON.stringify(requestBody)
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.message || 'Failed to delete task');
+            }
+            
+            // Close the modal and navigate back
+            setShowDeleteModal(false);
+            setDeleteReason('');
+            navigate(-1); // Go back to previous page
+            
+        } catch (error) {
+            console.error('Error deleting task:', error);
+            setDeleteError(error instanceof Error ? error.message : 'Failed to delete task');
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -327,6 +393,16 @@ const TaskDetail: React.FC = () => {
                         <Button onClick={handleSaveChanges} disabled={isSaving}>
                             {isSaving ? 'Saving...' : 'Save Changes'}
                         </Button>
+                    )}
+                    {currentUser?.role === UserRole.EMPLOYEE && (task.assigneeIds || []).includes(currentUser.id) && (
+                        <button
+                            onClick={() => setShowDeleteModal(true)}
+                            className="text-sm font-medium text-red-600 hover:text-red-500 flex items-center"
+                            title="Delete Task"
+                        >
+                            <TrashIcon className="w-4 h-4 mr-1" />
+                            Delete Task
+                        </button>
                     )}
                 </div>
             </div>
@@ -558,6 +634,59 @@ const TaskDetail: React.FC = () => {
                     </div>
                 </div>
             </div>
+            
+            {/* Delete Confirmation Modal */}
+            <Modal
+                isOpen={showDeleteModal}
+                onClose={() => {
+                    setShowDeleteModal(false);
+                    setDeleteReason('');
+                    setDeleteError('');
+                }}
+                title="Delete Task"
+            >
+                <div className="space-y-4">
+                    <p className="text-slate-700">
+                        Are you sure you want to delete this task? This action cannot be undone.
+                        Please provide a reason for deletion:
+                    </p>
+                    
+                    <textarea
+                        value={deleteReason}
+                        onChange={(e) => setDeleteReason(e.target.value)}
+                        placeholder="Enter reason for deletion..."
+                        rows={4}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                    />
+                    
+                    {deleteError && (
+                        <div className="text-red-600 text-sm">{deleteError}</div>
+                    )}
+                    
+                    <div className="flex justify-end space-x-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowDeleteModal(false);
+                                setDeleteReason('');
+                                setDeleteError('');
+                            }}
+                            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50"
+                            disabled={isDeleting}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSoftDelete}
+                            disabled={!deleteReason.trim() || isDeleting}
+                            className={`px-4 py-2 text-sm font-medium text-white rounded-md ${!deleteReason.trim() || isDeleting ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+                        >
+                            {isDeleting ? 'Deleting...' : 'Delete Task'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };
