@@ -64,7 +64,12 @@ const DeletedTasksPage = () => {
             try {
                 setIsLoading(true);
                 const result = await getDeletedTasks(100);
-                const tasks = result.items || [];
+                const tasks = (result.items || []).sort((a, b) => {
+                    // Sort by deletedAt in descending order (newest first)
+                    const dateA = a.deletedAt ? new Date(a.deletedAt).getTime() : 0;
+                    const dateB = b.deletedAt ? new Date(b.deletedAt).getTime() : 0;
+                    return dateB - dateA;
+                });
                 setDeletedTasks(tasks);
                 
                 // Fetch user names for deletedBy fields
