@@ -6,6 +6,7 @@ import * as DataService from '../../services/dataService';
 
 import { Project, Task, TaskStatus, User, MilestoneStatus } from '../../types';
 import WorkReportsDashboard from './WorkReportsDashboard';
+import DeletedTasks from '../tasks/DeletedTasks';
 
 const StatCard = ({ icon, title, value, color }: { icon: React.ReactNode, title: string, value: string, color: string }) => (
     <div className="bg-white rounded-lg shadow-lg p-5 flex items-center">
@@ -268,9 +269,62 @@ const ManagerDashboard: React.FC = () => {
                     ) : (
                         <p className="text-center py-4 text-slate-500">No high-priority tasks for your team.</p>
                     )}
+                    
+                    <div className="mt-4 text-center">
+                        <Link 
+                            href="/deleted-tasks"
+                            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                            View Deleted Tasks
+                        </Link>
+                    </div>
                 </div>
             </div>
 
+            {/* Deleted Tasks Section - Full Width */}
+            <div className="mt-8">
+                <div className="bg-white rounded-lg shadow-lg p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-xl font-bold text-slate-800">Deleted Tasks</h2>
+                        <button 
+                            onClick={() => window.location.reload()}
+                            className="flex items-center text-sm text-blue-600 hover:text-blue-800"
+                        >
+                            <ArrowPathIcon className="h-4 w-4 mr-1" />
+                            Refresh
+                        </button>
+                    </div>
+                    
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Task
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Project
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Deleted By
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Deleted At
+                                    </th>
+                                    <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Status
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                <DeletedTasks />
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {/* Work Reports Section */}
             <div className="mt-8">
                 <div className="bg-white rounded-lg shadow-lg p-6">
                     <h2 className="text-xl font-bold text-slate-800 mb-4">Work Reports</h2>

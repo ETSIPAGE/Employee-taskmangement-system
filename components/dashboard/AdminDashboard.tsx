@@ -230,13 +230,29 @@ const AdminDashboard: React.FC = () => {
 
             <div className="mt-8">
                 <div className="bg-white rounded-lg shadow-lg p-6">
-                    <h2 className="text-xl font-bold text-slate-800 mb-4">Overdue Tasks</h2>
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold text-slate-800">Overdue Tasks</h2>
+                        <Link 
+                            to="/deleted-tasks"
+                            className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                            View Deleted Tasks
+                        </Link>
+                    </div>
                     {overdueTasksList.length > 0 ? (
                         <ul className="divide-y divide-slate-100">
                            {overdueTasksList.map(task => <OverdueTaskItem key={task.id} task={task} project={projectsMap.get(task.projectId)} assignees={(task.assigneeIds || []).map(id => usersMap.get(id)).filter(u => u) as User[]} />)}
                         </ul>
                     ) : (
-                        <p className="text-center py-4 text-slate-500">No overdue tasks. Great job!</p>
+                        <div className="text-center py-6">
+                            <p className="text-slate-500 mb-4">No overdue tasks. Great job!</p>
+                            <Link 
+                                to="/deleted-tasks"
+                                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            >
+                                View Deleted Tasks
+                            </Link>
+                        </div>
                     )}
                 </div>
             </div>

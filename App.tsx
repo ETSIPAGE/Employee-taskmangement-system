@@ -30,6 +30,7 @@ import SubmissionDetail from './components/onboarding/SubmissionDetail';
 import OnboardingFormView from './components/onboarding/OnboardingFormView';
 import RolesDashboard from './components/dashboard/RolesDashboard';
 import WorkReportsDashboard from './components/dashboard/WorkReportsDashboard';
+import DeletedTasksPage from './pages/deleted-tasks';
 
 const App: React.FC = () => {
   const { user, loading } = useAuth();
@@ -78,6 +79,7 @@ const App: React.FC = () => {
                 <Route path="/roles" element={<RolesDashboard />} />
                 <Route path="/work-reports" element={<WorkReportsDashboard />} />
                 <Route path="/my-work-reports" element={<WorkReportsDashboard hideAllMembersReports={true} />} />
+                <Route path="/deleted-tasks" element={<DeletedTasksPage />} />
                 <Route path="*" element={<Navigate to="/" />} />
               </Routes>
             </MainLayout>
