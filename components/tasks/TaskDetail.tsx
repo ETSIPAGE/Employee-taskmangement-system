@@ -187,56 +187,68 @@ const TaskDetail: React.FC = () => {
     };
 
     const handleSoftDelete = async () => {
-        if (!taskId || !currentUser || !deleteReason.trim()) return;
+        if (!taskId || !currentUser || !deleteReason.trim()) {
+            console.error('Missing required fields for task deletion');
+            return;
+        }
         
         setIsDeleting(true);
         setDeleteError('');
         
         try {
-            // Create the request body with only the required fields
+            // 1. First, perform the soft delete
+            console.log('Initiating soft delete for task:', taskId);
             const requestBody = {
                 taskId: taskId,
                 reason: deleteReason.trim(),
                 deletedBy: currentUser.id
             };
             
-            // Log the request for debugging
-            console.log('Sending soft delete request with data:', JSON.stringify(requestBody, null, 2));
-            
-            // Get API key and token
             const apiKey = process.env.REACT_APP_API_KEY || '';
             const token = getToken() || '';
             
-            // Log headers for debugging
-            console.log('API Key present:', !!apiKey);
-            console.log('Auth token present:', !!token);
-            
-            // Make the request
+            // Make the soft delete request
             const response = await fetch('https://h1fgyiqkmb.execute-api.ap-south-1.amazonaws.com/dev/soft-delete', {
                 method: 'POST',
-                mode: 'cors',
-                cache: 'no-cache',
-                credentials: 'same-origin',
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json',
                     'x-api-key': apiKey,
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
-                redirect: 'follow',
-                referrerPolicy: 'no-referrer',
                 body: JSON.stringify(requestBody)
             });
             
+            const responseData = await response.json().catch(() => ({}));
+            
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.message || 'Failed to delete task');
+                console.error('Soft delete failed:', responseData);
+                throw new Error(responseData.message || 'Failed to soft delete task');
+            }
+            
+            console.log('Soft delete successful, proceeding with permanent delete');
+            
+            // 2. Immediately after successful soft delete, perform the permanent delete
+            try {
+                console.log('Initiating permanent delete for task:', taskId);
+                await DataService.deleteTask(taskId, currentUser.id);
+                console.log('Permanent delete successful');
+                
+                // Show success message
+                // You might want to use a toast notification here instead of alert
+                alert('Task has been deleted successfully.');
+                
+            } catch (deleteError) {
+                console.error('Permanent delete failed, but soft delete was successful:', deleteError);
+                // Even if permanent delete fails, we consider this a success since soft delete worked
+                // The task will still be in the deleted tasks list
+                alert('Task has been moved to deleted tasks.');
             }
             
             // Close the modal and navigate back
             setShowDeleteModal(false);
             setDeleteReason('');
-            navigate(-1); // Go back to previous page
+            navigate(-1);
             
         } catch (error) {
             console.error('Error deleting task:', error);
