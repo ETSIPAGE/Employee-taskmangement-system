@@ -7,7 +7,7 @@ import * as AuthService from '../../services/authService';
 import { Task, TaskStatus, User, Project, UserRole, Note, Department, Company } from '../../types';
 
 import Button from '../shared/Button';
-import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon } from '../../constants';
+import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon, PaperAirplaneIcon } from '../../constants';
 import Modal from '../shared/Modal';
 
 const DetailItem: React.FC<{ icon: React.ReactNode, label: string, children: React.ReactNode }> = ({ icon, label, children }) => (
@@ -175,15 +175,53 @@ const TaskDetail: React.FC = () => {
         };
     }, [allUsers, project]);
 
-    const handleAddNote = async () => {
+        const handleAddNote = async (e: React.FormEvent) => {
+        e.preventDefault();
         if (!newNote.trim() || !currentUser || !task || !taskId) return;
         try {
-            await DataService.updateTask(taskId, { message: newNote.trim() }, currentUser.id);
+            setIsSaving(true);
+            
+            // Get the current task data to preserve all fields
+            const currentTask = await DataService.getTaskById(taskId);
+            
+            if (!currentTask) {
+                throw new Error('Task not found');
+            }
+            
+            // Prepare the update with all required fields
+            const updateData = {
+                message: newNote.trim(),
+                // Include existing task data to ensure no data loss
+                status: currentTask.status,
+                assigneeIds: currentTask.assigneeIds || [],
+                dueDate: currentTask.dueDate,
+                estimatedTime: currentTask.estimatedTime,
+                description: currentTask.description || ''
+            };
+            
+            await DataService.updateTask(taskId, updateData, currentUser.id);
             setNewNote('');
             await loadData();
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 3000);
         } catch (e) {
             console.error('Failed to add note:', e);
+            setSaveError('Failed to add note. Please try again.');
+            setTimeout(() => setSaveError(''), 3000);
+        } finally {
+            setIsSaving(false);
         }
+    };
+
+    const formatDate = (dateString: string) => {
+        const date = new Date(dateString);
+        return date.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     };
 
     const handleSoftDelete = async () => {
@@ -642,6 +680,81 @@ const TaskDetail: React.FC = () => {
                                     className="w-full p-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                                 />
                             </DetailItem>
+                        </div>
+                    </div>
+
+                    {/* Notes Section */}
+                    <div className="mt-8">
+                        <h3 className="text-lg font-semibold text-slate-800 mb-4">Notes</h3>
+                        
+                        {/* Notes List */}
+                        <div className="space-y-4 mb-6">
+                            {task.notes && task.notes.length > 0 ? (
+                                task.notes.map((note, index) => (
+                                    <div key={index} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center space-x-2">
+                                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
+                                                    {note.authorName ? note.authorName.charAt(0).toUpperCase() : 'U'}
+                                                </div>
+                                                <div>
+                                                    <p className="font-medium text-slate-800">{note.authorName || 'Unknown User'}</p>
+                                                    <p className="text-xs text-slate-500">{note.timestamp ? new Date(note.timestamp).toLocaleString() : 'Unknown time'}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="mt-2 pl-10 text-slate-700">
+                                            {note.content}
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-6 text-slate-500 bg-slate-50 rounded-lg">
+                                    No notes yet. Add your first note below.
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Add Note Form */}
+                        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+                            <h4 className="font-medium text-slate-700 mb-3">Add a Note</h4>
+                            <form onSubmit={handleAddNote} className="space-y-3">
+                                <div>
+                                    <textarea
+                                        value={newNote}
+                                        onChange={(e) => setNewNote(e.target.value)}
+                                        placeholder="Type your note here..."
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        rows={3}
+                                        disabled={isSaving}
+                                    />
+                                </div>
+                                <div className="flex justify-end space-x-2">
+                                    {saveError && (
+                                        <span className="text-red-500 text-sm mr-2">{saveError}</span>
+                                    )}
+                                    {saveSuccess && (
+                                        <span className="text-green-500 text-sm mr-2">Note added successfully!</span>
+                                    )}
+                                    <button
+                                        type="submit"
+                                        disabled={!newNote.trim() || isSaving}
+                                        className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${!newNote.trim() || isSaving
+                                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                                            : 'bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                                            }`}
+                                    >
+                                        {isSaving ? (
+                                            'Saving...'
+                                        ) : (
+                                            <>
+                                                <PaperAirplaneIcon className="h-4 w-4 mr-2" />
+                                                Add Note
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 </div>
