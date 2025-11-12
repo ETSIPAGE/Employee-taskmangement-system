@@ -7,7 +7,7 @@ import * as AuthService from '../../services/authService';
 import { Task, TaskStatus, User, Project, UserRole, Note, Department, Company } from '../../types';
 
 import Button from '../shared/Button';
-import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon, PaperAirplaneIcon } from '../../constants';
+import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon } from '../../constants';
 import Modal from '../shared/Modal';
 
 const DetailItem: React.FC<{ icon: React.ReactNode, label: string, children: React.ReactNode }> = ({ icon, label, children }) => (
@@ -36,11 +36,7 @@ const TaskDetail: React.FC = () => {
     const [task, setTask] = useState<Task | null>(null);
     const [project, setProject] = useState<Project | null>(null);
     const [allUsers, setAllUsers] = useState<User[]>([]);
-    const [newNote, setNewNote] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
-    const [saveError, setSaveError] = useState('');
-    const [saveSuccess, setSaveSuccess] = useState(false);
     const [isEditingAssignees, setIsEditingAssignees] = useState(false);
     const [isEditingDescription, setIsEditingDescription] = useState(false);
     const [editedDescription, setEditedDescription] = useState('');
@@ -50,6 +46,12 @@ const TaskDetail: React.FC = () => {
     const [deleteReason, setDeleteReason] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState('');
+    
+    // State for managing task updates and notes
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState('');
+    const [saveSuccess, setSaveSuccess] = useState(false);
+    const [newNote, setNewNote] = useState('');
 
     // Initial state for editedTask should be based on task, or empty if task is null
     const [editedTask, setEditedTask] = useState<{
@@ -175,55 +177,6 @@ const TaskDetail: React.FC = () => {
         };
     }, [allUsers, project]);
 
-        const handleAddNote = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newNote.trim() || !currentUser || !task || !taskId) return;
-        try {
-            setIsSaving(true);
-            
-            // Get the current task data to preserve all fields
-            const currentTask = await DataService.getTaskById(taskId);
-            
-            if (!currentTask) {
-                throw new Error('Task not found');
-            }
-            
-            // Prepare the update with all required fields
-            const updateData = {
-                message: newNote.trim(),
-                // Include existing task data to ensure no data loss
-                status: currentTask.status,
-                assigneeIds: currentTask.assigneeIds || [],
-                dueDate: currentTask.dueDate,
-                estimatedTime: currentTask.estimatedTime,
-                description: currentTask.description || ''
-            };
-            
-            await DataService.updateTask(taskId, updateData, currentUser.id);
-            setNewNote('');
-            await loadData();
-            setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 3000);
-        } catch (e) {
-            console.error('Failed to add note:', e);
-            setSaveError('Failed to add note. Please try again.');
-            setTimeout(() => setSaveError(''), 3000);
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const formatDate = (dateString: string) => {
-        const date = new Date(dateString);
-        return date.toLocaleString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
-
     const handleSoftDelete = async () => {
         if (!taskId || !currentUser || !deleteReason.trim()) {
             console.error('Missing required fields for task deletion');
@@ -296,67 +249,87 @@ const TaskDetail: React.FC = () => {
         }
     };
 
+    const handleAddNote = async () => {
+        if (!newNote.trim() || !taskId || !currentUser) return;
+        
+        try {
+            setIsSaving(true);
+            setSaveError('');
+            
+            // Create the new note object
+            const newNoteObj = {
+                id: Date.now().toString(),
+                authorId: currentUser.id,
+                authorName: currentUser.name || 'Unknown',
+                content: newNote.trim(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Optimistically update the UI
+            setTask(prevTask => {
+                if (!prevTask) return prevTask;
+                return {
+                    ...prevTask,
+                    notes: [...(prevTask.notes || []), newNoteObj]
+                };
+            });
+            
+            // Clear the input field immediately for better UX
+            setNewNote('');
+            
+            // Send the update to the server
+            await DataService.updateTask(
+                taskId, 
+                { message: newNote.trim() }, 
+                currentUser.id
+            );
+            
+            // Refresh the entire task data to ensure we have the latest state
+            const updatedTask = await DataService.getTaskById(taskId);
+            setTask(updatedTask);
+            
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 3000);
+            
+        } catch (error) {
+            console.error('Failed to add note:', error);
+            setSaveError('Failed to add note. Please try again.');
+            // Revert the optimistic update on error
+            const latestTask = await DataService.getTaskById(taskId);
+            setTask(latestTask);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const handleSaveChanges = async () => {
         if (!taskId || !currentUser) return;
         
-        // Check if there are any changes to save
-        const hasStatusChanged = editedTask.status !== undefined && editedTask.status !== task?.status;
-        const originalAssignees = new Set(task?.assigneeIds || []);
-        const editedAssignees = new Set(editedTask.assigneeIds || []);
-        const hasAssigneeChanged = originalAssignees.size !== editedAssignees.size ||
-            ![...originalAssignees].every(id => editedAssignees.has(id));
-        const hasDueDateChanged = editedTask.dueDate !== undefined && editedTask.dueDate !== (task?.dueDate || undefined);
-        const hasEstimatedChanged = editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task?.estimatedTime || undefined);
-        const hasDescriptionChanged = editedTask.description !== undefined && editedTask.description !== (task?.description || '');
-
-        if (!hasStatusChanged && !hasAssigneeChanged && !hasDueDateChanged && !hasEstimatedChanged && !hasDescriptionChanged) {
-            return; // No changes to save
-        }
-
-        setIsSaving(true);
-        setSaveError('');
-        setSaveSuccess(false);
-
         try {
-            const updates: {
-                status?: TaskStatus;
-                assigneeIds?: string[];
-                dueDate?: string;
-                estimatedTime?: number;
-                description?: string;
-            } = {};
-
-            if (hasStatusChanged) {
-                updates.status = editedTask.status;
-            }
-
-            if (hasAssigneeChanged) {
-                updates.assigneeIds = editedTask.assigneeIds;
-            }
-
-            if (hasDueDateChanged) {
-                updates.dueDate = editedTask.dueDate;
-            }
-
-            if (hasEstimatedChanged) {
-                updates.estimatedTime = editedTask.estimatedTime;
-            }
+            setIsSaving(true);
+            setSaveError('');
             
-            if (hasDescriptionChanged) {
-                updates.description = editedTask.description;
-            }
-
-            if (Object.keys(updates).length > 0) {
-                await DataService.updateTask(taskId, updates, currentUser.id);
-
-            }
-
+            await DataService.updateTask(taskId, {
+                status: editedTask.status,
+                assigneeIds: editedTask.assigneeIds,
+                dueDate: editedTask.dueDate,
+                estimatedTime: editedTask.estimatedTime,
+                description: editedDescription !== task?.description ? editedDescription : undefined
+            }, currentUser.id);
+            
             setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 3000);
-            await loadData(); // Reload data to get the latest from the backend
+            
+            // Refresh task data
+            const updatedTask = await DataService.getTaskById(taskId);
+            setTask(updatedTask);
+            
+            // Reset edit states
+            setIsEditingAssignees(false);
+            setIsEditingDescription(false);
+            
         } catch (error) {
-            console.error("Failed to save changes:", error);
-            setSaveError(error instanceof Error ? error.message : 'An unknown error occurred.');
+            console.error('Failed to update task:', error);
+            setSaveError('Failed to update task. Please try again.');
         } finally {
             setIsSaving(false);
         }
@@ -512,7 +485,7 @@ const TaskDetail: React.FC = () => {
                         <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Activity</h3>
                         <div className="max-h-96 overflow-y-auto pr-2 space-y-4 mb-4">
                             {(task.notes || []).length > 0 ? (
-                                [...task.notes].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).map((note) => {
+                                [...task.notes].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((note) => {
                                     const author = allUsers.find(u => u.id === note.authorId);
                                     return (
                                         <div key={`note-${note.id}`} className="flex items-start space-x-3">
@@ -534,20 +507,30 @@ const TaskDetail: React.FC = () => {
                             )}
                         </div>
 
-                        {canAddNote && (
-                            <div className="border-t pt-4">
-                                <textarea
-                                    value={newNote}
-                                    onChange={(e) => setNewNote(e.target.value)}
-                                    rows={4}
-                                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="Add a new note..."
-                                />
-                                <div className="text-right mt-3">
-                                    <Button onClick={handleAddNote} disabled={!newNote.trim()}>Add Note</Button>
-                                </div>
+                        {/* Add Note Section */}
+                        <div className="border-t pt-4 mt-4">
+                            <h4 className="text-sm font-medium text-slate-700 mb-2">Add a note</h4>
+                            <textarea
+                                value={newNote}
+                                onChange={(e) => setNewNote(e.target.value)}
+                                rows={3}
+                                className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                placeholder="Type your note here..."
+                            />
+                            <div className="flex justify-end mt-2 space-x-2">
+                                {saveError && (
+                                    <span className="text-red-500 text-sm mr-2">{saveError}</span>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleAddNote}
+                                    disabled={!newNote.trim() || isSaving}
+                                    className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isSaving ? 'Adding...' : 'Add Note'}
+                                </button>
                             </div>
-                        )}
+                        </div>
                     </div>
                 </div>
 
@@ -683,80 +666,6 @@ const TaskDetail: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Notes Section */}
-                    <div className="mt-8">
-                        <h3 className="text-lg font-semibold text-slate-800 mb-4">Notes</h3>
-                        
-                        {/* Notes List */}
-                        <div className="space-y-4 mb-6">
-                            {task.notes && task.notes.length > 0 ? (
-                                task.notes.map((note, index) => (
-                                    <div key={index} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex items-center space-x-2">
-                                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
-                                                    {note.authorName ? note.authorName.charAt(0).toUpperCase() : 'U'}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium text-slate-800">{note.authorName || 'Unknown User'}</p>
-                                                    <p className="text-xs text-slate-500">{note.timestamp ? new Date(note.timestamp).toLocaleString() : 'Unknown time'}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="mt-2 pl-10 text-slate-700">
-                                            {note.content}
-                                        </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="text-center py-6 text-slate-500 bg-slate-50 rounded-lg">
-                                    No notes yet. Add your first note below.
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Add Note Form */}
-                        <div className="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
-                            <h4 className="font-medium text-slate-700 mb-3">Add a Note</h4>
-                            <form onSubmit={handleAddNote} className="space-y-3">
-                                <div>
-                                    <textarea
-                                        value={newNote}
-                                        onChange={(e) => setNewNote(e.target.value)}
-                                        placeholder="Type your note here..."
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        rows={3}
-                                        disabled={isSaving}
-                                    />
-                                </div>
-                                <div className="flex justify-end space-x-2">
-                                    {saveError && (
-                                        <span className="text-red-500 text-sm mr-2">{saveError}</span>
-                                    )}
-                                    {saveSuccess && (
-                                        <span className="text-green-500 text-sm mr-2">Note added successfully!</span>
-                                    )}
-                                    <button
-                                        type="submit"
-                                        disabled={!newNote.trim() || isSaving}
-                                        className={`inline-flex items-center px-4 py-2 rounded-md text-sm font-medium ${!newNote.trim() || isSaving
-                                            ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                                            : 'bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
-                                            }`}
-                                    >
-                                        {isSaving ? (
-                                            'Saving...'
-                                        ) : (
-                                            <>
-                                                <PaperAirplaneIcon className="h-4 w-4 mr-2" />
-                                                Add Note
-                                            </>
-                                        )}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
                 </div>
             </div>
             
