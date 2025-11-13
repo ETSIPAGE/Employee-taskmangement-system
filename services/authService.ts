@@ -266,7 +266,7 @@ export const login = async (email: LoginCredentials['email'], password: LoginCre
         saveUsers(users);
     }
 
-    // Step 5: Set the corrected user object as the current user for the session.
+    // Finalize session with the authenticated user and return
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(sessionUser));
     return sessionUser;
 };
@@ -275,21 +275,11 @@ export const logout = (): void => {
   // Preserve employee work reports so admin/manager views can aggregate after relogin
   let preservedNotes: string | null = null;
   try { preservedNotes = localStorage.getItem('ets_work_notes'); } catch {}
-  try { localStorage.clear(); } catch {}
-  try { sessionStorage.clear(); } catch {}
-  try {
-    if (preservedNotes !== null) localStorage.setItem('ets_work_notes', preservedNotes);
-  } catch {}
-  try {
-    localStorage.clear();
-  } catch (e) {
-    console.error('Failed to clear localStorage on logout', e);
-  }
-  try {
-    sessionStorage.clear();
-  } catch (e) {
-    console.error('Failed to clear sessionStorage on logout', e);
-  }
+  // Clear storages once
+  try { localStorage.clear(); } catch (e) { console.error('Failed to clear localStorage on logout', e); }
+  try { sessionStorage.clear(); } catch (e) { console.error('Failed to clear sessionStorage on logout', e); }
+  // Restore preserved notes AFTER clearing
+  try { if (preservedNotes !== null) localStorage.setItem('ets_work_notes', preservedNotes); } catch {}
 };
 
 export const getCurrentUser = (): User | null => {

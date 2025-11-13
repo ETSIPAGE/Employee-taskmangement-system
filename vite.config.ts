@@ -54,6 +54,45 @@ export default defineConfig(({ mode }) => {
             target: 'https://6ng8j57m7g.execute-api.ap-south-1.amazonaws.com',
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api-edit-roles/, '/prod')
+          },
+          // Work Reports - Get
+          '/api-work-reports': {
+            target: 'https://83eaugq1sc.execute-api.ap-south-1.amazonaws.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api-work-reports/, '/prod'),
+            configure: (proxy) => {
+              proxy.on('proxyReq', (proxyReq, req) => {
+                const incoming = (req as any).headers?.['x-api-key'] as string | undefined;
+                const key = incoming || process.env.VITE_WORK_REPORTS_GET_API_KEY || process.env.VITE_WORK_REPORTS_API_KEY || process.env.VITE_ROLES_API_KEY;
+                if (key) proxyReq.setHeader('x-api-key', key);
+              });
+            }
+          },
+          // Work Reports - Create
+          '/api-work-reports-create': {
+            target: 'https://907wl6xmsi.execute-api.ap-south-1.amazonaws.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api-work-reports-create/, '/prod'),
+            configure: (proxy) => {
+              proxy.on('proxyReq', (proxyReq, req) => {
+                const incoming = (req as any).headers?.['x-api-key'] as string | undefined;
+                const key = incoming || process.env.VITE_WORK_REPORTS_CREATE_API_KEY || process.env.VITE_WORK_REPORTS_API_KEY || process.env.VITE_ROLES_API_KEY;
+                if (key) proxyReq.setHeader('x-api-key', key);
+              });
+            }
+          },
+          // Work Reports - Edit
+          '/api-work-reports-edit': {
+            target: 'https://qh7lpbipil.execute-api.ap-south-1.amazonaws.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api-work-reports-edit/, '/prod'),
+            configure: (proxy) => {
+              proxy.on('proxyReq', (proxyReq, req) => {
+                const incoming = (req as any).headers?.['x-api-key'] as string | undefined;
+                const key = incoming || process.env.VITE_WORK_REPORTS_EDIT_API_KEY || process.env.VITE_WORK_REPORTS_API_KEY || process.env.VITE_ROLES_API_KEY;
+                if (key) proxyReq.setHeader('x-api-key', key);
+              });
+            }
           }
         }
       },
