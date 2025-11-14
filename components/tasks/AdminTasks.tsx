@@ -3,7 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as AuthService from '../../services/authService';
 import * as DataService from '../../services/dataService';
-import { Project, Task, TaskStatus, User, UserRole, Department } from '../../types';
+import { Project, Task, TaskStatus, User, UserRole, Department, Company } from '../../types';
 
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
@@ -15,6 +15,8 @@ import Input from '../shared/Input';
 interface HydratedTask extends Task {
     projectName: string;
     assigneeName: string;
+    companyName?: string;
+    departmentName?: string;
 }
 
 export default function AdminTasks() {
@@ -25,16 +27,21 @@ export default function AdminTasks() {
     const [allEmployees, setAllEmployees] = useState<User[]>([]);
     const [allManagers, setAllManagers] = useState<User[]>([]);
     const [allProjects, setAllProjects] = useState<Project[]>([]);
+    const [allDepartments, setAllDepartments] = useState<Department[]>([]);
+    const [allCompanies, setAllCompanies] = useState<Company[]>([]);
     
     const [isLoading, setIsLoading] = useState(true);
     const [view, setView] = useState<'card' | 'table'>('card');
     
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [apiDepartments, setApiDepartments] = useState<Department[]>([]);
+    const [apiCompanies, setApiCompanies] = useState<Company[]>([]);
     const [apiProjects, setApiProjects] = useState<Project[]>([]);
     const [dropdownsLoading, setDropdownsLoading] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<{ id: string; name: string } | null>(null);
+    const [deptSearch, setDeptSearch] = useState('');
     const [newTaskData, setNewTaskData] = useState({
+        company: '', // companyId
         department: '', // departmentId
         project: '',
         title: '',
@@ -57,10 +64,12 @@ export default function AdminTasks() {
         if (!user || user.role !== UserRole.ADMIN) return;
         setIsLoading(true);
         try {
-            const [tasks, projects, allUsersFromApi] = await Promise.all([
+            const [tasks, projects, allUsersFromApi, departments, companies] = await Promise.all([
                 DataService.getAllTasks(),
                 DataService.getAllProjects(),
                 DataService.getAllUsersFromApi(),
+                DataService.getDepartments(),
+                DataService.getCompanies().catch(() => []),
             ]);
             
             setAllProjects(projects);
@@ -68,13 +77,29 @@ export default function AdminTasks() {
             const managers = allUsersFromApi.filter(u => u.role === UserRole.MANAGER);
             setAllEmployees(employees);
             setAllManagers(managers);
+            setAllDepartments(departments);
+            setAllCompanies(companies || []);
             
             const projectsMap = new Map(projects.map(p => [p.id, p]));
+            const departmentsMap = new Map(departments.map(d => [d.id, d]));
+            const companiesMap = new Map((companies || []).map(c => [c.id, c]));
             const usersMap = new Map(allUsersFromApi.map(u => [u.id, u]));
     
             const newHydratedTasks = tasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
+                companyName: (() => {
+                    const proj = projectsMap.get(task.projectId);
+                    if (!proj) return undefined;
+                    const cid = (proj as any).companyId;
+                    return cid ? companiesMap.get(cid)?.name : undefined;
+                })(),
+                departmentName: (() => {
+                    const proj = projectsMap.get(task.projectId) as any;
+                    const deptIds: string[] = Array.isArray(proj?.departmentIds) ? proj.departmentIds : [];
+                    const first = deptIds[0];
+                    return first ? departmentsMap.get(first)?.name : undefined;
+                })(),
                 assigneeName: Array.isArray(task.assigneeIds) && task.assigneeIds.length > 0
                     ? task.assigneeIds
                         .map(id => usersMap.get(id)?.name)
@@ -100,13 +125,24 @@ export default function AdminTasks() {
             const fetchDropdownData = async () => {
                 setDropdownsLoading(true);
                 try {
-                    const [depts, projs] = await Promise.all([
+                    const [companies, depts, projs] = await Promise.all([
+                        DataService.getCompanies(),
                         DataService.getDepartments(),
                         DataService.getAllProjects()
                     ]);
+                    setApiCompanies(companies || []);
                     setApiDepartments(depts);
                     setApiProjects(projs);
-                    if (depts.length > 0) {
+                    if (companies && companies.length > 0) {
+                        const defaultCompanyId = companies[0].id;
+                        // pick first department belonging to default company
+                        const deptInCompany = depts.find(d => d.companyId === defaultCompanyId);
+                        setNewTaskData(prev => ({ 
+                            ...prev, 
+                            company: defaultCompanyId, 
+                            department: deptInCompany ? deptInCompany.id : '' 
+                        }));
+                    } else if (depts.length > 0) {
                         setNewTaskData(prev => ({ ...prev, department: depts[0].id }));
                     }
                     if (projs.length > 0) {
@@ -132,6 +168,39 @@ export default function AdminTasks() {
         if (!newTaskData.department) return allEmployees;
         return allEmployees.filter(e => Array.isArray(e.departmentIds) && e.departmentIds.includes(newTaskData.department));
     }, [allEmployees, newTaskData.department]);
+
+    // Filter departments by selected company
+    const filteredDepartments = useMemo(() => {
+        if (!newTaskData.company) return apiDepartments;
+        return apiDepartments.filter(d => d.companyId === newTaskData.company);
+    }, [apiDepartments, newTaskData.company]);
+
+    // Current department display name
+    const currentDeptName = useMemo(() => {
+        const found = apiDepartments.find(d => d.id === newTaskData.department);
+        return found ? found.name : '';
+    }, [apiDepartments, newTaskData.department]);
+
+    const deptTitleMap = useMemo(() => ({
+        'business dev': ['Market Research','Client Relations','Sales Support','Proposal Dev','Partnerships','New Business Init','Contract Mgmt','Cust Acq Strategy'],
+        'business department': ['Market Research','Client Relations','Sales Support','Proposal Dev','Partnerships','New Business Init','Contract Mgmt','Cust Acq Strategy'],
+        'business development': ['Market Research','Client Relations','Sales Support','Proposal Dev','Partnerships','New Business Init','Contract Mgmt','Cust Acq Strategy'],
+    }), []);
+    const titleOptions = useMemo(() => {
+        const key = (currentDeptName || '').trim().toLowerCase();
+        return deptTitleMap[key] || [];
+    }, [currentDeptName, deptTitleMap]);
+
+    // Ensure department stays valid when company changes
+    useEffect(() => {
+        if (!newTaskData.company) return;
+        const exists = filteredDepartments.some(d => d.id === newTaskData.department);
+        if (!exists) {
+            const nextDeptId = filteredDepartments.length > 0 ? filteredDepartments[0].id : '';
+            setNewTaskData(prev => ({ ...prev, department: nextDeptId }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [newTaskData.company, filteredDepartments.length]);
 
     const handleOpenModal = () => setIsModalOpen(true);
     const handleCloseModal = () => {
@@ -287,6 +356,8 @@ export default function AdminTasks() {
                             <tr>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Task</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Department</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignee</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Due Date</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
@@ -303,6 +374,8 @@ export default function AdminTasks() {
                                     <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.companyName || 'N/A'}</td>
+                                        <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.departmentName || 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeName}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                         <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">
@@ -342,28 +415,47 @@ export default function AdminTasks() {
              <Modal title="Create New Task" isOpen={isModalOpen} onClose={handleCloseModal}>
                 <form onSubmit={handleCreateTask} className="space-y-4">
                     {submitError && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{submitError}</div>}
-                    <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label htmlFor="company" className="block text-sm font-medium text-slate-700">Company</label>
+                            <select id="company" name="company" value={newTaskData.company} onChange={handleInputChange} disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                {dropdownsLoading ? <option>Loading...</option> :
+                                 apiCompanies.length > 0 ? apiCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>) : <option value="">No companies found</option>}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
+                            <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                                {dropdownsLoading ? <option>Loading...</option> : 
+                                 filteredDepartments.length > 0 ? filteredDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
+                            </select>
+                        </div>
+                    </div>
+                    {titleOptions.length > 0 ? (
+                        <div>
+                            <label htmlFor="title" className="block text-sm font-medium text-slate-700">Task Title</label>
+                            <select id="title" name="title" value={newTaskData.title} onChange={handleInputChange} required className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+                                <option value="">Select task</option>
+                                {titleOptions.map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                            </select>
+                        </div>
+                    ) : (
+                        <Input id="title" name="title" type="text" label="Task Title" value={newTaskData.title} onChange={handleInputChange} required />
+                    )}
                     <div>
                         <label htmlFor="description" className="block text-sm font-medium text-slate-700">Description</label>
                         <textarea id="description" name="description" rows={3} value={newTaskData.description} onChange={handleInputChange}
                             className="mt-1 appearance-none block w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                         />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="department" className="block text-sm font-medium text-slate-700">Department</label>
-                            <select id="department" name="department" value={newTaskData.department} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
-                                {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiDepartments.length > 0 ? apiDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>) : <option value="">No departments found</option>}
-                            </select>
-                        </div>
-                        <div>
-                            <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
-                            <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
-                                {dropdownsLoading ? <option>Loading...</option> : 
-                                 apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found</option>}
-                            </select>
-                        </div>
+                    <div>
+                        <label htmlFor="project" className="block text-sm font-medium text-slate-700">Project</label>
+                        <select id="project" name="project" value={newTaskData.project} onChange={handleInputChange} required disabled={dropdownsLoading} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm disabled:bg-slate-50">
+                            {dropdownsLoading ? <option>Loading...</option> : 
+                             apiProjects.length > 0 ? apiProjects.map(p => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">No projects found</option>}
+                        </select>
                     </div>
                     <Input id="due_date" name="due_date" type="date" label="Due Date" value={newTaskData.due_date} onChange={handleInputChange} />
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
