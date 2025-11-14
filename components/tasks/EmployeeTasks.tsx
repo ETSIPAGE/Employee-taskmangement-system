@@ -120,12 +120,24 @@ const EmployeeTasks: React.FC = () => {
     };
 
     const filteredTasks = useMemo(() => {
-        return hydratedTasks.filter(task => {
+        const filtered = hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && statusMatch;
         });
+        const getTime = (t: any) => {
+            const fields = ['updatedAt','lastUpdated','modifiedAt','timestamp','createdAt','created_at','created','dueDate'];
+            for (const f of fields) {
+                const v = (t as any)[f];
+                if (v) {
+                    const ms = new Date(v).getTime();
+                    if (!Number.isNaN(ms)) return ms;
+                }
+            }
+            return 0;
+        };
+        return filtered.slice().sort((a,b) => getTime(b) - getTime(a));
     }, [hydratedTasks, searchTerm, projectFilter, statusFilter]);
     
     if (!user || user.role !== UserRole.EMPLOYEE) {
