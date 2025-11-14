@@ -169,13 +169,25 @@ export default function TeamTasks() {
 
 
     const filteredTasks = useMemo(() => {
-        return hydratedTasks.filter(task => {
+        const filtered = hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase()) || (task.description || '').toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const assigneeMatch = assigneeFilter === 'all' || task.assigneeIds?.includes(assigneeFilter);
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && assigneeMatch && statusMatch;
         });
+        const getTime = (t: any) => {
+            const fields = ['updatedAt','lastUpdated','modifiedAt','timestamp','createdAt','created_at','created','dueDate'];
+            for (const f of fields) {
+                const v = t && (t as any)[f];
+                if (v) {
+                    const ms = new Date(v).getTime();
+                    if (!Number.isNaN(ms)) return ms;
+                }
+            }
+            return 0;
+        };
+        return filtered.slice().sort((a,b) => getTime(b) - getTime(a));
     }, [hydratedTasks, searchTerm, projectFilter, assigneeFilter, statusFilter]);
 
     if (user?.role !== UserRole.MANAGER) {
