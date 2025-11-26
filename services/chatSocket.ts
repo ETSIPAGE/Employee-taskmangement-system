@@ -1,3 +1,5 @@
+import { setUserStatus, updateUserLastSeen } from './dataService';
+
 const WEBSOCKET_URL = 'wss://4axwbl20th.execute-api.ap-south-1.amazonaws.com/dev';
 
 type OutgoingMessage = {
@@ -24,6 +26,46 @@ class ChatSocket {
     private reconnectTimeout: number | null = null;
     private shouldReconnect = false;
     private lastToken?: string;
+
+    private parseStatusPayload(raw: unknown): { userId: string; status: 'online' | 'offline' } | null {
+        if (!raw) {
+            return null;
+        }
+
+        if (typeof raw === 'object' && raw !== null) {
+            const obj = raw as Record<string, unknown>;
+            const type = typeof obj.type === 'string' ? obj.type.toLowerCase() : undefined;
+            const userId = typeof obj.userId === 'string' ? obj.userId : undefined;
+            const status = typeof obj.status === 'string' ? obj.status.toLowerCase() : undefined;
+            if (type === 'status' && userId && (status === 'online' || status === 'offline')) {
+                return { userId, status };
+            }
+        }
+
+        if (typeof raw === 'string') {
+            try {
+                const parsed = JSON.parse(raw);
+                const payload = this.parseStatusPayload(parsed);
+                if (payload) {
+                    return payload;
+                }
+            } catch (error) {
+                // Not JSON, fall back to pattern matching below.
+            }
+
+            const match = raw.match(/^STATUS(?:_UPDATE)?\s*(?:[:|])\s*(online|offline)\s*(?:[:|])\s*(.+)$/i);
+            if (match) {
+                const [, status, userId] = match;
+                const normalizedStatus = status.toLowerCase() as 'online' | 'offline';
+                const normalizedUserId = userId.trim();
+                if (normalizedUserId) {
+                    return { userId: normalizedUserId, status: normalizedStatus };
+                }
+            }
+        }
+
+        return null;
+    }
 
     connect(token?: string) {
         this.lastToken = token;
@@ -58,6 +100,19 @@ class ChatSocket {
         this.socket.onmessage = event => {
             try {
                 const data = JSON.parse(event.data);
+                const statusPayload = this.parseStatusPayload(data.status ?? data.payload ?? data.text);
+
+                if (statusPayload) {
+                    setUserStatus(statusPayload.userId, statusPayload.status);
+                    data.type = data.type || 'status';
+                    data.action = data.action || 'status';
+                    data.status = statusPayload.status;
+                    data.userId = statusPayload.userId;
+                } else if (data.senderId) {
+                    // Update last seen for the sender when receiving a message
+                    updateUserLastSeen(data.senderId);
+                }
+
                 this.listeners.forEach(listener => listener(data));
             } catch (error) {
                 console.error('Failed to parse chat WebSocket message', error);
@@ -98,6 +153,8 @@ class ChatSocket {
     }
 
     sendMessage(conversationId: string, text: string) {
+        // Update user's last seen when sending a message
+        updateUserLastSeen('current-user-id'); // This should be the current user's ID
         return this.enqueue({
             action: 'sendMessage',
             conversationId,
@@ -116,6 +173,25 @@ class ChatSocket {
         return this.enqueue({
             action: 'conversationDeleted',
             conversationId,
+        });
+    }
+
+    sendStatusUpdate(userId: string, status: 'online' | 'offline') {
+        if (!userId) {
+            return false;
+        }
+
+        const payload = {
+            type: 'status',
+            userId,
+            status,
+            timestamp: new Date().toISOString(),
+        };
+
+        return this.enqueue({
+            action: 'sendMessage',
+            conversationId: 'system',
+            text: JSON.stringify(payload),
         });
     }
 

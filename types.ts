@@ -141,6 +141,7 @@ export interface Project {
   // If a separate `createdAt` is needed apart from `timestamp`, add it here.
   // createdAt?: string;
   createdBy?: string; // <--- THIS IS THE ADDED LINE TO RESOLVE THE ERRORS
+  employeeIds?: string[]; // Employees assigned to this project
 }
 
 export interface TaskDependency {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ChatConversation, User, UserRole } from '../../types';
 import * as DataService from '../../services/dataService';
 import CreateGroupModal from './CreateGroupModal';
@@ -68,6 +68,8 @@ const formatUserName = (user?: User) => {
 
 const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, currentUser, onSelectConversation, onSelectUser, onGroupCreated, onClearConversation, onDeleteConversation, onAddGroupMember, onRemoveGroupMember, onDeleteGroup, onEditGroupName, onViewGroupDetails, pendingCounts = {}, activeConversationId }) => {
     const [tab, setTab] = useState<'chats' | 'users'>('chats');
+    const [refreshKey, setRefreshKey] = useState(0);
+    const refreshInterval = useRef<NodeJS.Timeout>();
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
     const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
     const [groupMenuOpenFor, setGroupMenuOpenFor] = useState<string | null>(null);
@@ -118,14 +120,24 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
         const otherUserId = conv.participantIds.find(id => id !== currentUser.id);
         const otherUser = users.find(u => u.id === otherUserId);
         const name = formatUserName(otherUser);
-        const presenceStatus = otherUser ? DataService.getUserPresenceStatus(otherUser.id) : 'Offline';
-        const badgeClass = presenceStatus === 'Active'
-            ? 'bg-green-500'
-            : presenceStatus === 'Busy'
-                ? 'bg-amber-500'
-                : 'bg-slate-600';
-        console.log('ChatSidebar direct conversation display', { conversationId: conv.id, otherUserId, name, presenceStatus });
-        return { name, initials: getInitials(name), badgeClass, presenceStatus };
+        const isOnline = otherUser ? DataService.isUserOnline(otherUser.id) : false;
+        const badgeClass = isOnline ? 'bg-green-500' : 'bg-slate-600';
+        const statusText = isOnline ? 'Online' : 'Offline';
+        
+        console.log('ChatSidebar direct conversation display', { 
+            conversationId: conv.id, 
+            otherUserId, 
+            name, 
+            isOnline,
+            statusText 
+        });
+        
+        return { 
+            name, 
+            initials: getInitials(name), 
+            badgeClass, 
+            presenceStatus: statusText 
+        };
     };
 
     const canCreateGroup = currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.MANAGER;
@@ -245,16 +257,23 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                 )}
                  {tab === 'users' && (
                     <ul>
-                        {users.filter(u => u.id !== currentUser.id).map(user => {
-                             const displayName = formatUserName(user);
-                             const presenceStatus = DataService.getUserPresenceStatus(user.id);
-                             const isOnline = presenceStatus === 'Active';
-                             const badgeClass = isOnline
-                                 ? 'bg-green-500'
-                                 : presenceStatus === 'Busy'
-                                     ? 'bg-amber-500'
-                                     : 'bg-slate-600';
-                             console.log('ChatSidebar user entry', { userId: user.id, name: displayName, presenceStatus });
+                        {users
+                            .filter(u => u.id !== currentUser.id)
+                            .sort((a, b) => {
+                                // Sort by online status first, then by name
+                                const aOnline = DataService.isUserOnline(a.id);
+                                const bOnline = DataService.isUserOnline(b.id);
+                                if (aOnline === bOnline) {
+                                    return formatUserName(a).localeCompare(formatUserName(b));
+                                }
+                                return aOnline ? -1 : 1;
+                            })
+                            .map(user => {
+                                const displayName = formatUserName(user);
+                                const isOnline = DataService.isUserOnline(user.id);
+                                const badgeClass = isOnline ? 'bg-green-500' : 'bg-slate-600';
+                                const statusText = isOnline ? 'Online' : 'Offline';
+                             
                              return (
                              <li key={user.id} onClick={() => onSelectUser(user)} className="flex items-center p-3 hover:bg-slate-100 cursor-pointer">
                                 <div className="relative mr-3">
@@ -263,7 +282,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({ conversations, users, current
                                     </div>
                                     <span
                                         className={`absolute bottom-0 right-0 block h-3 w-3 rounded-full border-2 border-white ${badgeClass}`}
-                                        title={presenceStatus}
+                                        title={statusText}
                                     ></span>
                                 </div>
                                 <div className="flex-1 overflow-hidden">

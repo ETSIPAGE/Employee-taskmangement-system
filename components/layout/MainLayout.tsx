@@ -1,10 +1,11 @@
-import React, { ReactNode, useState, useEffect } from 'react';
+import React, { ReactNode, useState, useEffect, useRef } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import ChatContainer from '../chat/ChatContainer';
 import { useAuth } from '../../hooks/useAuth';
 import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
 import * as AuthService from '../../services/authService';
+import { setUserStatus, updateUserLastSeen } from '../../services/dataService';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -16,6 +17,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [chatRefreshKey, setChatRefreshKey] = useState(0);
   const { user, originalUser, stopImpersonation } = useAuth();
+  const lastActiveUserIdRef = useRef<string | null>(null);
 
   const toggleSidebar = () => setSidebarCollapsed(prev => !prev);
   const toggleChat = () =>
@@ -32,12 +34,43 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (user) {
       const token = AuthService.getToken() || undefined;
       chatSocket.connect(token);
+      // Update user's last seen time when they log in
+      updateUserLastSeen(user.id);
+      setUserStatus(user.id, 'online');
+      chatSocket.sendStatusUpdate(user.id, 'online');
+      lastActiveUserIdRef.current = user.id;
+      // Refresh chat to show updated status
+      setChatRefreshKey(prev => prev + 1);
+      
+      // Log user login on client side
+      console.log(`%c[User Login] ${user.name} (${user.email}) has logged in`, 
+        'color: #4CAF50; font-weight: bold');
+      
+      // Send login notification to other users via WebSocket
+      chatSocket.sendMessage('system', `${user.name} has come online`);
     } else {
+      const previousUserId = lastActiveUserIdRef.current;
+      if (previousUserId) {
+        setUserStatus(previousUserId, 'offline');
+        chatSocket.sendStatusUpdate(previousUserId, 'offline');
+        lastActiveUserIdRef.current = null;
+      }
       chatSocket.disconnect();
       setUnreadCount(0);
       setChatRefreshKey(0);
+      
+      // Log user logout on client side
+      console.log('%c[User Logout] User has logged out', 
+        'color: #F44336; font-weight: bold');
     }
     return () => {
+      if (user) {
+        setUserStatus(user.id, 'offline');
+        chatSocket.sendStatusUpdate(user.id, 'offline');
+        if (lastActiveUserIdRef.current === user.id) {
+          lastActiveUserIdRef.current = null;
+        }
+      }
       chatSocket.disconnect();
     };
   }, [user]);
@@ -48,13 +81,28 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     }
     const listener = (event: ChatSocketEvent) => {
       console.log('Chat WebSocket global listener received event', event);
-      if (event.type !== 'newMessage') {
+      
+      // Handle system messages (online/offline notifications)
+      if (event.type === 'system' || event.action === 'system') {
+        console.log(`%c[System] ${event.text || 'Status update'}`, 'color: #2196F3; font-style: italic');
+        // Only refresh the chat to update status, but don't show badge or notification
+        setChatRefreshKey(prev => prev + 1);
         return;
       }
-      if (!isChatOpen) {
-        setUnreadCount(prev => prev + 1);
-        setChatRefreshKey(prevKey => prevKey + 1);
-        console.log('Chat message received while panel closed');
+      
+      // Only show badge for actual chat messages (not status updates)
+      if (event.type === 'newMessage' && event.text) {
+        if (!isChatOpen) {
+          setUnreadCount(prev => prev + 1);
+          setChatRefreshKey(prevKey => prevKey + 1);
+          console.log('Chat message received while panel closed');
+        }
+      }
+      
+      // Handle status updates without showing badge
+      if (event.type === 'status' || event.action === 'status') {
+        // Just refresh the chat to update status, no badge
+        setChatRefreshKey(prev => prev + 1);
       }
     };
     chatSocket.addListener(listener);
