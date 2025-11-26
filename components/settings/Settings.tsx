@@ -40,6 +40,8 @@ const Settings: React.FC = () => {
     const handlePasswordChange = async (e: React.FormEvent) => {
         e.preventDefault();
         setPasswordMessage({ type: '', text: '' });
+        
+        // Validate inputs
         if (!currentPassword || !newPassword || !confirmPassword) {
             setPasswordMessage({ type: 'error', text: 'All fields are required.' });
             return;
@@ -52,18 +54,31 @@ const Settings: React.FC = () => {
             setPasswordMessage({ type: 'error', text: 'New password and confirmation do not match.' });
             return;
         }
+        
         setIsPwLoading(true);
         try {
-            await login(user.email, currentPassword);
-            await UserManagementService.updateEmployee(user.id, { password: newPassword });
+            // Call the new changePassword API
+            await UserManagementService.changePassword(currentPassword, newPassword);
+            
+            // Update UI on success
             setPasswordMessage({ type: 'success', text: 'Password updated successfully.' });
             setToast({ message: 'Password updated successfully', type: 'success' });
-            setTimeout(() => setToast(null), 2500);
+            
+            // Reset form
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
+            
+            // Clear success message after 5 seconds
+            setTimeout(() => {
+                setPasswordMessage({ type: '', text: '' });
+                setToast(null);
+            }, 5000);
+            
         } catch (error) {
-            setPasswordMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to change password.' });
+            console.error('Password change error:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Failed to change password. Please try again.';
+            setPasswordMessage({ type: 'error', text: errorMessage });
         } finally {
             setIsPwLoading(false);
         }

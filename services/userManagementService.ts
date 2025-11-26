@@ -2,6 +2,8 @@ import { User, UserRole } from '../types';
 import { getToken } from './authService';
 import * as DataService from './dataService';
 
+const PASSWORD_CHANGE_API_URL = 'https://jcip9ghxb1.execute-api.ap-south-1.amazonaws.com/dev/changePassword';
+
 const EMPLOYEE_CREATE_API_URL = 'https://kdu0cswd65.execute-api.ap-south-1.amazonaws.com/prod/employee';
 
 const buildHeaders = (includeJson = true): Headers => {
@@ -111,4 +113,50 @@ export const updateEmployee = async (
   // Ensure consumers get fresh data next calls
   DataService.invalidateUsersCache();
   return updated;
+};
+
+export const changePassword = async (currentPassword: string, newPassword: string): Promise<{ message: string }> => {
+  const token = getToken();
+  if (!token) {
+    throw new Error('No authentication token found');
+  }
+
+  const apiKey = typeof window !== 'undefined' ? localStorage.getItem('ets_api_key') : '';
+  
+  try {
+    console.log('Sending password change request to:', PASSWORD_CHANGE_API_URL);
+    console.log('Request payload:', { currentPassword, newPassword });
+    
+    const response = await fetch(PASSWORD_CHANGE_API_URL, {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'x-api-key': apiKey || '',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        currentPassword,
+        newPassword,
+        confirmNewPassword: newPassword
+      })
+    });
+
+    console.log('Response status:', response.status);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Password change failed:', errorData);
+      throw new Error(errorData.message || `Failed to change password: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json().catch(() => ({}));
+    console.log('Password change successful:', data);
+    return data;
+  } catch (error) {
+    console.error('Error in changePassword:', error);
+    throw error;
+  }
 };
