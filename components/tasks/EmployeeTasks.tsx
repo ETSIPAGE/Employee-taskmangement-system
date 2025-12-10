@@ -3,7 +3,8 @@ import { useAuth } from '../../hooks/useAuth';
 import { Navigate, useNavigate } from 'react-router-dom';
 import * as DataService from '../../services/dataService';
 
-import { Project, Task, TaskStatus, User, UserRole } from '../../types';
+import { Project, Task, TaskStatus, User, UserRole, Department, Company } from '../../types';
+
 import TaskCard from './TaskCard';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import { EditIcon, TrashIcon } from '../../constants';
@@ -14,6 +15,8 @@ import Input from '../shared/Input';
 interface HydratedTask extends Task {
     projectName: string;
     assigneeNames: string[];
+    companyName?: string;
+    departmentName?: string;
 }
 
 const EmployeeTasks: React.FC = () => {
@@ -49,10 +52,12 @@ const EmployeeTasks: React.FC = () => {
         if (!user) return;
         setIsLoading(true);
         try {
-            const [userTasks, allProjects, users] = await Promise.all([
+            const [userTasks, allProjects, users, departments, companies] = await Promise.all([
                 DataService.getTasksByAssignee(user.id),
                 DataService.getAllProjects(),
-                DataService.getUsers()
+                DataService.getUsers(),
+                DataService.getDepartments(),
+                DataService.getCompanies().catch(() => []),
             ]);
             
             setProjects(allProjects);
@@ -65,9 +70,22 @@ const EmployeeTasks: React.FC = () => {
 
             const projectsMap = new Map(allProjects.map(p => [p.id, p]));
             const usersMap = new Map(users.map(u => [u.id, u]));
+            const departmentsMap = new Map(departments.map(d => [d.id, d]));
+            const companiesMap = new Map((companies || []).map(c => [c.id, c]));
             const newHydratedTasks = userTasks.map(task => ({
                 ...task,
                 projectName: projectsMap.get(task.projectId)?.name || 'N/A',
+                companyName: (() => {
+                    const proj = projectsMap.get(task.projectId) as any;
+                    const cid = proj?.companyId;
+                    return cid ? companiesMap.get(cid)?.name : undefined;
+                })(),
+                departmentName: (() => {
+                    const proj = projectsMap.get(task.projectId) as any;
+                    const deptIds: string[] = Array.isArray(proj?.departmentIds) ? proj.departmentIds : [];
+                    const first = deptIds[0];
+                    return first ? departmentsMap.get(first)?.name : undefined;
+                })(),
                 assigneeNames: (task.assigneeIds || []).map(id => usersMap.get(id)?.name || 'Unknown').filter(Boolean),
             }));
             setHydratedTasks(newHydratedTasks);
@@ -120,12 +138,24 @@ const EmployeeTasks: React.FC = () => {
     };
 
     const filteredTasks = useMemo(() => {
-        return hydratedTasks.filter(task => {
+        const filtered = hydratedTasks.filter(task => {
             const searchMatch = task.name.toLowerCase().includes(searchTerm.toLowerCase());
             const projectMatch = projectFilter === 'all' || task.projectId === projectFilter;
             const statusMatch = statusFilter === 'all' || task.status === statusFilter;
             return searchMatch && projectMatch && statusMatch;
         });
+        const getTime = (t: any) => {
+            const fields = ['updatedAt','lastUpdated','modifiedAt','timestamp','createdAt','created_at','created','dueDate'];
+            for (const f of fields) {
+                const v = (t as any)[f];
+                if (v) {
+                    const ms = new Date(v).getTime();
+                    if (!Number.isNaN(ms)) return ms;
+                }
+            }
+            return 0;
+        };
+        return filtered.slice().sort((a,b) => getTime(b) - getTime(a));
     }, [hydratedTasks, searchTerm, projectFilter, statusFilter]);
     
     if (!user || user.role !== UserRole.EMPLOYEE) {
@@ -191,6 +221,8 @@ const EmployeeTasks: React.FC = () => {
                             <tr>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Task</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Project</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Company</th>
+                                <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Department</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Assignees</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Due Date</th>
                                 <th className="px-5 py-3 border-b-2 border-slate-200 bg-slate-100 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Status</th>
@@ -209,6 +241,8 @@ const EmployeeTasks: React.FC = () => {
                                 <tr key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} className="group cursor-pointer hover:bg-slate-50 transition-colors">
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm font-semibold text-indigo-600 transition-colors group-hover:text-indigo-800">{task.name}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.projectName}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.companyName || 'N/A'}</td>
+                                    <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.departmentName || 'N/A'}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.assigneeNames.join(', ')}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm text-slate-700">{task.dueDate ? new Date(task.dueDate).toLocaleDateString() : 'N/A'}</td>
                                     <td className="px-5 py-4 border-b border-slate-200 bg-white text-sm">

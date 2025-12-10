@@ -46,14 +46,33 @@ const TaskCalendar: React.FC<CalendarProps> = ({ tasks, users, currentUserRole, 
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg">
+    <div className="bg-white rounded-xl shadow-lg ring-1 ring-slate-200">
       <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <button className="px-2 py-1 text-slate-600 hover:bg-slate-100 rounded" onClick={() => setCursor(c => addMonths(c, -1))}>{'<'}</button>
+        <div className="flex items-center gap-3">
+          <button
+            className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
+            onClick={() => setCursor(c => addMonths(c, -1))}
+            aria-label="Previous month"
+          >
+            ‹
+          </button>
           <div className="text-lg font-semibold text-slate-800">Task Calendar</div>
-          <button className="px-2 py-1 text-slate-600 hover:bg-slate-100 rounded" onClick={() => setCursor(c => addMonths(c, 1))}>{'>'}</button>
+          <button
+            className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-slate-100 text-slate-700 hover:bg-slate-200"
+            onClick={() => setCursor(c => addMonths(c, 1))}
+            aria-label="Next month"
+          >
+            ›
+          </button>
         </div>
-        <button className="text-sm text-indigo-600 hover:underline" onClick={() => setCursor(new Date())}>Today</button>
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex items-center gap-3 text-[11px]">
+            <span className="inline-flex items-center gap-1 text-slate-600"><span className="inline-block w-2 h-2 rounded-full bg-green-500"/>Submitted</span>
+            <span className="inline-flex items-center gap-1 text-slate-600"><span className="inline-block w-2 h-2 rounded-full bg-amber-500"/>Late</span>
+            <span className="inline-flex items-center gap-1 text-slate-600"><span className="inline-block w-2 h-2 bg-red-500"/>Missed</span>
+          </div>
+          <button className="text-sm font-medium text-indigo-600 hover:text-indigo-700" onClick={() => setCursor(new Date())}>Today</button>
+        </div>
       </div>
       <div className="px-6 pt-4 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {[-1,0,1].map(offset => {
@@ -85,19 +104,26 @@ const TaskCalendar: React.FC<CalendarProps> = ({ tasks, users, currentUserRole, 
                     const status = (!invalid && getStatus) ? getStatus(ymd) : 'none';
                     const dotClass =
                       status === 'submitted' ? 'inline-block w-2 h-2 rounded-full bg-green-500'
-                      : status === 'missed' ? 'inline-block w-2 h-2 bg-red-500' // square block for missed
+                      : status === 'missed' ? 'inline-block w-2 h-2 bg-red-500'
                       : status === 'late' ? 'inline-block w-2 h-2 rounded-full bg-amber-500'
                       : 'hidden';
                     return (
                       <div
                         key={idx}
-                        className={`relative min-h-[90px] border rounded p-1 ${invalid ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 cursor-pointer'}`}
+                        className={`relative min-h-[96px] border rounded-lg p-1 transition-all ${invalid ? 'bg-slate-50 border-slate-200' : 'bg-white border-slate-200 hover:bg-slate-50 hover:shadow-sm cursor-pointer'} ${isToday && !invalid ? 'ring-1 ring-indigo-300' : ''}`}
                         onClick={() => { if (!invalid && onDayClick) onDayClick(ymd); }}
                       >
-                        <div className={`text-right text-[11px] ${isToday ? 'font-bold text-indigo-700' : 'text-slate-700'}`}>{invalid ? '' : d.getDate()}</div>
-                        {/* show status indicators for both employee and manager views */}
+                        <div className={`flex items-start justify-between text-[11px] ${isToday ? 'font-bold text-indigo-700' : 'text-slate-700'}`}>
+                          <span className="sr-only">{invalid ? '' : d.toDateString()}</span>
+                          <span className="px-1 rounded text-slate-700">{invalid ? '' : d.getDate()}</span>
+                          {!invalid && tasksForDay.length > 0 && (
+                            <span className="ml-auto inline-flex items-center justify-center rounded-full bg-slate-100 text-slate-600 h-5 min-w-[20px] px-1 text-[10px]">
+                              {tasksForDay.length}
+                            </span>
+                          )}
+                        </div>
                         {!invalid && status !== 'none' && (
-                          <span className={`${dotClass} absolute left-1 top-1`} />
+                          <span className={`${dotClass} absolute left-1.5 top-1.5`} />
                         )}
                       </div>
                     );
@@ -151,6 +177,21 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
   const [adminMgrPage, setAdminMgrPage] = useState<number>(1);
   const [adminEmpPage, setAdminEmpPage] = useState<number>(1);
   const ADMIN_PAGE_SIZE = 20;
+  // Remote reports fetched from GET API for the selected day
+  const [remoteReports, setRemoteReports] = useState<Record<string, { text: string; savedAt?: string; reportId?: string }>>({});
+
+  // Tombstone helpers: avoid rehydrating a note from remote after local delete
+  const tombstoneKey = (ymd: string, uid: string) => `ets_wr_deleted_${uid}_${ymd}`;
+  const markDeleted = (ymd: string, uid?: string) => {
+    const id = uid || (user?.id ? String(user.id) : '');
+    if (!id) return;
+    try { sessionStorage.setItem(tombstoneKey(ymd, id), '1'); } catch {}
+  };
+  const isDeleted = (ymd: string, uid?: string) => {
+    const id = uid || (user?.id ? String(user.id) : '');
+    if (!id) return false;
+    try { return sessionStorage.getItem(tombstoneKey(ymd, id)) === '1'; } catch { return false; }
+  };
 
   useEffect(() => {
     if (!toast) return;
@@ -186,6 +227,413 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     return () => { cancelled = true; };
   }, []);
 
+  // Helper to fetch remote work reports for a given date (used by effect and after POST/EDIT)
+  const fetchRemoteReportsForDate = async (ymd: string) => {
+    const parseToMap = async (url: string) => {
+      const apiKey = (typeof window !== 'undefined'
+        ? (localStorage.getItem('ets_wr_get_api_key') || localStorage.getItem('ets_api_key') || localStorage.getItem('ets_roles_api_key'))
+        : null)
+        || (import.meta as any).env?.VITE_WORK_REPORTS_GET_API_KEY
+        || (import.meta as any).env?.VITE_WORK_REPORTS_API_KEY
+        || (import.meta as any).env?.VITE_ROLES_API_KEY
+        || '';
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['x-api-key'] = apiKey as string;
+      const res = await fetch(url, { headers });
+      if (res.status === 403) {
+        try { if (typeof window !== 'undefined') sessionStorage.setItem('ets_wr_forbidden', '1'); } catch {}
+        return {} as Record<string, { text: string; savedAt?: string; reportId?: string }>;
+      }
+      if (!res.ok) throw new Error(await res.text());
+      const body = await res.json();
+      const arrSrc = Array.isArray(body?.items) ? body.items : (Array.isArray(body?.reports) ? body.reports : (Array.isArray(body) ? body : []));
+      const arr: any[] = arrSrc || [];
+      const map: Record<string, { text: string; savedAt?: string; reportId?: string }> = {};
+      try {
+        const idsPreview = (arr || []).slice(0, 10).map((it: any) => (
+          it?.userId || it?.employeeId || it?.user_id || it?.employee_id || it?.employee?.id || it?.user?.id || it?.employeeEmail || it?.email
+        ));
+        // eslint-disable-next-line no-console
+        console.debug('WorkReports GET', { url, count: arr.length || 0, idsPreview });
+      } catch {}
+      arr.forEach((it: any) => {
+        // Normalize user id
+        let uid = (
+          it?.userId || it?.employeeId || it?.user_id || it?.employee_id || it?.employee?.id || it?.user?.id
+        );
+        // Fallback to email mapping
+        const emailCandidate = it?.employeeEmail || it?.email || it?.employee_email || it?.employee?.email || it?.user?.email;
+        if (!uid && emailCandidate) {
+          const match = (users || []).find(u => (u.email || '').toLowerCase() === String(emailCandidate).toLowerCase());
+          if (match) uid = match.id;
+        }
+        if (!uid) return;
+        const key = String(uid);
+        // Normalize text/content
+        const textRaw = it?.summary ?? it?.message ?? it?.text ?? it?.content ?? it?.description ?? '';
+        const text = String(textRaw || '');
+        // Normalize timestamp
+        const tsRaw = it?.savedAt ?? it?.timestamp ?? it?.updatedAt ?? it?.updated_at ?? it?.createdAt ?? it?.created_at;
+        const savedAt = typeof tsRaw === 'string' ? tsRaw : (typeof tsRaw === 'number' ? new Date(tsRaw).toISOString() : undefined);
+        // Determine the effective report date YMD and strictly filter by the selected day
+        const reportDateRaw = it?.reportDate ?? it?.date ?? it?.day;
+        let itemYmd: string | undefined;
+        if (typeof reportDateRaw === 'string' && reportDateRaw.length >= 10) {
+          itemYmd = reportDateRaw.slice(0, 10);
+        } else if (savedAt) {
+          try {
+            const d = new Date(savedAt);
+            itemYmd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } catch {}
+        }
+        if (itemYmd && itemYmd !== ymd) return; // skip cross-date entries from backend
+        // Normalize report id
+        const reportIdRaw = it?.reportId ?? it?.id ?? it?._id;
+        const reportId = typeof reportIdRaw === 'string' ? reportIdRaw : (reportIdRaw != null ? String(reportIdRaw) : undefined);
+        if (text && text.trim()) map[key] = { text, savedAt, reportId };
+      });
+      return map;
+    };
+
+    const cid = user?.companyId ? `&companyId=${encodeURIComponent(user.companyId)}` : '';
+    const keyCandidate = (
+      (typeof window !== 'undefined'
+        ? (localStorage.getItem('ets_wr_get_api_key') || localStorage.getItem('ets_api_key') || localStorage.getItem('ets_roles_api_key'))
+        : null)
+      || (import.meta as any).env?.VITE_WORK_REPORTS_GET_API_KEY
+      || (import.meta as any).env?.VITE_WORK_REPORTS_API_KEY
+      || (import.meta as any).env?.VITE_ROLES_API_KEY
+      || ''
+    );
+    const warned = typeof window !== 'undefined' ? sessionStorage.getItem('ets_wr_warned_get') === '1' : true;
+    if (!keyCandidate) {
+      // Do not show any toast; just skip network and return empty
+      if (!warned) { try { sessionStorage.setItem('ets_wr_warned_get', '1'); } catch {} }
+      setRemoteReports({});
+      return {} as Record<string, { text: string; savedAt?: string; reportId?: string }>;
+    }
+    // If we already got a 403 earlier in this session, don't spam further requests
+    const forbiddenOnce = typeof window !== 'undefined' ? sessionStorage.getItem('ets_wr_forbidden') === '1' : false;
+    if (forbiddenOnce) {
+      setRemoteReports({});
+      return {} as Record<string, { text: string; savedAt?: string; reportId?: string }>;
+    }
+    const proxyNoSlash = `/api-work-reports/work-reports?reportDate=${encodeURIComponent(ymd)}`;
+    const proxyWithSlash = `/api-work-reports/work-reports/?reportDate=${encodeURIComponent(ymd)}`;
+    const directBase = 'https://83eaugq1sc.execute-api.ap-south-1.amazonaws.com/prod/work-reports';
+    const baseNoSlash = `${directBase}?reportDate=${encodeURIComponent(ymd)}`;
+    const baseWithSlash = `${directBase}/?reportDate=${encodeURIComponent(ymd)}`;
+    // Prefer proxy first; fallback to direct AWS endpoints (requires CORS + x-api-key)
+    const candidates = [
+      `${proxyNoSlash}${cid}`,
+      proxyNoSlash,
+      `${proxyWithSlash}${cid}`,
+      proxyWithSlash,
+      `${baseNoSlash}${cid}`,
+      baseNoSlash,
+      `${baseWithSlash}${cid}`,
+      baseWithSlash,
+    ];
+    let map = {} as Record<string, { text: string; savedAt?: string; reportId?: string }>;
+    for (const url of candidates) {
+      try {
+        map = await parseToMap(url);
+        if (Object.keys(map).length > 0) break;
+      } catch {
+        // try next
+      }
+    }
+    try {
+      const selfId = user?.id ? String(user.id) : '';
+      if (selfId && isDeleted(ymd, selfId)) {
+        const filtered = { ...map } as typeof map;
+        delete filtered[selfId];
+        setRemoteReports(filtered);
+        return filtered;
+      }
+    } catch {}
+    setRemoteReports(map);
+    return map;
+  };
+
+  // Fetch remote work reports for the selected date (GET API)
+  useEffect(() => {
+    if (!selectedDate) { setRemoteReports({}); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const map = await fetchRemoteReportsForDate(selectedDate);
+        if (cancelled) return;
+        setRemoteReports(map);
+      } catch {
+        if (!cancelled) setRemoteReports({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate, user, users]);
+
+  // When Team modal opens for a specific date, hydrate from remote GET to ensure latest view
+  useEffect(() => {
+    if (!isTeamView) return;
+    if (!isTeamModal) return;
+    if (!selectedDate) return;
+    void (async () => {
+      try { await fetchRemoteReportsForDate(selectedDate); } catch {}
+    })();
+  }, [isTeamView, isTeamModal, selectedDate]);
+
+  // --- Helper: Send Work Report to external API ---
+  const postWorkReport = async (reporter: User, summary: string, reportDate?: string) => {
+    try {
+      // If no create API key is available, skip remote sync silently
+      const createKeyCandidate = (
+        (typeof window !== 'undefined'
+          ? (localStorage.getItem('ets_wr_create_api_key') || localStorage.getItem('ets_api_key') || localStorage.getItem('ets_roles_api_key'))
+          : null)
+        || (import.meta as any).env?.VITE_WORK_REPORTS_CREATE_API_KEY
+        || (import.meta as any).env?.VITE_WORK_REPORTS_API_KEY
+        || (import.meta as any).env?.VITE_ROLES_API_KEY
+        || ''
+      );
+      const hasCreateKey = !!(createKeyCandidate && String(createKeyCandidate).trim());
+      if (!hasCreateKey) {
+        return; // local save already happened; do not attempt remote
+      }
+      // Prefer full user object from state to avoid missing org fields
+      const full = (users || []).find(u => String(u.id) === String((reporter as any)?.id));
+      const src = full || reporter;
+
+      // Resolve org data lazily with multi-source inference
+      let companyId = src.companyId || '';
+      let companyName = '';
+      let deptId = (src.departmentIds && src.departmentIds[0]) || '';
+      let departmentName = '';
+
+      // If department missing, infer from first assigned task's project
+      if (!deptId) {
+        try {
+          const uid = String((src as any)?.id);
+          const t = (tasks || []).find(t => (t.assigneeIds || []).map(String).includes(uid));
+          if (t) {
+            const proj = (projects || []).find(p => String(p.id) === String(t.projectId));
+            if (proj && (proj.departmentIds || []).length > 0) {
+              deptId = proj.departmentIds[0];
+              if (!companyId && proj.companyId) companyId = proj.companyId;
+            }
+          }
+        } catch {}
+      }
+      try {
+        // Resolve department details (name and possibly companyId if reporter lacks it)
+        if (deptId) {
+          const allDepts = await DataService.getDepartments();
+          const dept = allDepts.find(d => d.id === deptId);
+          departmentName = dept?.name || '';
+          if (!companyId && dept?.companyId) {
+            companyId = dept.companyId;
+          }
+        }
+      } catch {}
+      try {
+        // Resolve company name if we have a companyId by now (use API-backed companies list)
+        if (companyId) {
+          const companies = await DataService.getCompanies();
+          const cid = String(companyId).toLowerCase();
+          const c = companies.find(co => String(co.id).toLowerCase() === cid);
+          companyName = c?.name || '';
+        }
+      } catch {}
+      // Fallback: if companyName still empty, use any value present on the user
+      if (!companyName) {
+        companyName = (src as any)?.companyName || '';
+      }
+      // Last-resort fallbacks to avoid empty names in payload
+      if (!companyName && companyId) companyName = companyId;
+      if (!departmentName && deptId) departmentName = deptId;
+
+      const managers: string[] = Array.isArray(src.managerIds)
+        ? src.managerIds
+        : (src.managerId ? [src.managerId] : []);
+
+      const userIdValue = (src as any)?.id || (src as any)?._id || (src as any)?.userId || '';
+      const nameSanitized = String(src.name || '').replace(/[^\p{L}\p{N} .,'-]/gu, '').trim();
+      const roleNormalized = 'EMPLOYEE';
+      const emailRaw = String(src.email || '').trim();
+      const emailValid = /^(?=.{3,254}$)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(emailRaw);
+      const managersArr = Array.isArray(src.managerIds) ? src.managerIds.map(String) : (src.managerId ? [String(src.managerId)] : []);
+      const basePayload: any = {
+        employeeId: userIdValue,
+        userId: userIdValue,
+        employeeName: nameSanitized,
+        role: 'EMPLOYEE',
+        summary: summary || '',
+        reportDate: reportDate || new Date().toISOString().slice(0,10),
+        companyId: companyId,
+        companyName: companyName,
+        departmentId: deptId,
+        departmentName: departmentName,
+        managers: managersArr,
+      };
+      if (emailValid) basePayload.employeeEmail = emailRaw.toLowerCase();
+      const payload = basePayload;
+
+      // Light retry for eventual consistency with endpoint caching
+      let lastErr: any = null;
+      // 1) Try cached successful URL first
+      try {
+        const cached = typeof window !== 'undefined' ? localStorage.getItem('ets_wr_create_url') : null;
+        if (cached) {
+          const apiKey = createKeyCandidate;
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (apiKey) headers['x-api-key'] = apiKey as string;
+          const res = await fetch(cached, { method: 'POST', headers, body: JSON.stringify(payload) });
+          if (!res.ok) throw new Error(await res.text());
+          lastErr = null;
+        } else {
+          throw new Error('no cached url');
+        }
+      } catch (e) {
+        // 2) Fallback list and cache the first success
+        const createUrls = [
+          // Proxied paths (proxy can inject x-api-key)
+          '/api-work-reports-create/work-reports',
+          '/api-work-reports-create/work-reports/',
+          // Direct AWS endpoint
+          'https://907wl6xmsi.execute-api.ap-south-1.amazonaws.com/prod/work-reports',
+        ];
+        let succeeded = false;
+        for (let attempt = 0; attempt < createUrls.length; attempt++) {
+          try {
+            const apiKey = createKeyCandidate;
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (apiKey) headers['x-api-key'] = apiKey as string;
+            const url = createUrls[attempt];
+            const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload) });
+            if (!res.ok) {
+              const txt = await res.text();
+              throw new Error(txt || 'Failed to submit work report');
+            }
+            succeeded = true;
+            lastErr = null;
+            try { localStorage.setItem('ets_wr_create_url', url); } catch {}
+            break;
+          } catch (e2) {
+            lastErr = e2;
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+        if (!succeeded) throw lastErr;
+      }
+      setToast({ message: 'Work report synced!', type: 'success' });
+      // Refresh remote reports for this date so Admin/Manager can see immediately
+      const ymd = reportDate || new Date().toISOString().slice(0,10);
+      try { await fetchRemoteReportsForDate(ymd); } catch {}
+    } catch (e: any) {
+      // Silent: local save already succeeded; do not surface sync errors
+    }
+  };
+
+  // --- Helper: Edit existing Work Report by reportId ---
+  const editWorkReport = async (reportId: string, summary: string, ymdForRefresh?: string) => {
+    try {
+      // If no edit API key is available, skip remote sync silently
+      const editKeyCandidate = (
+        (typeof window !== 'undefined'
+          ? (localStorage.getItem('ets_wr_edit_api_key') || localStorage.getItem('ets_api_key') || localStorage.getItem('ets_roles_api_key'))
+          : null)
+        || (import.meta as any).env?.VITE_WORK_REPORTS_EDIT_API_KEY
+        || (import.meta as any).env?.VITE_WORK_REPORTS_API_KEY
+        || (import.meta as any).env?.VITE_ROLES_API_KEY
+        || ''
+      );
+      const hasEditKey = !!(editKeyCandidate && String(editKeyCandidate).trim());
+      if (!hasEditKey) {
+        return; // do not attempt remote update
+      }
+      const payload = {
+        reportId,
+        timestamp: Date.now(),
+        update: { summary },
+      } as const;
+      // Try multiple endpoint shapes; consider success if ANY works
+      let lastErr: any = null;
+      let succeeded = false;
+      const employeeId = user?.id ? String(user.id) : undefined;
+      const reportDate = ymdForRefresh;
+      const candidates: Array<{ url: string; method: 'POST' | 'PUT' | 'PATCH'; body: any; bodyType: 'payload' | 'flat' | 'qs' | 'rest' }> = [
+        // Prefer proxied edit endpoints first (proxy injects x-api-key and handles CORS)
+        { url: '/api-work-reports-edit/work-reports/edit-by-user', method: 'POST', body: payload, bodyType: 'payload' },
+        { url: '/api-work-reports-edit/work-reports/edit-by-user/', method: 'POST', body: payload, bodyType: 'payload' },
+        { url: '/api-work-reports-edit/work-reports/edit-by-user', method: 'POST', body: { reportId, summary }, bodyType: 'flat' },
+        { url: '/api-work-reports-edit/work-reports/edit-by-user/', method: 'POST', body: { reportId, summary }, bodyType: 'flat' },
+        // Querystring variants via proxy
+        { url: `/api-work-reports-edit/work-reports/edit-by-user?reportId=${encodeURIComponent(reportId)}`, method: 'POST', body: { summary }, bodyType: 'qs' },
+        { url: `/api-work-reports-edit/work-reports/edit?reportId=${encodeURIComponent(reportId)}`, method: 'POST', body: { summary }, bodyType: 'qs' },
+        // RESTful id routes via proxy
+        { url: `/api-work-reports-edit/work-reports/${encodeURIComponent(reportId)}`, method: 'PUT', body: { summary }, bodyType: 'rest' },
+        { url: `/api-work-reports-edit/work-reports/${encodeURIComponent(reportId)}`, method: 'PATCH', body: { summary }, bodyType: 'rest' },
+      ];
+      // 0) If we have a cached preferred endpoint, try it first
+      try {
+        const cachedRaw = typeof window !== 'undefined' ? localStorage.getItem('ets_wr_edit_endpoint') : null;
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw) as { url: string; method: 'POST'|'PUT'|'PATCH'; bodyType: 'payload'|'flat'|'id'|'rest'|'qs' };
+          // If cached URL is direct AWS domain, drop it to force proxy usage
+          if (cached.url && cached.url.startsWith('http')) {
+            try { localStorage.removeItem('ets_wr_edit_endpoint'); } catch {}
+            throw new Error('invalid cached direct url');
+          }
+          const apiKey = editKeyCandidate;
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (apiKey) headers['x-api-key'] = apiKey as string;
+          let body: any = payload;
+          if (cached.bodyType === 'flat') body = { reportId, summary };
+          else if (cached.bodyType === 'id') body = { id: reportId, summary };
+          else if (cached.bodyType === 'rest') body = { summary };
+          else if (cached.bodyType === 'qs') body = { summary };
+          const res = await fetch(cached.url, { method: cached.method, headers, body: JSON.stringify(body) });
+          if (!res.ok) {
+            // Cached endpoint no longer valid; remove and fall back
+            try { localStorage.removeItem('ets_wr_edit_endpoint'); } catch {}
+            throw new Error(await res.text());
+          }
+          lastErr = null;
+          succeeded = true;
+        } else {
+          throw new Error('no cached endpoint');
+        }
+      } catch (e) {
+        // 1) Try proxied and direct variants
+        for (let i = 0; !succeeded && i < candidates.length; i++) {
+          const c = candidates[i];
+          try {
+            const apiKey = editKeyCandidate;
+            if (!apiKey) break; // no key -> skip network
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            headers['x-api-key'] = apiKey as string;
+            const res = await fetch(c.url, { method: c.method, headers, body: JSON.stringify(c.body) });
+            if (!res.ok) {
+              const txt = await res.text();
+              throw new Error(txt || 'Failed to edit work report');
+            }
+            succeeded = true;
+            lastErr = null;
+            try { localStorage.setItem('ets_wr_edit_endpoint', JSON.stringify({ url: c.url, method: c.method, bodyType: c.bodyType })); } catch {}
+          } catch (e2) {
+            lastErr = e2;
+            await new Promise(r => setTimeout(r, 400));
+          }
+        }
+      }
+      if (!succeeded) throw lastErr || new Error('Edit failed');
+      setToast({ message: 'Work report updated!', type: 'success' });
+      // Refresh for the same date
+      if (ymdForRefresh) { try { await fetchRemoteReportsForDate(ymdForRefresh); } catch {} }
+    } catch (e: any) {
+      // Silent: do not surface edit sync errors
+    }
+  };
+
   const filteredTasks = useMemo(() => {
     if (!user) return [] as Task[];
     const isSelfView = hideAllMembersReports || user.role === UserRole.EMPLOYEE;
@@ -212,9 +660,14 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
   };
   const getNoteForUser = (ymd: string, uid: string): { text: string; savedAt?: string } | undefined => {
     const v = notes[noteKey(ymd, uid)];
-    if (!v) return undefined;
-    if (typeof v === 'string') return { text: String(v) };
-    if (typeof v === 'object') return { text: String(v.text || ''), savedAt: typeof v.savedAt === 'string' ? v.savedAt : undefined };
+    if (v) {
+      if (typeof v === 'string') return { text: String(v) };
+      if (typeof v === 'object') return { text: String(v.text || ''), savedAt: typeof v.savedAt === 'string' ? v.savedAt : undefined };
+    }
+    if (isDeleted(ymd, uid)) return undefined;
+    // Fallback to remote reports fetched via GET API
+    const remote = remoteReports[String(uid)];
+    if (remote && (remote.text || '').trim()) return remote;
     return undefined;
   };
   const getStatusFor = (ymd: string): 'submitted' | 'missed' | 'late' | 'none' => {
@@ -275,9 +728,89 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     const existing = getNote(ymd)?.text || '';
     setDraft(existing);
     setIsEditing(existing.trim().length === 0);
+    // Immediately hydrate this day from remote if local is empty
+    if (!existing.trim()) {
+      const selfId = user?.id ? String(user.id) : '';
+      if (selfId && !isDeleted(ymd, selfId)) {
+        void (async () => {
+          try {
+            const map = await fetchRemoteReportsForDate(ymd);
+            const remote = map[selfId];
+            if (remote && (remote.text || '').trim()) {
+              setDraft(remote.text);
+              setIsEditing(true);
+              const key = noteKey(ymd);
+              const merged = { ...notes, [key]: { text: remote.text, savedAt: remote.savedAt || new Date().toISOString() } } as Record<string, any>;
+              setNotes(merged);
+              try { localStorage.setItem('ets_work_notes', JSON.stringify(merged)); } catch {}
+            }
+          } catch {}
+        })();
+      }
+    }
   };
+
+
+  // If no local draft for the selected date, prefill from remote GET data when available
+  useEffect(() => {
+    if (!selectedDate || isTeamView) return;
+    if (draft && draft.trim().length > 0) return;
+    const selfId = user?.id ? String(user.id) : '';
+    if (selfId && !isDeleted(selectedDate, selfId)) {
+      const remote = remoteReports[selfId];
+      if (remote && (remote.text || '').trim()) {
+        setDraft(remote.text);
+        setIsEditing(true);
+      }
+    }
+  }, [remoteReports, selectedDate, isTeamView, user, draft]);
+
+  // One-time reconciliation: clear wrongly hydrated notes in current month (employee view only)
+  useEffect(() => {
+    if (!user || isTeamView) return;
+    try {
+      const today = new Date();
+      const ymTag = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      const selfId = String(user.id || '');
+      if (!selfId) return;
+      const sessionKey = `ets_work_notes_reconciled_${selfId}_${ymTag}`;
+      if (sessionStorage.getItem(sessionKey) === '1') return;
+
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      const toYmd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+      let cancelled = false;
+      (async () => {
+        const next = { ...notes } as Record<string, any>;
+        for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+          const day = new Date(d);
+          const ymd = toYmd(day);
+          const k = `${selfId}:${ymd}`;
+          if (!(k in next)) continue;
+          try {
+            const map = await fetchRemoteReportsForDate(ymd);
+            const remote = map[selfId];
+            // If backend has a report, update local; otherwise keep local note intact
+            if (remote && (remote.text || '').trim()) {
+              const existing = next[k] || {};
+              next[k] = { text: remote.text, savedAt: remote.savedAt || existing.savedAt };
+            }
+          } catch { /* ignore and keep existing note */ }
+          if (cancelled) return;
+        }
+        if (!cancelled) {
+          setNotes(next);
+          try { localStorage.setItem('ets_work_notes', JSON.stringify(next)); } catch {}
+          sessionStorage.setItem(sessionKey, '1');
+        }
+      })();
+      return () => { cancelled = true; };
+    } catch {}
+  }, [user, isTeamView]);
   const saveNote = () => {
     if (!selectedDate) return;
+    const ymd = selectedDate; // preserve before clearing
     const key = noteKey(selectedDate);
     const next = { ...notes, [key]: { text: draft, savedAt: new Date().toISOString() } };
     setNotes(next);
@@ -285,6 +818,16 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     setSelectedDate(null);
     setDraft('');
     setToast({ message: 'Report saved successfully!', type: 'success' });
+    // Fire-and-forget sync to external API for the current user
+    if (user && draft.trim()) {
+      const uid = String(user.id);
+      const existing = remoteReports[uid];
+      if (existing?.reportId) {
+        void editWorkReport(existing.reportId, draft.trim(), ymd);
+      } else {
+        void postWorkReport(user, draft.trim(), ymd);
+      }
+    }
   };
   const deleteNote = () => {
     if (!selectedDate) return;
@@ -293,6 +836,22 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     delete next[key];
     setNotes(next);
     try { localStorage.setItem('ets_work_notes', JSON.stringify(next)); } catch {}
+    // mark tombstone for current user/date to avoid rehydration
+    try { markDeleted(selectedDate); } catch {}
+    // Also clear remote report if one exists so others don't see stale data
+    try {
+      const ymd = selectedDate;
+      const uid = user?.id ? String(user.id) : '';
+      if (uid) {
+        const existing = remoteReports[uid];
+        if (existing?.reportId) {
+          // Use edit endpoint to blank out the report summary
+          void editWorkReport(existing.reportId, '', ymd);
+        }
+      }
+    } catch {}
+    // Refresh remote cache for the same date to update UI instantly
+    try { if (selectedDate) { void fetchRemoteReportsForDate(selectedDate); } } catch {}
     setSelectedDate(null);
     setDraft('');
     setToast({ message: 'Report deleted successfully!', type: 'success' });
@@ -301,6 +860,7 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
 
   const saveTeamNoteForUser = (uid: string) => {
     if (!selectedDate) return;
+    const ymd = selectedDate; // preserve before clearing
     const text = (teamDrafts[uid] || '').trim();
     if (!text) return;
     const key = noteKey(selectedDate, uid);
@@ -310,6 +870,16 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     setTeamDrafts(prev => ({ ...prev, [uid]: '' }));
     setTeamEditing(prev => ({ ...prev, [uid]: false }));
     setToast({ message: 'Report added successfully!', type: 'success' });
+    // Sync manager self-report to external API
+    const reporter = users.find(u => u.id === uid) || user;
+    if (reporter && text) {
+      const existing = remoteReports[String(uid)];
+      if (existing?.reportId) {
+        void editWorkReport(existing.reportId, text, ymd);
+      } else {
+        void postWorkReport(reporter, text, ymd);
+      }
+    }
   };
 
   const startEditTeamNote = (uid: string, currentText: string) => {
@@ -331,6 +901,18 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
     try { localStorage.setItem('ets_work_notes', JSON.stringify(next)); } catch {}
     setTeamEditing(prev => ({ ...prev, [uid]: false }));
     setTeamDrafts(prev => ({ ...prev, [uid]: '' }));
+    // mark tombstone for that user/date
+    try { markDeleted(selectedDate, uid); } catch {}
+    // Also clear remote report for that user if one exists so managers/admins don't see stale data
+    try {
+      const ymd = selectedDate;
+      const existing = remoteReports[String(uid)];
+      if (existing?.reportId) {
+        void editWorkReport(existing.reportId, '', ymd);
+      }
+    } catch {}
+    // Refresh remote cache for the same date to update UI instantly
+    try { if (selectedDate) { void fetchRemoteReportsForDate(selectedDate); } } catch {}
     setToast({ message: 'Report deleted successfully!', type: 'success' });
   };
 
@@ -441,6 +1023,32 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                     byId[String(u.id)] = u;
                   }
                 });
+                // Include anyone with a REMOTE report for this date (even if not in current users list)
+                try {
+                  Object.keys(remoteReports || {}).forEach(uid => {
+                    if (String(uid) === String(managerId)) return; // never include manager in employee list
+                    // If we already have the user, keep as is; else create a stub employee
+                    if (!byId[String(uid)]) {
+                      const remote = remoteReports[String(uid)];
+                      if (remote && (remote.text || '').trim()) {
+                        const known = (users || []).find(u => String(u.id) === String(uid));
+                        if (known && known.role === UserRole.EMPLOYEE) {
+                          byId[String(uid)] = known;
+                        } else if (!known) {
+                          const stub: User = {
+                            id: String(uid),
+                            name: 'Employee',
+                            email: '',
+                            role: UserRole.EMPLOYEE,
+                            status: 'Active',
+                            joinedDate: new Date().toISOString(),
+                          } as User;
+                          byId[String(uid)] = stub;
+                        }
+                      }
+                    }
+                  });
+                } catch {}
                 // Include anyone with a note for this date (from users list)
                 (users || []).forEach(u => {
                   if (u.role !== UserRole.EMPLOYEE) return;
@@ -477,6 +1085,35 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                   const note = getNoteForUser(selectedDate, u.id);
                   return !!(note && (note.text || '').trim().length > 0);
                 });
+
+                // Always augment from remoteReports for the date to ensure visibility even if assignment links are missing
+                try {
+                  const existingIds = new Set(employeesForDate.map(u => String(u.id)));
+                  const managerIdsSet = new Set((users || []).filter(u => u.role === UserRole.MANAGER).map(u => String(u.id)));
+                  Object.keys(remoteReports || {}).forEach(uid => {
+                    if (String(uid) === String(managerId)) return; // skip manager self
+                    if (managerIdsSet.has(String(uid))) return; // skip managers in employee list
+                    if (existingIds.has(String(uid))) return;
+                    const remote = remoteReports[String(uid)];
+                    if (!remote || !(remote.text || '').trim()) return;
+                    const known = (users || []).find(u => String(u.id) === String(uid));
+                    if (known && known.role === UserRole.EMPLOYEE) {
+                      employeesForDate.push(known);
+                      existingIds.add(String(uid));
+                    } else if (!known) {
+                      const stub: User = {
+                        id: String(uid),
+                        name: 'Employee',
+                        email: '',
+                        role: UserRole.EMPLOYEE,
+                        status: 'Active',
+                        joinedDate: new Date().toISOString(),
+                      } as User;
+                      employeesForDate.push(stub);
+                      existingIds.add(String(uid));
+                    }
+                  });
+                } catch {}
 
                 const isAdmin = user?.role === UserRole.ADMIN;
                 const sectionLabel = isAdmin ? 'Admin Report' : 'Manager Report';
@@ -519,6 +1156,30 @@ const WorkReportsDashboard: React.FC<Props> = ({ hideAllMembersReports }) => {
                             joinedDate: new Date().toISOString(),
                           } as User;
                           employeesForDate.push(stub);
+                        }
+                      }
+                    });
+                    // Also augment with any REMOTE-only report user IDs from the GET API
+                    Object.keys(remoteReports || {}).forEach(uid => {
+                      if (managerIdsSet.has(String(uid))) return; // don't add managers to employee list
+                      if (!existingIds.has(String(uid))) {
+                        const remote = remoteReports[String(uid)];
+                        if (remote && (remote.text || '').trim()) {
+                          const known = (users || []).find(u => String(u.id) === String(uid));
+                          if (known && known.role === UserRole.EMPLOYEE) {
+                            employeesForDate.push(known);
+                          } else if (!known) {
+                            const stub: User = {
+                              id: String(uid),
+                              name: 'Employee',
+                              email: '',
+                              role: UserRole.EMPLOYEE,
+                              status: 'Active',
+                              joinedDate: new Date().toISOString(),
+                            } as User;
+                            employeesForDate.push(stub);
+                          }
+                          existingIds.add(String(uid));
                         }
                       }
                     });

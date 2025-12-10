@@ -18,6 +18,91 @@ const TASKS_GET_ALL_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazona
 const TASKS_CREATE_API_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/add-task';
 const TASKS_UPDATE_API_BASE_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/edit-task'; // Requires /taskId
 const TASKS_DELETE_API_BASE_URL = 'https://3f4ycega6h.execute-api.ap-south-1.amazonaws.com/dev/delete-task'; // Requires /taskId
+const DELETED_TASKS_API_URL = 'https://h1fgyiqkmb.execute-api.ap-south-1.amazonaws.com/dev/get-deleted-tasks';
+
+// Get deleted tasks
+export const getDeletedTasks = async (limit = 50, lastEvaluatedKey: string | null = null) => {
+    console.log('getDeletedTasks called with limit:', limit, 'lastEvaluatedKey:', lastEvaluatedKey);
+    try {
+        const token = getToken();
+        
+        const params = new URLSearchParams({
+            limit: Math.min(limit, 100).toString(),
+            ...(lastEvaluatedKey ? { lastEvaluatedKey } : {})
+        });
+
+        const url = `${DELETED_TASKS_API_URL}?${params}`;
+        console.log('Making request to:', url);
+
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'x-api-key': 'your-api-key-here',
+                'Content-Type': 'application/json'
+            }
+        });
+
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('API Error Response:', errorText);
+            throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+        }
+
+        let responseData = await response.json();
+        console.log('API Response data:', responseData);
+        
+        // Handle the case where the response is wrapped in a body property
+        if (responseData.body) {
+            try {
+                responseData = JSON.parse(responseData.body);
+            } catch (e) {
+                console.error('Failed to parse response body:', e);
+                throw new Error('Invalid response format: body is not valid JSON');
+            }
+        }
+        
+        // Handle the API response format
+        if (responseData && responseData.Tasks && Array.isArray(responseData.Tasks)) {
+            // Map the API response to match our expected task format
+            const items = responseData.Tasks.map((task: any) => ({
+                id: task.taskId,
+                name: task.title,
+                description: task.description,
+                status: task.status,
+                priority: task.priority,
+                dueDate: task.due_date,
+                estimatedTime: task.est_time,
+                projectId: task.project,
+                projectName: task.department, // Using department as project name if needed
+                assigneeIds: task.assign_to || [],
+                assignerId: task.assign_by,
+                deletedAt: task.deletedAt,
+                deletedBy: task.deletedBy,
+                deleteReason: task.deletionReason,
+                // Add any other necessary mappings
+                ...task // Include all other properties from the original task
+            }));
+            
+            return {
+                items,
+                pagination: {}
+            };
+        }
+        
+        // If we get here, the response format is unexpected
+        console.error('Unexpected response format:', responseData);
+        throw new Error('Unexpected response format from server');
+    } catch (error) {
+        console.error('Error in getDeletedTasks:', error);
+        // Return empty result instead of throwing to prevent UI crash
+        return {
+            items: [],
+            pagination: {}
+        };
+    }
+};
 
 // Dedicated delete endpoint for employees
 const EMPLOYEES_DELETE_API_BASE_URL = 'https://lhvzdjkymk.execute-api.ap-south-1.amazonaws.com/Delete/employees'; // Requires /{id}
@@ -1116,27 +1201,44 @@ export const getTasksByAssignee = async (assigneeId: string): Promise<Task[]> =>
 
 export const updateTask = async (
     taskId: string,
-    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string },
+    updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number; message?: string; description?: string },
     currentUserId: string
 ): Promise<Task> => {
-    const payload: { currentUserId: string; status?: string; assign_to?: string[]; due_date?: string; est_time?: number; message?: string } = {
+    const payload: { 
+        currentUserId: string; 
+        status?: string; 
+        assign_to?: string[]; 
+        due_date?: string; 
+        est_time?: number; 
+        message?: string;
+        description?: string;
+    } = {
         currentUserId: currentUserId,
     };
+    
     if (updates.status) {
         payload.status = updates.status;
     }
+    
     // Ensure assigneeIds is sent as an array, or empty array if undefined/null
     if (updates.hasOwnProperty('assigneeIds')) {
         payload.assign_to = updates.assigneeIds || [];
     }
+    
     if (updates.dueDate) {
         payload.due_date = updates.dueDate;
     }
+    
     if (typeof updates.estimatedTime === 'number') {
         payload.est_time = updates.estimatedTime;
     }
+    
     if (updates.message && updates.message.trim() !== '') {
         payload.message = updates.message.trim();
+    }
+    
+    if (updates.description !== undefined) {
+        payload.description = updates.description;
     }
 
     const endpointUrl = `${TASKS_UPDATE_API_BASE_URL}/${taskId}`;

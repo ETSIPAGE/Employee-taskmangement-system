@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { getToken } from '../../services/authService';
 import * as DataService from '../../services/dataService';
 import * as AuthService from '../../services/authService';
 import { Task, TaskStatus, User, Project, UserRole, Note, Department, Company } from '../../types';
 
 import Button from '../shared/Button';
-import { ClockIcon, BriefcaseIcon, UserCircleIcon } from '../../constants';
+import { ClockIcon, BriefcaseIcon, UserCircleIcon, TrashIcon } from '../../constants';
+import Modal from '../shared/Modal';
 
 const DetailItem: React.FC<{ icon: React.ReactNode, label: string, children: React.ReactNode }> = ({ icon, label, children }) => (
     <div className="flex items-start py-3">
@@ -34,17 +36,31 @@ const TaskDetail: React.FC = () => {
     const [task, setTask] = useState<Task | null>(null);
     const [project, setProject] = useState<Project | null>(null);
     const [allUsers, setAllUsers] = useState<User[]>([]);
-    const [newNote, setNewNote] = useState('');
     const [isLoading, setIsLoading] = useState(true);
+    const [isEditingAssignees, setIsEditingAssignees] = useState(false);
+    const [isEditingDescription, setIsEditingDescription] = useState(false);
+    const [editedDescription, setEditedDescription] = useState('');
+    const [departments, setDepartments] = useState<Department[]>([]);
+    const [company, setCompany] = useState<Company | null>(null);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleteReason, setDeleteReason] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
+    
+    // State for managing task updates and notes
     const [isSaving, setIsSaving] = useState(false);
     const [saveError, setSaveError] = useState('');
     const [saveSuccess, setSaveSuccess] = useState(false);
-    const [isEditingAssignees, setIsEditingAssignees] = useState(false);
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [company, setCompany] = useState<Company | null>(null);
+    const [newNote, setNewNote] = useState('');
 
     // Initial state for editedTask should be based on task, or empty if task is null
-    const [editedTask, setEditedTask] = useState<{ status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number }>({});
+    const [editedTask, setEditedTask] = useState<{
+        status?: TaskStatus;
+        assigneeIds?: string[];
+        dueDate?: string;
+        estimatedTime?: number;
+        description?: string;
+    }>({});
 
     const isDirty = useMemo(() => {
         if (!task) return false;
@@ -59,8 +75,9 @@ const TaskDetail: React.FC = () => {
 
         const hasDueDateChanged = editedTask.dueDate !== undefined && editedTask.dueDate !== (task.dueDate || undefined);
         const hasEstimatedChanged = editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task.estimatedTime || undefined);
+        const hasDescriptionChanged = editedTask.description !== undefined && editedTask.description !== (task.description || '');
 
-        return hasStatusChanged || hasAssigneeChanged || hasDueDateChanged || hasEstimatedChanged;
+        return hasStatusChanged || hasAssigneeChanged || hasDueDateChanged || hasEstimatedChanged || hasDescriptionChanged;
     }, [task, editedTask]);
 
     const loadData = useCallback(async () => {
@@ -82,8 +99,10 @@ const TaskDetail: React.FC = () => {
                 status: currentTask.status,
                 assigneeIds: currentTask.assigneeIds || [],
                 dueDate: currentTask.dueDate || undefined,
-                estimatedTime: currentTask.estimatedTime || undefined
+                estimatedTime: currentTask.estimatedTime || undefined,
+                description: currentTask.description || ''
             });
+            setEditedDescription(currentTask.description || '');
 
             const [taskProject, users] = await Promise.all([
                 DataService.getProjectById(currentTask.projectId),
@@ -158,62 +177,159 @@ const TaskDetail: React.FC = () => {
         };
     }, [allUsers, project]);
 
-    const handleAddNote = async () => {
-        if (!newNote.trim() || !currentUser || !task || !taskId) return;
+    const handleSoftDelete = async () => {
+        if (!taskId || !currentUser || !deleteReason.trim()) {
+            console.error('Missing required fields for task deletion');
+            return;
+        }
+        
+        setIsDeleting(true);
+        setDeleteError('');
+        
         try {
-            await DataService.updateTask(taskId, { message: newNote.trim() }, currentUser.id);
+            // 1. First, perform the soft delete
+            console.log('Initiating soft delete for task:', taskId);
+            const requestBody = {
+                taskId: taskId,
+                reason: deleteReason.trim(),
+                deletedBy: currentUser.id
+            };
+            
+            const apiKey = process.env.REACT_APP_API_KEY || '';
+            const token = getToken() || '';
+            
+            // Make the soft delete request
+            const response = await fetch('https://h1fgyiqkmb.execute-api.ap-south-1.amazonaws.com/dev/soft-delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'x-api-key': apiKey,
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify(requestBody)
+            });
+            
+            const responseData = await response.json().catch(() => ({}));
+            
+            if (!response.ok) {
+                console.error('Soft delete failed:', responseData);
+                throw new Error(responseData.message || 'Failed to soft delete task');
+            }
+            
+            console.log('Soft delete successful, proceeding with permanent delete');
+            
+            // 2. Immediately after successful soft delete, perform the permanent delete
+            try {
+                console.log('Initiating permanent delete for task:', taskId);
+                await DataService.deleteTask(taskId, currentUser.id);
+                console.log('Permanent delete successful');
+                
+                // Show success message
+                // You might want to use a toast notification here instead of alert
+                alert('Task has been deleted successfully.');
+                
+            } catch (deleteError) {
+                console.error('Permanent delete failed, but soft delete was successful:', deleteError);
+                // Even if permanent delete fails, we consider this a success since soft delete worked
+                // The task will still be in the deleted tasks list
+                alert('Task has been moved to deleted tasks.');
+            }
+            
+            // Close the modal and navigate back
+            setShowDeleteModal(false);
+            setDeleteReason('');
+            navigate(-1);
+            
+        } catch (error) {
+            console.error('Error deleting task:', error);
+            setDeleteError(error instanceof Error ? error.message : 'Failed to delete task');
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
+    const handleAddNote = async () => {
+        if (!newNote.trim() || !taskId || !currentUser) return;
+        
+        try {
+            setIsSaving(true);
+            setSaveError('');
+            
+            // Create the new note object
+            const newNoteObj = {
+                id: Date.now().toString(),
+                authorId: currentUser.id,
+                authorName: currentUser.name || 'Unknown',
+                content: newNote.trim(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Optimistically update the UI
+            setTask(prevTask => {
+                if (!prevTask) return prevTask;
+                return {
+                    ...prevTask,
+                    notes: [...(prevTask.notes || []), newNoteObj]
+                };
+            });
+            
+            // Clear the input field immediately for better UX
             setNewNote('');
-            await loadData();
-        } catch (e) {
-            console.error('Failed to add note:', e);
+            
+            // Send the update to the server
+            await DataService.updateTask(
+                taskId, 
+                { message: newNote.trim() }, 
+                currentUser.id
+            );
+            
+            // Refresh the entire task data to ensure we have the latest state
+            const updatedTask = await DataService.getTaskById(taskId);
+            setTask(updatedTask);
+            
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 3000);
+            
+        } catch (error) {
+            console.error('Failed to add note:', error);
+            setSaveError('Failed to add note. Please try again.');
+            // Revert the optimistic update on error
+            const latestTask = await DataService.getTaskById(taskId);
+            setTask(latestTask);
+        } finally {
+            setIsSaving(false);
         }
     };
 
     const handleSaveChanges = async () => {
-        if (!taskId || !currentUser || !isDirty) return;
-        setIsSaving(true);
-        setSaveError('');
-        setSaveSuccess(false);
-
+        if (!taskId || !currentUser) return;
+        
         try {
-            const updates: { status?: TaskStatus; assigneeIds?: string[]; dueDate?: string; estimatedTime?: number } = {};
-
-            // Only add status to updates if it has actually changed
-            if (editedTask.status !== undefined && editedTask.status !== task?.status) {
-                updates.status = editedTask.status;
-            }
-
-            // Compare assigneeIds for changes
-            const originalAssignees = new Set(task?.assigneeIds || []);
-            const editedAssignees = new Set(editedTask.assigneeIds || []);
-
-            const assigneesChanged = originalAssignees.size !== editedAssignees.size ||
-                ![...originalAssignees].every(id => editedAssignees.has(id));
-
-            if (assigneesChanged) {
-                updates.assigneeIds = editedTask.assigneeIds;
-            }
-
-            // Due date change
-            if (editedTask.dueDate !== undefined && editedTask.dueDate !== (task?.dueDate || undefined)) {
-                updates.dueDate = editedTask.dueDate;
-            }
-            // Estimated time change
-            if (editedTask.estimatedTime !== undefined && editedTask.estimatedTime !== (task?.estimatedTime || undefined)) {
-                updates.estimatedTime = editedTask.estimatedTime;
-            }
-
-            if (Object.keys(updates).length > 0) {
-                await DataService.updateTask(taskId, updates, currentUser.id);
-
-            }
-
+            setIsSaving(true);
+            setSaveError('');
+            
+            await DataService.updateTask(taskId, {
+                status: editedTask.status,
+                assigneeIds: editedTask.assigneeIds,
+                dueDate: editedTask.dueDate,
+                estimatedTime: editedTask.estimatedTime,
+                description: editedDescription !== task?.description ? editedDescription : undefined
+            }, currentUser.id);
+            
             setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 3000);
-            await loadData(); // Reload data to get the latest from the backend
+            
+            // Refresh task data
+            const updatedTask = await DataService.getTaskById(taskId);
+            setTask(updatedTask);
+            
+            // Reset edit states
+            setIsEditingAssignees(false);
+            setIsEditingDescription(false);
+            
         } catch (error) {
-            console.error("Failed to save changes:", error);
-            setSaveError(error instanceof Error ? error.message : 'An unknown error occurred.');
+            console.error('Failed to update task:', error);
+            setSaveError('Failed to update task. Please try again.');
         } finally {
             setIsSaving(false);
         }
@@ -301,6 +417,16 @@ const TaskDetail: React.FC = () => {
                             {isSaving ? 'Saving...' : 'Save Changes'}
                         </Button>
                     )}
+                    {currentUser?.role === UserRole.EMPLOYEE && (task.assigneeIds || []).includes(currentUser.id) && (
+                        <button
+                            onClick={() => setShowDeleteModal(true)}
+                            className="text-sm font-medium text-red-600 hover:text-red-500 flex items-center"
+                            title="Delete Task"
+                        >
+                            <TrashIcon className="w-4 h-4 mr-1" />
+                            Delete Task
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -308,14 +434,58 @@ const TaskDetail: React.FC = () => {
                 {/* Left Column */}
                 <div className="lg:col-span-2 space-y-6">
                     <div className="bg-white p-6 rounded-lg shadow">
-                        <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Description</h3>
-                        <p className="text-slate-700 whitespace-pre-wrap">{task.description || 'No description provided.'}</p>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-slate-800">Description</h3>
+                            {!isEditingDescription && canChangeStatus && (
+                                <button
+                                    onClick={() => setIsEditingDescription(true)}
+                                    className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                                >
+                                    Edit
+                                </button>
+                            )}
+                        </div>
+                        {isEditingDescription ? (
+                            <div className="space-y-4">
+                                <textarea
+                                    value={editedDescription}
+                                    onChange={(e) => setEditedDescription(e.target.value)}
+                                    rows={6}
+                                    className="w-full p-3 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    placeholder="Enter task description..."
+                                />
+                                <div className="flex justify-end space-x-3">
+                                    <button
+                                        type="button"
+                                        className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50"
+                                        onClick={() => {
+                                            setEditedDescription(task.description || '');
+                                            setIsEditingDescription(false);
+                                        }}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                        onClick={() => {
+                                            setEditedTask(prev => ({ ...prev, description: editedDescription }));
+                                            setIsEditingDescription(false);
+                                        }}
+                                    >
+                                        Save
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-slate-700 whitespace-pre-wrap">{editedDescription || 'No description provided.'}</p>
+                        )}
                     </div>
                     <div className="bg-white p-6 rounded-lg shadow">
                         <h3 className="text-lg font-bold text-slate-800 border-b pb-3 mb-4">Activity</h3>
                         <div className="max-h-96 overflow-y-auto pr-2 space-y-4 mb-4">
                             {(task.notes || []).length > 0 ? (
-                                [...task.notes].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).map((note) => {
+                                [...task.notes].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((note) => {
                                     const author = allUsers.find(u => u.id === note.authorId);
                                     return (
                                         <div key={`note-${note.id}`} className="flex items-start space-x-3">
@@ -337,20 +507,30 @@ const TaskDetail: React.FC = () => {
                             )}
                         </div>
 
-                        {canAddNote && (
-                            <div className="border-t pt-4">
-                                <textarea
-                                    value={newNote}
-                                    onChange={(e) => setNewNote(e.target.value)}
-                                    rows={4}
-                                    className="w-full p-2 border border-slate-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                                    placeholder="Add a new note..."
-                                />
-                                <div className="text-right mt-3">
-                                    <Button onClick={handleAddNote} disabled={!newNote.trim()}>Add Note</Button>
-                                </div>
+                        {/* Add Note Section */}
+                        <div className="border-t pt-4 mt-4">
+                            <h4 className="text-sm font-medium text-slate-700 mb-2">Add a note</h4>
+                            <textarea
+                                value={newNote}
+                                onChange={(e) => setNewNote(e.target.value)}
+                                rows={3}
+                                className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                placeholder="Type your note here..."
+                            />
+                            <div className="flex justify-end mt-2 space-x-2">
+                                {saveError && (
+                                    <span className="text-red-500 text-sm mr-2">{saveError}</span>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={handleAddNote}
+                                    disabled={!newNote.trim() || isSaving}
+                                    className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {isSaving ? 'Adding...' : 'Add Note'}
+                                </button>
                             </div>
-                        )}
+                        </div>
                     </div>
                 </div>
 
@@ -485,8 +665,62 @@ const TaskDetail: React.FC = () => {
                             </DetailItem>
                         </div>
                     </div>
+
                 </div>
             </div>
+            
+            {/* Delete Confirmation Modal */}
+            <Modal
+                isOpen={showDeleteModal}
+                onClose={() => {
+                    setShowDeleteModal(false);
+                    setDeleteReason('');
+                    setDeleteError('');
+                }}
+                title="Delete Task"
+            >
+                <div className="space-y-4">
+                    <p className="text-slate-700">
+                        Are you sure you want to delete this task? This action cannot be undone.
+                        Please provide a reason for deletion:
+                    </p>
+                    
+                    <textarea
+                        value={deleteReason}
+                        onChange={(e) => setDeleteReason(e.target.value)}
+                        placeholder="Enter reason for deletion..."
+                        rows={4}
+                        className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                    />
+                    
+                    {deleteError && (
+                        <div className="text-red-600 text-sm">{deleteError}</div>
+                    )}
+                    
+                    <div className="flex justify-end space-x-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setShowDeleteModal(false);
+                                setDeleteReason('');
+                                setDeleteError('');
+                            }}
+                            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50"
+                            disabled={isDeleting}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSoftDelete}
+                            disabled={!deleteReason.trim() || isDeleting}
+                            className={`px-4 py-2 text-sm font-medium text-white rounded-md ${!deleteReason.trim() || isDeleting ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+                        >
+                            {isDeleting ? 'Deleting...' : 'Delete Task'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

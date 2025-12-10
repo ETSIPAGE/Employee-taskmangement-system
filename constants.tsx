@@ -197,6 +197,11 @@ export const LoginIcon = ({ className = "h-5 w-5" }: { className?: string }) => 
     </svg>
 );
 
+export const PaperAirplaneIcon = ({ className = "h-5 w-5" }: { className?: string }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+    </svg>
+);
 
 export const NAV_ITEMS = {
     [UserRole.ADMIN]: [
@@ -204,6 +209,7 @@ export const NAV_ITEMS = {
         { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Tasks', href: '/admin-tasks', icon: ClipboardListIcon },
+        { name: 'Deleted Tasks', href: '/deleted-tasks', icon: TrashIcon },
         { name: 'Companies', href: '/companies', icon: BuildingOfficeIcon },
         { name: 'Departments', href: '/departments', icon: BuildingOfficeIcon },
         { name: 'Employees', href: '/users', icon: UsersIcon },
@@ -217,6 +223,7 @@ export const NAV_ITEMS = {
         { name: 'My Team', href: '/team', icon: UsersIcon },
         { name: 'Projects', href: '/projects', icon: ClipboardListIcon },
         { name: 'Team Tasks', href: '/team-tasks', icon: ClipboardListIcon },
+        { name: 'Deleted Tasks', href: '/deleted-tasks', icon: TrashIcon },
         { name: 'Work Reports', href: '/work-reports', icon: DocumentTextIcon },
         { name: 'Attendance', href: '/attendance', icon: CalendarIcon },
         { name: 'Settings', href: '/settings', icon: CogIcon },

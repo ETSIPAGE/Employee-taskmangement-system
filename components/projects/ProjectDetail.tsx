@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import * as DataService from '../../services/dataService';
@@ -8,7 +8,7 @@ import Modal from '../shared/Modal';
 import Button from '../shared/Button';
 import Input from '../shared/Input';
 import TaskCard from '../tasks/TaskCard';
-import { BuildingOfficeIcon, UsersIcon } from '../../constants';
+import { BuildingOfficeIcon, UsersIcon, DocumentTextIcon } from '../../constants';
 import RoadmapBuilderModal from './RoadmapBuilderModal';
 import ProjectRoadmap from './ProjectRoadmap';
 
@@ -29,9 +29,9 @@ const Toast: React.FC<{ message: ToastMessage; onClose: (id: string) => void }> 
     const bgColor = message.type === 'success' ? 'bg-green-500' : message.type === 'error' ? 'bg-red-500' : 'bg-blue-500';
 
     return (
-        <div className={`fixed bottom-4 right-4 p-3 rounded-md shadow-lg text-white ${bgColor} flex items-center space-x-2 z-50`}>
-            <span>{message.message}</span>
-            <button onClick={() => onClose(message.id)} className="ml-2 font-bold">
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 px-8 py-5 rounded-xl shadow-2xl text-white ${bgColor} flex items-center space-x-4 z-50 text-2xl`}> 
+            <span className="font-semibold">{message.message}</span>
+            <button onClick={() => onClose(message.id)} className="ml-3 font-bold text-white/90 hover:text-white">
                 &times;
             </button>
         </div>
@@ -66,6 +66,15 @@ const ProjectDetail: React.FC = () => {
     const [isSavingRoadmap, setIsSavingRoadmap] = useState(false);
     const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
     const [toast, setToast] = useState<ToastMessage | null>(null);
+    const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
+    const [documentNotes, setDocumentNotes] = useState('');
+    const [isProjectFilesModalOpen, setIsProjectFilesModalOpen] = useState(false);
+    const [projectFiles, setProjectFiles] = useState<Array<{ id: string; name: string; url: string; uploadedAt: string }>>([]);
+    const [fileToUpload, setFileToUpload] = useState<File | null>(null); // legacy single-file holder (kept for safety)
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [fileQueue, setFileQueue] = useState<File[]>([]);
+    const [previewFile, setPreviewFile] = useState<{ name: string; url: string; ext: string } | null>(null);
+    const previewRef = useRef<HTMLDivElement>(null);
 
     const [newTaskData, setNewTaskData] = useState({
         title: '',
@@ -220,6 +229,173 @@ const ProjectDetail: React.FC = () => {
     useEffect(() => {
         loadData();
     }, [loadData]); // This effect triggers loadData on mount and when loadData itself changes
+
+    // Load saved notes for this project from localStorage
+    useEffect(() => {
+        if (!projectId) return;
+        try {
+            const saved = localStorage.getItem(`project_notes_${projectId}`);
+            if (saved !== null) setDocumentNotes(saved);
+        } catch (e) {
+            // ignore storage errors
+        }
+    }, [projectId]);
+
+    // Load project files whenever modal opens or project changes
+    useEffect(() => {
+        if (!projectId) return;
+        try {
+            const raw = localStorage.getItem(`project_files_${projectId}`);
+            const parsed = raw ? JSON.parse(raw) : [];
+            setProjectFiles(Array.isArray(parsed) ? parsed : []);
+        } catch {
+            setProjectFiles([]);
+        }
+    }, [projectId, isProjectFilesModalOpen]);
+
+    const saveFilesToStorage = (files: Array<{ id: string; name: string; url: string; uploadedAt: string }>) => {
+        if (!projectId) return;
+        try {
+            localStorage.setItem(`project_files_${projectId}`, JSON.stringify(files));
+        } catch {}
+    };
+
+    const getFileExt = (name: string) => {
+        const dot = name.lastIndexOf('.')
+        return dot >= 0 ? name.substring(dot + 1).toLowerCase() : '';
+    };
+
+    const iconColorForExt = (ext: string) => {
+        if (['doc', 'docx'].includes(ext)) return 'text-blue-600';
+        if (['xls', 'xlsx', 'csv'].includes(ext)) return 'text-green-600';
+        if (['ppt', 'pptx'].includes(ext)) return 'text-orange-500';
+        if (ext === 'pdf') return 'text-red-600';
+        if (['txt', 'md'].includes(ext)) return 'text-slate-600';
+        return 'text-slate-500';
+    };
+
+    const openOrDownload = async (dataUrl: string, filename: string) => {
+        const lower = (dataUrl || '').toLowerCase();
+        const isDataUrl = lower.startsWith('data:');
+        const canPreview = lower.startsWith('data:image/') || lower.startsWith('data:application/pdf') || lower.startsWith('data:text/');
+
+        try {
+            if (canPreview) {
+                let targetUrl = dataUrl;
+                if (isDataUrl) {
+                    const blob = await (await fetch(dataUrl)).blob();
+                    targetUrl = URL.createObjectURL(blob);
+                }
+                window.open(targetUrl, '_blank', 'noopener');
+                // Revoke created URL after a delay
+                if (targetUrl.startsWith('blob:')) {
+                    setTimeout(() => URL.revokeObjectURL(targetUrl), 60_000);
+                }
+                return;
+            }
+
+            // For non-previewable types (e.g., docx, xlsx), trigger download
+            let href = dataUrl;
+            let revoke: string | null = null;
+            if (isDataUrl) {
+                const blob = await (await fetch(dataUrl)).blob();
+                href = URL.createObjectURL(blob);
+                revoke = href;
+            }
+            const link = document.createElement('a');
+            link.href = href;
+            link.download = filename || 'download';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            if (revoke) setTimeout(() => URL.revokeObjectURL(revoke as string), 10_000);
+        } catch (e) {
+            // Fallback: try direct open
+            window.open(dataUrl, '_blank');
+        }
+    };
+
+    const openPreview = (file: { name: string; url: string }) => {
+        const ext = getFileExt(file.name);
+        const lower = file.url.toLowerCase();
+        const isPreviewable =
+            ext === 'docx' ||
+            lower.startsWith('data:image/') ||
+            lower.startsWith('data:application/pdf') ||
+            lower.startsWith('data:text/');
+        if (isPreviewable) {
+            setPreviewFile({ name: file.name, url: file.url, ext });
+        } else {
+            openOrDownload(file.url, file.name);
+        }
+    };
+
+    // Open in a brand-new tab. For DOCX, render content in that tab with docx-preview.
+    const openInNewTab = async (file: { name: string; url: string }) => {
+        const ext = getFileExt(file.name);
+        if (ext === 'docx') {
+            const w = window.open('about:blank', '_blank');
+            if (!w) return;
+            // Pass the data URL via window.name to avoid huge inline strings and quoting issues
+            try { w.name = file.url; } catch {}
+            w.document.write(`<!doctype html>
+                <html><head>
+                    <meta charset="utf-8" />
+                    <title>${file.name}</title>
+                    <style>
+                        body{margin:0;padding:16px;font-family:system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;}
+                        .docx{max-width:900px;margin:0 auto}
+                    </style>
+                </head>
+                <body>
+                    <div id="docx-container">Loading...</div>
+                    <script src="https://unpkg.com/docx-preview/dist/docx-preview.min.js"></script>
+                    <script>
+                        (function(){
+                            function render(){
+                                if (!window.docx){ setTimeout(render, 100); return; }
+                                var src = window.name || '';
+                                fetch(src).then(function(r){ return r.blob(); }).then(function(blob){
+                                    return window.docx.renderAsync(blob, document.getElementById('docx-container'), document.getElementById('docx-container'), { className: 'docx' });
+                                }).catch(function(){ location.href = src; });
+                            }
+                            render();
+                        })();
+                    </script>
+                </body></html>`);
+            return;
+        }
+        // For other types, use existing open/download behavior
+        await openOrDownload(file.url, file.name);
+    };
+
+    useEffect(() => {
+        const renderDocx = async () => {
+            if (!previewFile || previewFile.ext !== 'docx' || !previewRef.current) return;
+            const container = previewRef.current;
+            container.innerHTML = '';
+            const ensureDocx = () => new Promise<void>((resolve, reject) => {
+                if ((window as any).docx) return resolve();
+                const s = document.createElement('script');
+                s.src = 'https://unpkg.com/docx-preview/dist/docx-preview.min.js';
+                s.async = true;
+                s.onload = () => resolve();
+                s.onerror = () => reject(new Error('Failed to load docx preview library'));
+                document.body.appendChild(s);
+            });
+            try {
+                await ensureDocx();
+                const res = await fetch(previewFile.url);
+                const blob = await res.blob();
+                await (window as any).docx.renderAsync(blob, container, container, { className: 'docx' });
+            } catch {
+                openOrDownload(previewFile.url, previewFile.name);
+                setPreviewFile(null);
+            }
+        };
+        renderDocx();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [previewFile?.url, previewFile?.ext]);
 
     const tasksByStatus = useMemo(() => {
         const categorized = tasks.reduce((acc, task) => {
@@ -548,10 +724,21 @@ const ProjectDetail: React.FC = () => {
                 </div>
                 <div className="flex flex-col items-stretch space-y-3 flex-shrink-0 w-80">
                     {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
-                        <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
-                            {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
+                        <div className="flex space-x-3">
+                            <Button onClick={() => setIsProjectFilesModalOpen(true)}>
+                                Project File
+                            </Button>
+                            <Button onClick={() => setIsRoadmapModalOpen(true)} disabled={isSavingRoadmap}>
+                                {isSavingRoadmap ? 'Saving...' : 'Build Roadmap'}
+                            </Button>
+                        </div>
+                    )}
+                    {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                        <Button onClick={() => setIsDocumentModalOpen(true)}>
+                            Document
                         </Button>
                     )}
+                    
                     <div className="bg-white rounded-lg shadow p-4 text-sm text-slate-700">
                         <div className="mb-2">
                             <div className="text-slate-500">Company</div>
@@ -668,6 +855,170 @@ const ProjectDetail: React.FC = () => {
                 </Modal>
             )}
 
+            {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                <Modal
+                    isOpen={isProjectFilesModalOpen}
+                    onClose={() => setIsProjectFilesModalOpen(false)}
+                    title="Project Files"
+                >
+                    <div className="space-y-4">
+                        <div>
+                            <h4 className="text-sm font-semibold text-slate-700 mb-2">Files</h4>
+                            {projectFiles.length > 0 ? (
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    {projectFiles.map(f => {
+                                        const ext = getFileExt(f.name);
+                                        const color = iconColorForExt(ext);
+                                        return (
+                                            <div
+                                                key={f.id}
+                                                className="relative group border rounded-md p-4 flex flex-col items-center text-center hover:shadow-sm transition cursor-pointer"
+                                                onClick={() => openInNewTab(f)}
+                                                title="Open file"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const next = projectFiles.filter(x => x.id !== f.id);
+                                                        setProjectFiles(next);
+                                                        saveFilesToStorage(next);
+                                                    }}
+                                                    className="absolute top-2 right-2 w-6 h-6 rounded-full bg-white/90 border text-slate-600 hover:text-slate-800 hover:bg-white"
+                                                    aria-label="Delete file"
+                                                >
+                                                    ×
+                                                </button>
+                                                <DocumentTextIcon className={`w-12 h-12 ${color} mb-2`} />
+                                                <p className="font-medium text-slate-800 truncate w-full" title={f.name}>{f.name}</p>
+                                                <p className="text-xs text-slate-500 mt-1">{ext ? ext.toUpperCase() : 'FILE'}</p>
+                                                <div className="opacity-100 mt-3 flex items-center space-x-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); openInNewTab(f); }}
+                                                        className="px-2 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border"
+                                                    >
+                                                        Open
+                                                    </button>
+                                                    <a href={f.url} download={f.name} className="px-2 py-1 text-xs font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 border">
+                                                        Download
+                                                    </a>
+                                                </div>
+                                                <p className="text-[10px] text-slate-400 mt-2">Uploaded {new Date(f.uploadedAt).toLocaleDateString()}</p>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <p className="text-sm text-slate-500">No files uploaded yet. Use the uploader below.</p>
+                            )}
+                        </div>
+
+                        <div>
+                            <h4 className="text-sm font-semibold text-slate-700 mb-2">Upload a file</h4>
+                            {/* hidden native input */}
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                onChange={(e) => {
+                                    const files: File[] = e.target.files ? Array.from(e.target.files as FileList) as File[] : [];
+                                    if (files.length === 0) return;
+                                    Promise.all(
+                                        files.map((f: File) => new Promise<{ id: string; name: string; url: string; uploadedAt: string }>((resolve) => {
+                                            const reader = new FileReader();
+                                            reader.onload = () => resolve({ id: `pf-${Date.now()}-${Math.random().toString(36).slice(2,7)}`, name: f.name, url: String(reader.result || ''), uploadedAt: new Date().toISOString() });
+                                            reader.readAsDataURL(f);
+                                        }))
+                                    ).then(newFiles => {
+                                        const next = [...projectFiles, ...newFiles];
+                                        setProjectFiles(next);
+                                        saveFilesToStorage(next);
+                                        setFileQueue([]);
+                                        setFileToUpload(null);
+                                        if (fileInputRef.current) fileInputRef.current.value = '';
+                                    });
+                                }}
+                                className="sr-only"
+                            />
+                            <div className="flex items-center space-x-3">
+                                <Button
+                                    onClick={() => {
+                                        fileInputRef.current?.click();
+                                    }}
+                                >
+                                    Choose File
+                                </Button>
+                            </div>
+                            {fileQueue.length > 0 && (
+                                <div className="mt-3 flex justify-end">
+                                    <Button onClick={() => { /* No-op since auto-save now */ }}>Save Upload</Button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-2 flex justify-end space-x-2">
+                            <Button
+                                onClick={() => {
+                                    try {
+                                        saveFilesToStorage(projectFiles);
+                                        showToast('Files saved successfully!', 'success');
+                                    } catch (e) {
+                                        showToast('Failed to save files.', 'error');
+                                    }
+                                    setIsProjectFilesModalOpen(false);
+                                }}
+                            >
+                                Save
+                            </Button>
+                            <button
+                                type="button"
+                                onClick={() => setIsProjectFilesModalOpen(false)}
+                                className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
+                <Modal
+                    isOpen={isDocumentModalOpen}
+                    onClose={() => setIsDocumentModalOpen(false)}
+                    title="Project Notes"
+                >
+                    <div>
+                        <label htmlFor="project-notes" className="block text-sm font-medium text-slate-700">Notes</label>
+                        <textarea
+                            id="project-notes"
+                            rows={18}
+                            value={documentNotes}
+                            onChange={(e) => setDocumentNotes(e.target.value)}
+                            className="mt-1 block w-full px-3 py-2 h-96 md:h-[28rem] border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        />
+                    </div>
+                    <div className="pt-4 flex justify-end space-x-3">
+                        <button type="button" onClick={() => setIsDocumentModalOpen(false)} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">
+                            Close
+                        </button>
+                        <Button
+                            onClick={() => {
+                                if (!projectId) return;
+                                try {
+                                    localStorage.setItem(`project_notes_${projectId}`, documentNotes);
+                                } catch (e) {
+                                    // ignore storage errors silently
+                                }
+                            }}
+                        >
+                            Save
+                        </Button>
+                    </div>
+                </Modal>
+            )}
+
             {project && user && (user.role === UserRole.ADMIN || user.role === UserRole.MANAGER) && (
                 <RoadmapBuilderModal
                     isOpen={isRoadmapModalOpen}
@@ -702,6 +1053,31 @@ const ProjectDetail: React.FC = () => {
             )}
 
             {toast && <Toast message={toast} onClose={hideToast} />}
+            {previewFile && (
+                <Modal
+                    isOpen={!!previewFile}
+                    onClose={() => setPreviewFile(null)}
+                    title={previewFile.name}
+                >
+                    <div className="w-full max-h-[70vh] overflow-auto">
+                        {previewFile.ext === 'pdf' ? (
+                            <iframe title="pdf" src={previewFile.url} className="w-full h-[70vh] rounded-md border" />
+                        ) : previewFile.url.startsWith('data:image/') ? (
+                            <img src={previewFile.url} alt={previewFile.name} className="max-h-[70vh] mx-auto" />
+                        ) : previewFile.url.startsWith('data:text/') ? (
+                            <iframe title="text" src={previewFile.url} className="w-full h-[70vh] rounded-md border" />
+                        ) : previewFile.ext === 'docx' ? (
+                            <div ref={previewRef} className="docx-preview space-y-2" />
+                        ) : (
+                            <div className="text-sm text-slate-600">Preview not supported. Use Download.</div>
+                        )}
+                    </div>
+                    <div className="pt-4 flex justify-end space-x-3">
+                        <a href={previewFile.url} download={previewFile.name} className="px-4 py-2 text-sm font-medium rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-300 shadow-sm">Download</a>
+                        <Button onClick={() => setPreviewFile(null)}>Close</Button>
+                    </div>
+                </Modal>
+            )}
         </div>
     );
 };
