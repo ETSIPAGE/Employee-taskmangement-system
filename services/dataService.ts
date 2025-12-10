@@ -124,6 +124,11 @@ const CHAT_CONVERSATION_MEMBER_ADD_API_URL = 'https://5kgwazn18e.execute-api.ap-
 const CHAT_CONVERSATION_MEMBER_REMOVE_API_URL = 'https://ikkxv0mnv6.execute-api.ap-south-1.amazonaws.com/rem/remove';
 const CHAT_MESSAGES_API_BASE_URL = 'https://h5jj6yq686.execute-api.ap-south-1.amazonaws.com/dev/conversation/msg';
 
+const WORK_REPORTS_CREATE_API_URL = 'https://907wl6xmsi.execute-api.ap-south-1.amazonaws.com/prod/work-reports';
+const WORK_REPORTS_GET_API_URL = 'https://83eaugq1sc.execute-api.ap-south-1.amazonaws.com/prod/work-reports';
+const WORK_REPORTS_EDIT_BY_USER_API_URL = 'https://tur4gs421k.execute-api.ap-south-1.amazonaws.com/pd/report';
+const WORK_REPORTS_DELETE_API_URL = 'https://t8q10gdh8e.execute-api.ap-south-1.amazonaws.com/prod/work-reports';
+
 const ATTENDANCE_GET_BY_USER_URL = 'https://1gtr3hd3e4.execute-api.ap-south-1.amazonaws.com/dev/attendance/user';
 const ATTENDANCE_GET_BY_DATE_URL = 'https://rhb8m6a8mg.execute-api.ap-south-1.amazonaws.com/dev/attendance/date';
 const ATTENDANCE_RECORD_ACTION_URL = 'https://q1rltbjzl4.execute-api.ap-south-1.amazonaws.com/dev/attendance/record'; // POST
@@ -159,6 +164,151 @@ const year = today.getFullYear();
 const month = (today.getMonth() + 1).toString().padStart(2, '0');
 const ATTENDANCE_DATA: Record<string, string[]> = {
     [`${year}-${month}-01`]: ['3', '4', '5', '6'], [`${year}-${month}-02`]: ['3', '4', '7'], [`${year}-${month}-03`]: ['3', '4', '5', '6', '7'],
+};
+
+// Generic helper to coerce various representations into an array of string IDs
+const coerceIds = (input: any): string[] => {
+    if (!input && input !== 0) return [];
+    if (Array.isArray(input)) {
+        return input
+            .map((it: any) => {
+                if (typeof it === 'string' || typeof it === 'number') return String(it).trim();
+                if (it && typeof it === 'object') {
+                    const candidate = it.id ?? it.userId ?? it.user_id ?? it.pk ?? it.PK ?? it.value;
+                    if (candidate) return String(candidate).trim();
+                    // Fallback to name/email strings so UI can still display names
+                    const nameLike = it.name ?? it.fullName ?? it.full_name ?? it.username ?? it.email;
+                    return nameLike ? String(nameLike).trim() : '';
+                }
+                return '';
+            })
+            .filter(Boolean);
+    }
+    if (typeof input === 'string') {
+        try {
+            const arr = JSON.parse(input);
+            if (Array.isArray(arr)) return coerceIds(arr);
+        } catch {}
+        return input.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (typeof input === 'number') return [String(input).trim()];
+    return [];
+};
+
+export interface WorkReportUpdatePayload {
+    userId: string;
+    update: {
+        summary?: string;
+        reportDate?: string;
+        // Add other updateable fields as needed
+        [key: string]: any;
+    };
+    reportId?: string;
+    timestamp?: number;
+}
+
+// Helper function to generate a simple hash for browser environment
+const generateSimpleHash = async (input: string): Promise<string> => {
+  // Use Web Crypto API if available (browser)
+  if (typeof window !== 'undefined' && window.crypto) {
+    try {
+      const msgBuffer = new TextEncoder().encode(input);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+      console.warn('Error using Web Crypto API, falling back to simple hash', e);
+    }
+  }
+  // Fallback for non-browser environments or if Web Crypto fails
+  return Array.from(input).reduce((hash, char) => {
+    const chr = char.charCodeAt(0);
+    return ((hash << 5) - hash) + chr;
+  }, 0).toString(16);
+};
+
+export const updateWorkReportByUser = async (payload: WorkReportUpdatePayload) => {
+    try {
+        // Get current user info for required fields
+        const currentUser = getCurrentUser();
+        if (!currentUser) {
+            throw new Error('User not authenticated');
+        }
+
+        // Generate a unique report ID if not provided
+        const reportId = payload.reportId || `report_${await generateSimpleHash(`${payload.userId}_${Date.now()}`)}`;
+        const timestamp = payload.timestamp || Date.now();
+
+        // Prepare the request body for the Lambda: { reportId, update: { ... } }
+        // Map reportDate -> date for backend whitelist compatibility
+        const updateBody: Record<string, any> = { ...(payload.update || {}) };
+        if (typeof updateBody.reportDate === 'string' && updateBody.reportDate.trim() !== '') {
+            updateBody.date = updateBody.reportDate;
+        }
+        const requestBody = {
+            reportId,
+            update: updateBody,
+        } as const;
+
+        // Remove undefined values
+        Object.keys(requestBody).forEach(key => {
+            if (requestBody[key] === undefined) {
+                delete requestBody[key];
+            }
+        });
+
+        const url = new URL(WORK_REPORTS_EDIT_BY_USER_API_URL);
+        url.searchParams.append('_t', timestamp.toString());
+
+        const response = await authenticatedFetch(url.toString(), {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            },
+            body: JSON.stringify(requestBody),
+            authRaw: true
+        });
+
+        if (!response.ok) {
+            let errorMessage = 'Failed to update work report';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.message || errorData.error || errorMessage;
+            } catch (e) {
+                const text = await response.text();
+                if (text) errorMessage = text;
+            }
+            throw new Error(errorMessage);
+        }
+
+        const data = await parseApiResponse(response);
+        if (!data) {
+            throw new Error('Empty response from server');
+        }
+
+        // Invalidate any cached reports
+        if (cachedWorkReports) {
+            cachedWorkReports = null;
+        }
+
+        // Return the updated report with all necessary fields
+        return {
+            ...data,
+            reportId: data.reportId || reportId,
+            userId: data.userId || payload.userId,
+            timestamp: data.timestamp || timestamp,
+            createdAt: data.createdAt || new Date().toISOString()
+        };
+    } catch (error) {
+        console.error('Error updating work report:', error);
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('An unknown error occurred while updating the work report');
+    }
 };
 
 // Update user via provided Users Update API
@@ -367,8 +517,18 @@ const authenticatedFetch = async (url: string, options: ExtendedRequestInit = {}
     }
 
     if (!skipAuth && token) {
-        const rawToken = String(token);
-        headers.set('Authorization', authRaw ? rawToken : (rawToken.startsWith('Bearer ') ? rawToken : `Bearer ${rawToken}`));
+        // Ensure we have a clean token without any processing
+        const cleanToken = token.trim();
+        // Check if the token is already in JWT format (starts with eyJ...)
+        if (cleanToken.startsWith('eyJ') && cleanToken.split('.').length === 3) {
+            // It's a JWT token, add Bearer prefix if not present
+            headers.set('Authorization', 
+                cleanToken.startsWith('Bearer ') ? cleanToken : `Bearer ${cleanToken}`
+            );
+        } else {
+            // For non-JWT tokens, send as-is without modification
+            headers.set('Authorization', cleanToken);
+        }
     }
 
     if (apiKey && !headers.has('x-api-key')) {
@@ -387,18 +547,24 @@ const parseApiResponse = async (response: Response) => {
 
     if (!rawText) return null;
 
+    // First, try to parse as JSON
     try {
-        const outer = JSON.parse(rawText);
-        if (outer && typeof outer.body === 'string') {
+        return JSON.parse(rawText);
+    } catch (e) {
+        // If it's not valid JSON, check if it's a stringified JSON object
+        if (rawText.trim().startsWith('{') && rawText.trim().endsWith('}')) {
             try {
-                return JSON.parse(outer.body);
-            } catch {
-                return outer.body;
+                // Try to parse inner JSON if it's a stringified object
+                return JSON.parse(JSON.parse(`"${rawText.replace(/"/g, '\\"')}"`));
+            } catch (innerError) {
+                console.warn('Failed to parse inner JSON:', rawText);
+                return { body: rawText };
             }
         }
-        return outer;
-    } catch {
-        return { body: rawText } as any;
+        
+        // If it's not JSON at all, return as text
+        console.warn('Response is not valid JSON, returning as text:', rawText.substring(0, 100) + (rawText.length > 100 ? '...' : ''));
+        return { body: rawText };
     }
 };
 
@@ -487,6 +653,7 @@ const normalizeTimeForDisplay = (input: any): string => {
 let cachedTasks: Task[] | null = null;
 let cachedProjects: Project[] | null = null;
 let cachedDepartments: Department[] | null = null;
+let cachedWorkReports: WorkReport[] | null = null;
 let cachedAllUsers: User[] | null = null;
 let cachedManagers: User[] | null = null;
 let cachedCompanies: Company[] | null = null;
@@ -704,7 +871,10 @@ export const deleteUser = async (userId: string): Promise<void> => {
 };
 
 // Simple wrapper used by various parts of the app
-export const getUsers = async (): Promise<User[]> => {
+export const getUsers = async (forceRefresh: boolean = false): Promise<User[]> => {
+    if (forceRefresh) {
+        invalidateUsersCache();
+    }
     return getAllUsersFromApi();
 };
 
@@ -727,8 +897,39 @@ export const getManagers = async (): Promise<User[]> => {
 };
 
 export const getTeamMembers = async (managerId: string): Promise<User[]> => {
-    const users = await getUsers();
-    return users.filter(user => user.role === UserRole.EMPLOYEE && user.managerId === managerId);
+    const idStr = String(managerId);
+    const [users, projects, tasks] = await Promise.all([
+        getUsers(),
+        getAllProjects(),
+        getAllTasks(),
+    ]);
+
+    // Projects managed by this manager
+    const managedProjects = projects.filter(p => Array.isArray(p.managerIds) && p.managerIds.map(String).includes(idStr));
+    const managedProjectIds = new Set(managedProjects.map(p => String(p.id)));
+    const managedDeptIds = new Set<string>(managedProjects.flatMap(p => p.departmentIds || []));
+
+    // Employees assigned via tasks under managed projects
+    const employeeIdsFromManagedTasks = new Set<string>();
+    tasks.forEach(t => {
+        if (managedProjectIds.has(String(t.projectId))) {
+            (t.assigneeIds || []).forEach(uid => employeeIdsFromManagedTasks.add(String(uid)));
+        }
+    });
+
+    const team: User[] = users.filter(u => {
+        if (u.role !== UserRole.EMPLOYEE) return false;
+        const legacyMatch = String(u.managerId || '') === idStr;
+        const multiMatch = Array.isArray(u.managerIds) && u.managerIds.map(String).includes(idStr);
+        const inDept = Array.isArray(u.departmentIds) && u.departmentIds.some(did => managedDeptIds.has(String(did)));
+        const fromTasks = employeeIdsFromManagedTasks.has(String(u.id));
+        return legacyMatch || multiMatch || inDept || fromTasks;
+    });
+
+    // Ensure unique by id
+    const byId = new Map<string, User>();
+    team.forEach(u => byId.set(String(u.id), u));
+    return Array.from(byId.values());
 };
 
 export const getManagersByDepartments = async (departmentIds: string[]): Promise<User[]> => {
@@ -1096,6 +1297,333 @@ export const updateTask = async (
     return mappedTask;
 };
 
+// --- WORK REPORTS SERVICE ---
+
+export interface DeleteWorkReportResponse {
+    message: string;
+    deleted?: {
+        reportId: string;
+        timestamp?: number;
+        [key: string]: any;
+    };
+    error?: string;
+}
+
+export const deleteWorkReport = async (reportId: string, userId: string): Promise<DeleteWorkReportResponse> => {
+    if (!reportId && !userId) {
+        throw new Error('Either reportId or userId is required');
+    }
+
+    console.log('Attempting to delete work report with:', { reportId, userId });
+    
+    try {
+        // Prepare the request body
+        const requestBody: any = {};
+        if (reportId) requestBody.reportId = reportId;
+        if (userId) requestBody.userId = userId;
+
+        console.log('Sending DELETE request to:', WORK_REPORTS_DELETE_API_URL);
+        console.log('Request body:', JSON.stringify(requestBody, null, 2));
+
+        // Get the auth token if available
+        const token = getToken();
+        const headers: HeadersInit = {
+            'Content-Type': 'application/json',
+        };
+        
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        const response = await fetch(WORK_REPORTS_DELETE_API_URL, {
+            method: 'DELETE',
+            headers,
+            body: JSON.stringify(requestBody),
+        });
+
+        console.log('Response status:', response.status);
+        
+        let result;
+        try {
+            const responseText = await response.text();
+            result = responseText ? JSON.parse(responseText) : {};
+            console.log('Response data:', JSON.stringify(result, null, 2));
+        } catch (e) {
+            console.error('Error parsing response:', e);
+            throw new Error('Failed to parse server response');
+        }
+
+        if (!response.ok) {
+            const errorMessage = result?.message || result?.error || `Request failed with status ${response.status}`;
+            throw new Error(errorMessage);
+        }
+
+        // Handle successful response
+        if (response.status === 200 || response.status === 204) {
+            return {
+                message: result.message || 'Report deleted successfully',
+                deleted: {
+                    reportId: result.reportId || reportId,
+                    timestamp: result.timestamp || Date.now(),
+                    ...(result.deleted || {})
+                }
+            };
+        }
+
+        throw new Error('Unexpected response from server');
+    } catch (error) {
+        console.error('Error in deleteWorkReport:', error);
+        throw new Error(error.message || 'Failed to delete work report');
+    }
+};
+
+export interface WorkReportCreatePayload {
+    userId: string;
+    employeeName: string;
+    role: string;
+    employeeEmail: string;
+    summary: string;
+    reportDate?: string;
+    companyId?: string | null;
+    companyName?: string | null;
+    departmentId?: string | null;
+    departmentName?: string | null;
+    managers?: string[];
+}
+
+export const createWorkReport = async (payload: WorkReportCreatePayload) => {
+    const response = await authenticatedFetch(WORK_REPORTS_CREATE_API_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        skipAuth: true,
+    });
+
+    if (!response.ok) {
+        let errorMessage = 'Failed to save work report.';
+        try {
+            const text = await response.text();
+            if (text) errorMessage = text;
+        } catch (err) {
+            console.error('Failed to read work report error response', err);
+        }
+        throw new Error(errorMessage);
+    }
+
+    try {
+        const data = await parseApiResponse(response);
+        return data?.report ?? data;
+    } catch (err) {
+        console.error('Failed to parse work report response', err);
+        return null;
+    }
+};
+
+export interface WorkReport {
+    reportId?: string;
+    userId: string;
+    employeeName?: string;
+    role?: string;
+    employeeEmail?: string;
+    summary?: string;
+    timestamp?: number;
+    createdAt?: string;
+    reportDate?: string;
+    companyId?: string | null;
+    companyName?: string | null;
+    departmentId?: string | null;
+    departmentName?: string | null;
+    managers?: string[];
+}
+
+export interface WorkReportListResponse extends Array<WorkReport> {
+    // This allows the response to be treated as an array of WorkReport
+    // while maintaining backward compatibility with existing code
+    count?: number;
+    reports?: WorkReport[];
+    items?: WorkReport[];
+}
+
+const mapApiWorkReport = (raw: any): WorkReport => {
+    if (!raw) {
+        return { userId: '' };
+    }
+
+    const timestampValue = typeof raw.timestamp === 'number'
+        ? raw.timestamp
+        : (typeof raw.timestamp === 'string' && raw.timestamp.trim() !== ''
+            ? Number(raw.timestamp)
+            : undefined);
+
+    const normalizedTimestamp = typeof timestampValue === 'number' && !Number.isNaN(timestampValue)
+        ? timestampValue
+        : undefined;
+
+    const createdAtValue = typeof raw.createdAt === 'string' && raw.createdAt.trim() !== ''
+        ? raw.createdAt
+        : (normalizedTimestamp ? new Date(normalizedTimestamp).toISOString() : undefined);
+
+    const rawReportDate = raw.reportDate ?? raw.report_date ?? raw.date;
+    let reportDateValue: string | undefined;
+    if (rawReportDate) {
+        const str = String(rawReportDate);
+        reportDateValue = str.includes('T') ? str.slice(0, 10) : str;
+    } else if (createdAtValue) {
+        reportDateValue = createdAtValue.slice(0, 10);
+    }
+
+    let managersValue: string[] = [];
+    if (Array.isArray(raw.managers)) {
+        managersValue = raw.managers.map((m: any) => String(m));
+    } else if (typeof raw.managers === 'string' && raw.managers.trim() !== '') {
+        managersValue = [raw.managers];
+    } else if (typeof raw.managerId === 'string' && raw.managerId.trim() !== '') {
+        managersValue = [raw.managerId];
+    }
+
+    const userIdValue = raw.userId ?? raw.userID ?? raw.user_id ?? '';
+
+    return {
+        reportId: raw.reportId ?? raw.id ?? raw.reportID ?? raw.ReportId,
+        userId: String(userIdValue),
+        employeeName: raw.employeeName ?? raw.employee_name ?? raw.name,
+        role: raw.role ?? raw.userRole,
+        employeeEmail: raw.employeeEmail ?? raw.employee_email ?? raw.email,
+        summary: raw.summary ?? raw.text ?? raw.note ?? '',
+        timestamp: normalizedTimestamp,
+        createdAt: createdAtValue,
+        reportDate: reportDateValue,
+        companyId: raw.companyId ?? raw.company_id ?? null,
+        companyName: raw.companyName ?? raw.company_name ?? null,
+        departmentId: raw.departmentId ?? raw.department_id ?? null,
+        departmentName: raw.departmentName ?? raw.department_name ?? null,
+        managers: managersValue,
+    };
+};
+
+export interface GetWorkReportsParams {
+    userId?: string;
+    startDate?: string;
+    endDate?: string;
+    includeTeam?: boolean; // If true, includes team members' reports for managers
+}
+
+/**
+ * Get work reports with optional team inclusion for managers
+ */
+export const getWorkReports = async (params?: GetWorkReportsParams): Promise<WorkReport[]> => {
+    const url = new URL(WORK_REPORTS_GET_API_URL);
+    const currentUser = getCurrentUser();
+    
+    // If no userId is provided, use current user's ID
+    const targetUserId = params?.userId || currentUser?.id;
+    
+    // If current user is admin/manager and wants to see team reports
+    const shouldIncludeTeam = params?.includeTeam && 
+        (currentUser?.role === UserRole.ADMIN || currentUser?.role === UserRole.MANAGER);
+    
+    if (targetUserId) url.searchParams.append('userId', targetUserId);
+    if (params?.startDate) url.searchParams.append('startDate', params.startDate);
+    if (params?.endDate) url.searchParams.append('endDate', params.endDate);
+    if (shouldIncludeTeam) url.searchParams.append('includeTeam', 'true');
+
+    try {
+        console.log('Fetching work reports from:', url.toString());
+        const response = await authenticatedFetch(url.toString(), {
+            method: 'GET',
+            skipAuth: true,
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Failed to fetch work reports:', response.status, errorText);
+            throw new Error(errorText || 'Failed to fetch work reports');
+        }
+
+        const data = await response.json();
+        console.log('Work reports API response:', data);
+        
+        // Handle different response formats and ensure we always return an array of WorkReport
+        let reports: WorkReport[] = [];
+        
+        if (Array.isArray(data)) {
+            reports = data.map(mapApiWorkReport);
+        } else if (data?.items && Array.isArray(data.items)) {
+            reports = data.items.map(mapApiWorkReport);
+        } else if (data?.reports && Array.isArray(data.reports)) {
+            reports = data.reports.map(mapApiWorkReport);
+        } else if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+            // Handle case where a single report is returned or response is an object with report data
+            if (data.reportId || data.userId) {
+                reports = [mapApiWorkReport(data)];
+            } else {
+                // Handle case where reports are keyed by date
+                reports = Object.values(data).flatMap(item => 
+                    Array.isArray(item) ? item.map(mapApiWorkReport) : [mapApiWorkReport(item)]
+                );
+            }
+        }
+        
+        // Filter out any invalid reports and log the results
+        const validReports = reports.filter(r => r && r.userId);
+        console.log('Processed work reports:', validReports);
+        return validReports;
+    } catch (err) {
+        console.error('Failed to fetch work reports:', err);
+        if (err instanceof Error) {
+            throw err;
+        }
+        throw new Error('Failed to fetch work reports');
+    }
+};
+
+/**
+ * Get work reports for a manager's team members
+ */
+export const getTeamWorkReports = async (managerId: string, params?: { startDate?: string; endDate?: string }): Promise<WorkReport[]> => {
+    try {
+        console.log(`Fetching team work reports for manager: ${managerId}`);
+        const currentUser = getCurrentUser();
+
+        if (currentUser?.role === UserRole.ADMIN) {
+            const users = await getUsers();
+            const targets = users.filter(u => u.role === UserRole.MANAGER || u.role === UserRole.EMPLOYEE);
+            if (!targets.length) return [];
+            const reportsByUser = await Promise.all(
+                targets.map(u => getWorkReports({
+                    userId: u.id,
+                    startDate: params?.startDate,
+                    endDate: params?.endDate,
+                    includeTeam: false
+                }).catch(() => []))
+            );
+            const all = reportsByUser.flat().filter(Boolean);
+            console.log(`Fetched ${all.length} admin team work reports`);
+            return all;
+        }
+
+        const teamMembers = await getTeamMembers(managerId);
+        console.log('Team members:', teamMembers);
+        if (!teamMembers.length) {
+            console.log('No team members found for manager:', managerId);
+            return [];
+        }
+        const teamReports = await Promise.all(
+            teamMembers.map(member => getWorkReports({
+                userId: member.id,
+                startDate: params?.startDate,
+                endDate: params?.endDate,
+                includeTeam: false
+            }).catch(() => []))
+        );
+        const allReports = teamReports.flat().filter(Boolean);
+        console.log(`Fetched ${allReports.length} team work reports`);
+        return allReports;
+    } catch (error) {
+        console.error('Error fetching team work reports:', error);
+        throw error;
+    }
+};
+
 // Optimistic local update for data not handled by the API, e.g., notes.
 // This function should only be used for UI-only updates if the API doesn't support them.
 export const updateTaskLocally = (taskId: string, updates: Partial<Task>): Task | undefined => {
@@ -1152,6 +1680,20 @@ export const getAllProjects = async (): Promise<Project[]> => {
                                     : (typeof proj.manager === 'string' && proj.manager)
                                         ? [String(proj.manager).trim()]
                                         : [],
+            employeeIds: Array.from(new Set([
+                ...coerceIds(proj.employee_ids),
+                ...coerceIds(proj.employeeIds),
+                ...coerceIds(proj.employees),
+                ...coerceIds(proj.assigned_employee_ids),
+                ...coerceIds(proj.assignedEmployees),
+                ...coerceIds(proj.assigned_employees),
+                ...coerceIds(proj.team),
+                ...coerceIds(proj.teamMembers),
+                ...coerceIds(proj.members),
+                ...coerceIds(proj.memberIds),
+                ...coerceIds(proj.employee_id),
+                ...coerceIds(proj.employee)
+            ])),
             departmentIds: (Array.isArray(proj.departmentIds) && proj.departmentIds.length > 0
                             ? proj.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(proj.department_ids) && proj.department_ids.length > 0
@@ -1215,7 +1757,17 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
         ...projectData,
         manager_ids: projectData.managerIds, // Use backend's expected field name
         department_ids: projectData.departmentIds, // Use backend's expected field name
+        employee_ids: projectData.employeeIds, // Use backend's expected field name
+        // Include common aliases to maximize compatibility across backends
+        managerIds: projectData.managerIds,
+        managers: projectData.managerIds,
+        departmentIds: projectData.departmentIds,
+        departments: projectData.departmentIds,
+        employeeIds: projectData.employeeIds,
+        employees: projectData.employeeIds,
         company_id: projectData.companyId, // Use backend's expected field name
+        companyId: projectData.companyId,
+        company: projectData.companyId,
         id: `proj-${Date.now()}`, 
         timestamp: newProjectTimestamp, 
     };
@@ -1234,6 +1786,12 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
     const responseData = await parseApiResponse(response);
     const createdProjectData = responseData.Project?.Item || responseData.Item || responseData; // More robust parsing
 
+    const mappedEmployeeIds = Array.from(new Set([
+        ...coerceIds(createdProjectData?.employee_ids),
+        ...coerceIds(createdProjectData?.employeeIds),
+        ...coerceIds(createdProjectData?.employees)
+    ]));
+
     const newProject: Project = {
         id: createdProjectData.id,
         name: createdProjectData.name,
@@ -1249,6 +1807,9 @@ export const createProject = async (projectData: Omit<Project, 'id' | 'timestamp
                                 : (typeof createdProjectData.manager === 'string' && createdProjectData.manager)
                                     ? [String(createdProjectData.manager).trim()]
                                     : [],
+        employeeIds: mappedEmployeeIds.length > 0
+                        ? mappedEmployeeIds
+                        : (Array.isArray(projectData.employeeIds) ? projectData.employeeIds.map(id => String(id).trim()) : []),
         departmentIds: (Array.isArray(createdProjectData.departmentIds) && createdProjectData.departmentIds.length > 0
                             ? createdProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(createdProjectData.department_ids) && createdProjectData.department_ids.length > 0
@@ -1316,6 +1877,7 @@ export const updateProject = async (projectId: string, projectTimestamp: string,
     if (updates.description !== undefined) updateFields.description = updates.description;
     if (updates.managerIds !== undefined) updateFields.manager_ids = updates.managerIds; // Backend expects manager_ids
     if (updates.departmentIds !== undefined) updateFields.department_ids = updates.departmentIds; // Backend expects department_ids
+    if (updates.employeeIds !== undefined) updateFields.employee_ids = updates.employeeIds; // Backend expects employee_ids
     if (updates.deadline !== undefined) updateFields.deadline = updates.deadline;
     if (updates.priority !== undefined) updateFields.priority = updates.priority;
     if (updates.estimatedTime !== undefined) updateFields.estimated_time = updates.estimatedTime; // Backend expects estimated_time
@@ -1366,6 +1928,20 @@ export const updateProject = async (projectId: string, projectTimestamp: string,
                                 : (typeof updatedProjectData.manager === 'string' && updatedProjectData.manager)
                                     ? [String(updatedProjectData.manager).trim()]
                                     : [],
+        employeeIds: Array.from(new Set([
+            ...coerceIds(updatedProjectData.employee_ids),
+            ...coerceIds(updatedProjectData.employeeIds),
+            ...coerceIds(updatedProjectData.employees),
+            ...coerceIds(updatedProjectData.assigned_employee_ids),
+            ...coerceIds(updatedProjectData.assignedEmployees),
+            ...coerceIds(updatedProjectData.assigned_employees),
+            ...coerceIds(updatedProjectData.team),
+            ...coerceIds(updatedProjectData.teamMembers),
+            ...coerceIds(updatedProjectData.members),
+            ...coerceIds(updatedProjectData.memberIds),
+            ...coerceIds(updatedProjectData.employee_id),
+            ...coerceIds(updatedProjectData.employee)
+        ])),
         departmentIds: (Array.isArray(updatedProjectData.departmentIds) && updatedProjectData.departmentIds.length > 0
                             ? updatedProjectData.departmentIds.map((id: string) => String(id).toLowerCase().trim())
                             : Array.isArray(updatedProjectData.department_ids) && updatedProjectData.department_ids.length > 0
@@ -1717,13 +2293,44 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
         });
         return parseApiResponse(response);
     } catch (error) {
-        console.error(`Error recording attendance for user ${userId} with action ${action}:`, error);
-        throw error; // Re-throw to propagate the error
+        console.error(`Failed to record attendance for user ${userId}:`, error);
+        return null;
     }
 };
 
+// Track online users with timestamps
+const onlineUsers = new Map<string, number>();
+const ONLINE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
+// Update a user's last seen timestamp
+export const updateUserLastSeen = (userId: string) => {
+    onlineUsers.set(userId, Date.now());
+};
+
+// Explicitly mark a user as offline (e.g. on logout/disconnect)
+export const markUserOffline = (userId: string) => {
+    onlineUsers.delete(userId);
+};
+
+// Apply a status update coming from presence events
+export const setUserStatus = (userId: string, status: 'online' | 'offline') => {
+    if (status === 'online') {
+        updateUserLastSeen(userId);
+    } else {
+        markUserOffline(userId);
+    }
+};
+
+// Check if a user is currently online
+export const isUserOnline = (userId: string): boolean => {
+    const lastSeen = onlineUsers.get(userId);
+    if (!lastSeen) return false;
+    
+    // Consider user online if seen in the last 5 minutes
+    return (Date.now() - lastSeen) < ONLINE_TIMEOUT;
+};
+
 // --- CHAT SERVICE (MOCKED) ---
-export const isUserOnline = (userId: string) => getUserPresenceStatus(userId) === 'Active';
 const sortConversationsByLastMessage = (conversations: ChatConversation[]) => conversations.slice().sort((a,b) => {
     const timeA = a.lastMessage ? new Date(a.lastMessage.timestamp).getTime() : 0;
     const timeB = b.lastMessage ? new Date(b.lastMessage.timestamp).getTime() : 0;
@@ -1769,6 +2376,7 @@ export const getConversationsForUser = async (userId: string): Promise<ChatConve
         return sortConversationsByLastMessage(CONVERSATIONS.filter(c => c.participantIds.includes(userId)));
     }
 };
+
 export interface ChatMessagesResponse {
     items: ChatMessage[];
     nextToken: string | null;
@@ -1781,23 +2389,43 @@ export const getMessagesForConversation = async (conversationId: string, nextTok
         if (nextToken) {
             url.searchParams.set('nextToken', nextToken);
         }
-        const response = await authenticatedFetch(url.toString());
-        const parsed = await parseApiResponse(response);
-        const items = Array.isArray(parsed?.items) ? parsed.items as ChatMessage[] : [];
-        return {
-            items: items.map(msg => ({
-                ...msg,
-                conversationId: String(msg.conversationId),
-                senderId: String(msg.senderId),
-            })),
-            nextToken: parsed?.nextToken || null,
-        };
+        
+        const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${getToken() || ''}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`API request failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Handle different response formats
+        if (Array.isArray(data)) {
+            return { items: data, nextToken: null };
+        } else if (data.items && Array.isArray(data.items)) {
+            return { 
+                items: data.items, 
+                nextToken: data.nextToken || data.nextPageToken || null 
+            };
+        }
+        
+        throw new Error('Invalid response format from messages API');
+        
     } catch (error) {
         console.error(`Failed to fetch messages for conversation ${conversationId}:`, error);
-        const fallback = MESSAGES.filter(m => m.conversationId === conversationId).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        // Fallback to mock data if API fails
+        const fallback = MESSAGES
+            .filter(m => m.conversationId === conversationId)
+            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         return { items: fallback, nextToken: null };
     }
 };
+
 export const createGroup = async (groupName: string, memberIds: string[], creatorId: string): Promise<ChatConversation> => {
     const payload = {
         name: groupName,

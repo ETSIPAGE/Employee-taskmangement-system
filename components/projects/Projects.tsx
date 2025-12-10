@@ -6,6 +6,7 @@ import * as AuthService from '../../services/authService'; // Make sure this is 
 import { Project, User, UserRole, TaskStatus, Department, Company, ProjectMilestone, MilestoneStatus } from '../../types';
 import Button from '../shared/Button';
 import Input from '.././shared/Input'; // Assuming your corrected Input.tsx is here
+import DatePickerScroll from '../shared/DatePickerScroll';
 import Modal from '../shared/Modal';
 import ViewSwitcher from '../shared/ViewSwitcher';
 import ProjectCard from './ProjectCard';
@@ -21,6 +22,29 @@ export interface ProjectDisplayData extends Project {
     overallStatus: string;
     employeeNames: string;
 }
+
+const MANAGER_ASSIGNABLE_ROLES = new Set<UserRole>([
+    UserRole.ADMIN,
+    UserRole.HR,
+    UserRole.MANAGER,
+]);
+
+const toggleSelectionSet = (ids: string[], id: string) => {
+    const next = new Set(ids);
+    if (next.has(id)) {
+        next.delete(id);
+    } else {
+        next.add(id);
+    }
+    return Array.from(next);
+};
+
+const ROLE_FILTERS: UserRole[] = [
+    UserRole.ADMIN,
+    UserRole.HR,
+    UserRole.MANAGER,
+    UserRole.EMPLOYEE,
+];
 
 // NOTE: parseApiResponse is not used internally by DataService.fetchData
 // and is not directly used in this component's CRUD operations.
@@ -59,12 +83,17 @@ const Projects: React.FC = () => {
 
     const [projects, setProjects] = useState<ProjectDisplayData[]>([]);
     const [allManagers, setAllManagers] = useState<User[]>([]);
+    const [allEmployees, setAllEmployees] = useState<User[]>([]);
+    const [allAdmins, setAllAdmins] = useState<User[]>([]);
+    const [allHRs, setAllHRs] = useState<User[]>([]);
+    const [assignedManagerIds, setAssignedManagerIds] = useState<string[]>([]);
+    const [assignedEmployeeIds, setAssignedEmployeeIds] = useState<string[]>([]);
+
     const [allDepartments, setAllDepartments] = useState<Department[]>([]);
     const [companies, setCompanies] = useState<Company[]>([]);
 
     const [filteredDepartments, setFilteredDepartments] = useState<Department[]>([]);
-    const [filteredManagers, setFilteredManagers] = useState<User[]>([]);
-
+    const [selectedRole, setSelectedRole] = useState<UserRole>(UserRole.MANAGER);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -82,8 +111,45 @@ const Projects: React.FC = () => {
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectCompanyId, setNewProjectCompanyId] = useState('');
     const [newProjectDesc, setNewProjectDesc] = useState('');
-    const [assignedManagerIds, setAssignedManagerIds] = useState<string[]>([]);
-    const [newProjectDeadline, setNewProjectDeadline] = useState('');
+    const toMiddayLocal = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+    const parseLocalDate = (dateStr: string) => {
+        const [y, m, day] = dateStr.split('-').map(Number);
+        return new Date(y, (m || 1) - 1, day || 1, 12, 0, 0, 0);
+    };
+    // Calculate total calendar days between two dates (including weekends)
+    const calculateTotalDays = (startDate: Date, endDate: Date): number => {
+        const start = toMiddayLocal(startDate).getTime();
+        const end = toMiddayLocal(endDate).getTime();
+        if (end < start) return 0;
+        const diffMs = end - start;
+        // +1 to make the range inclusive of both start and end dates
+        return Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    };
+
+    // Calculate estimated hours based on deadline (all days Monday-Sunday)
+    const calculateEstimatedHours = (deadline: string): string => {
+        const todayLocal = toMiddayLocal(new Date());
+        const deadlineDate = parseLocalDate(deadline);
+        // If deadline is in the past or today, return default 8 hours
+        if (deadlineDate <= todayLocal) return '8';
+        const totalDays = calculateTotalDays(todayLocal, deadlineDate);
+        // Assuming 8 hours per day across all days
+        const estimatedHours = Math.max(8, totalDays * 8); // At least 8 hours
+        return estimatedHours.toString();
+    };
+
+    const [newProjectDeadline, setNewProjectDeadline] = useState(() => {
+        const today = new Date();
+        return today.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    });
+
+    // Update estimated hours when deadline changes
+    useEffect(() => {
+        if (newProjectDeadline) {
+            const estimatedHours = calculateEstimatedHours(newProjectDeadline);
+            setNewProjectEstTime(estimatedHours);
+        }
+    }, [newProjectDeadline]);
     const [assignedDeptIds, setAssignedDeptIds] = useState<string[]>([]);
     const [newProjectPriority, setNewProjectPriority] = useState<'low' | 'medium' | 'high'>('medium');
     const [newProjectEstTime, setNewProjectEstTime] = useState('');
@@ -93,6 +159,15 @@ const Projects: React.FC = () => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 3000);
     }, []);
+
+    const usersByRole = useMemo(() => ({
+        [UserRole.ADMIN]: allAdmins,
+        [UserRole.HR]: allHRs,
+        [UserRole.MANAGER]: allManagers,
+        [UserRole.EMPLOYEE]: allEmployees,
+    }), [allAdmins, allHRs, allManagers, allEmployees]);
+
+    const displayedUsers = useMemo(() => usersByRole[selectedRole] || [], [usersByRole, selectedRole]);
 
 
     // --- Helper function to calculate project display data ---
@@ -104,14 +179,30 @@ const Projects: React.FC = () => {
 
         let progress = 0;
         let overallStatus: string = 'Pending';
-        // Collect assigned employee names from tasks under this project
+        // Get employee names from both directly assigned employees and task assignments
         const projectTasksForEmployees = await DataService.getTasksByProject(project.id);
-        const uniqueEmployeeIds = Array.from(new Set(projectTasksForEmployees.flatMap(t => t.assigneeIds || [])));
-        const employeeNames = uniqueEmployeeIds
-            .map((id) => usersList.find((u) => u.id === id && u.role === UserRole.EMPLOYEE))
+        const taskEmployeeIds = projectTasksForEmployees.flatMap(t => t.assigneeIds || []);
+        const allEmployeeIds = [...new Set([...(project.employeeIds || []), ...taskEmployeeIds])];
+        
+        let employeeNames = allEmployeeIds
+            .map((id) => usersList.find((u) => u.id === id))
             .filter((u): u is User => !!u)
             .map(u => u.name)
+            .filter((name, index, self) => self.indexOf(name) === index)
             .join(', ');
+
+        if (!employeeNames || employeeNames.trim() === '') {
+            const candidates = Array.from(new Set([...(project.employeeIds || []), ...taskEmployeeIds]));
+            const fallbackNames = candidates
+                .map(val => {
+                    const byId = usersList.find(u => u.id === val);
+                    if (byId) return byId.name;
+                    const byName = usersList.find(u => u.name === val || u.email === val);
+                    return byName ? byName.name : String(val);
+                })
+                .filter(Boolean);
+            employeeNames = Array.from(new Set(fallbackNames)).join(', ');
+        }
 
 
         if (project.roadmap && project.roadmap.length > 0) {
@@ -202,7 +293,15 @@ const Projects: React.FC = () => {
                 DataService.getCompanies(),
             ]);
 
-            setAllManagers(usersData.filter(u => u.role === UserRole.MANAGER));
+            const managers = usersData.filter(u => u.role === UserRole.MANAGER);
+            const employees = usersData.filter(u => u.role === UserRole.EMPLOYEE);
+            const admins = usersData.filter(u => u.role === UserRole.ADMIN);
+            const hrs = usersData.filter(u => u.role === UserRole.HR);
+
+            setAllManagers(managers);
+            setAllEmployees(employees);
+            setAllAdmins(admins);
+            setAllHRs(hrs);
             setAllDepartments(departmentsData);
             setCompanies(companiesData);
 
@@ -295,27 +394,6 @@ const Projects: React.FC = () => {
     }, [newProjectCompanyId, isModalOpen, editingProject]);
 
 
-    // Effect to filter managers when assigned departments change in the modal
-    useEffect(() => {
-        if (isModalOpen) {
-            if (assignedDeptIds.length > 0) {
-                const managersInSelectedDepts = allManagers.filter(manager =>
-                    manager.departmentIds && manager.departmentIds.some(deptId => assignedDeptIds.includes(deptId))
-                );
-                setFilteredManagers(managersInSelectedDepts);
-
-                // Filter out assigned managers who are no longer valid
-                setAssignedManagerIds(prevAssigned =>
-                    prevAssigned.filter(managerId => managersInSelectedDepts.some(m => m.id === managerId))
-                );
-            } else {
-                setFilteredManagers([]);
-                setAssignedManagerIds([]); // Clear all assigned managers if no departments selected
-            }
-        }
-    }, [assignedDeptIds, isModalOpen, allManagers]);
-
-
     const filteredProjects = useMemo(() => {
         console.log("Filtering projects..."); // Debugging filter
         console.log("Projects available:", projects.length);
@@ -342,19 +420,38 @@ const Projects: React.FC = () => {
     }, [roadmapProjectId, projects]);
 
 
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        setEditingProject(null);
+        setNewProjectName('');
+        setNewProjectDesc('');
+        setNewProjectCompanyId('');
+        setAssignedDeptIds([]);
+        setAssignedManagerIds([]);
+        setAssignedEmployeeIds([]);
+        setSelectedRole(UserRole.MANAGER);
+        const today = new Date();
+        setNewProjectDeadline(today.toISOString().split('T')[0]);
+        setNewProjectPriority('medium');
+        setNewProjectEstTime('');
+    };
+
+    const handleCloseRoadmapModal = () => {
+        setRoadmapProjectId(null);
+    };
+
     const handleOpenCreateModal = () => {
+        const today = new Date();
+        const formattedDate = today.toISOString().split('T')[0];
         setEditingProject(null);
         setNewProjectName('');
         setNewProjectDesc('');
         setNewProjectCompanyId(companies.length > 0 ? companies[0].id : '');
         setAssignedDeptIds([]);
-        // --- FIX: Pre-select the current manager if they are creating the project ---
         setAssignedManagerIds(user && user.role === UserRole.MANAGER ? [user.id] : []);
-        if (user && user.role === UserRole.MANAGER) {
-            console.log("Manager creating project, pre-selecting self:", user.id);
-        }
-        // --- END FIX ---
-        setNewProjectDeadline('');
+        setAssignedEmployeeIds([]);
+        setSelectedRole(UserRole.MANAGER);
+        setNewProjectDeadline(formattedDate);
         setNewProjectPriority('medium');
         setNewProjectEstTime('');
         setIsModalOpen(true);
@@ -367,51 +464,37 @@ const Projects: React.FC = () => {
         setNewProjectCompanyId(projectToEdit.companyId);
         setAssignedDeptIds(projectToEdit.departmentIds || []);
         setAssignedManagerIds(projectToEdit.managerIds || []);
-        setNewProjectDeadline(projectToEdit.deadline || '');
+        setAssignedEmployeeIds(projectToEdit.employeeIds || []);
+        setSelectedRole(UserRole.MANAGER);
+        setNewProjectDeadline(projectToEdit.deadline || new Date().toISOString().split('T')[0]);
         setNewProjectPriority(projectToEdit.priority || 'medium');
-        setNewProjectEstTime(projectToEdit.estimatedTime?.toString() || '');
+        setNewProjectEstTime(projectToEdit.estimatedTime ? String(projectToEdit.estimatedTime) : '');
         setIsModalOpen(true);
     };
 
-    const handleCloseModal = () => {
-        setIsModalOpen(false);
-        setEditingProject(null);
-        setNewProjectName('');
-        setNewProjectDesc('');
-        setNewProjectCompanyId('');
-        setAssignedManagerIds([]);
-        setNewProjectDeadline('');
-        setAssignedDeptIds([]);
-        setNewProjectPriority('medium');
-        setNewProjectEstTime('');
-        setFilteredDepartments([]);
-        setFilteredManagers([]);
-    };
-
-    const handleCloseRoadmapModal = useCallback(() => {
-        setRoadmapProjectId(null);
-        console.log("[Projects] Roadmap modal closed, forcing loadData to refresh list status.");
-        loadData();
-    }, [loadData]);
-
-
     const handleDeptToggle = (deptId: string) => {
-        setAssignedDeptIds((prev) => {
-            const newIds = new Set(prev);
-            if (newIds.has(deptId)) newIds.delete(deptId);
-            else newIds.add(deptId);
-            return Array.from(newIds);
+        setAssignedDeptIds(prev => {
+            const next = new Set(prev);
+            if (next.has(deptId)) next.delete(deptId);
+            else next.add(deptId);
+            return Array.from(next);
         });
     };
 
-    const handleManagerToggle = (managerId: string) => {
-        setAssignedManagerIds((prev) => {
-            const newIds = new Set(prev);
-            if (newIds.has(managerId)) newIds.delete(managerId);
-            else newIds.add(managerId);
-            return Array.from(newIds);
-        });
-    };
+    const handleRoleSelect = useCallback((role: UserRole) => {
+        setSelectedRole(role);
+    }, []);
+
+    const handleRoleUserToggle = useCallback((userToToggle: User) => {
+        const isManagerRole = MANAGER_ASSIGNABLE_ROLES.has(userToToggle.role);
+        if (isManagerRole) {
+            setAssignedManagerIds(prev => toggleSelectionSet(prev, userToToggle.id));
+            setAssignedEmployeeIds(prev => prev.filter(id => id !== userToToggle.id));
+        } else {
+            setAssignedEmployeeIds(prev => toggleSelectionSet(prev, userToToggle.id));
+            setAssignedManagerIds(prev => prev.filter(id => id !== userToToggle.id));
+        }
+    }, []);
 
     const handleSaveProject = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -424,35 +507,32 @@ const Projects: React.FC = () => {
             return;
         }
 
+        const employeesToAssign = [...new Set([...assignedEmployeeIds])];
         const projectPayload = {
             name: newProjectName,
             description: newProjectDesc,
-            managerIds: assignedManagerIds, // Already an array of strings
-            departmentIds: assignedDeptIds, // Already an array of strings
+            managerIds: assignedManagerIds,
+            departmentIds: assignedDeptIds,
+            employeeIds: employeesToAssign,
             deadline: newProjectDeadline,
             priority: newProjectPriority,
             estimatedTime: newProjectEstTime ? parseInt(newProjectEstTime, 10) : undefined,
             companyId: newProjectCompanyId,
-            createdBy: user.id, // Ensure createdBy is sent
+            createdBy: user.id,
         };
-
-        console.log("Saving project with payload:", projectPayload); // Debugging log
-        console.log("Assigned Manager IDs in payload:", projectPayload.managerIds); // Debugging log
 
         try {
             if (editingProject) {
                 if (!editingProject.id || !editingProject.timestamp) {
-                    showToast("Cannot edit project: Missing project ID or timestamp.", "error");
+                    showToast('Cannot edit project: Missing project ID or timestamp.', 'error');
                     return;
                 }
-                console.log("[Projects] Calling DataService.updateProject for editing...");
                 await DataService.updateProject(editingProject.id, editingProject.timestamp, {
                     ...projectPayload,
                     roadmap: editingProject.roadmap || []
                 });
                 showToast('Project updated successfully!', 'success');
             } else {
-                console.log("[Projects] Calling DataService.createProject for new project...");
                 await DataService.createProject(projectPayload);
                 showToast('Project created successfully!', 'success');
             }
@@ -461,7 +541,7 @@ const Projects: React.FC = () => {
             showToast(`Failed to save project: ${error instanceof Error ? error.message : 'An unknown error occurred'}. Please try again.`, 'error');
             return;
         }
-        await loadData(); // Reload data after successful save
+        await loadData();
         handleCloseModal();
     };
 
@@ -802,7 +882,12 @@ const Projects: React.FC = () => {
                         <ProjectCard
                             key={project.id}
                             project={project}
-                            onUpdateStatus={handleUpdateProjectStatus}
+                            progress={project.progress}
+                            departmentNames={project.departmentNames}
+                            companyName={project.companyName}
+                            overallStatus={project.overallStatus}
+                            managerNames={project.managerNames}
+                            employeeNames={project.employeeNames}
                         />
                     ))}
                 </div>
@@ -868,49 +953,79 @@ const Projects: React.FC = () => {
                         )}
                     </div>
 
-                    {/* 4. Manager (Filtered by Selected Departments) - NOW MULTI-SELECT */}
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Assign Managers</label>
-                        {filteredManagers.length === 0 && assignedDeptIds.length > 0 ? (
-                            <p className="text-xs text-red-600 mt-1">No managers found for the selected departments.</p>
-                        ) : filteredManagers.length === 0 && !newProjectCompanyId ? (
-                            <p className="text-xs text-slate-500 mt-1">Select company and departments to see managers.</p>
-                        ) : filteredManagers.length === 0 && newProjectCompanyId && assignedDeptIds.length === 0 ? (
-                            <p className="text-xs text-slate-500 mt-1">Select at least one department to see managers.</p>
-                        ) : (
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 border border-slate-300 rounded-md p-2 text-sm max-h-40 overflow-y-auto">
-                                {filteredManagers.map(manager => (
-                                    <div key={manager.id} className="flex items-center">
-                                        <input
-                                            id={`manager-${manager.id}`}
-                                            type="checkbox"
-                                            checked={assignedManagerIds.includes(manager.id)}
-                                            onChange={() => handleManagerToggle(manager.id)} // Use the new toggle handler
-                                            className="h-3.5 w-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
-                                        />
-                                        <label htmlFor={`manager-${manager.id}`} className="ml-1.5 block text-xs text-slate-800">
-                                            {manager.name}
-                                        </label>
-                                    </div>
+                    {/* 4. Assign Managers and Employees */}
+                    <div className="space-y-3">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <label className="block text-sm font-medium text-slate-700">Assign Users by Role</label>
+                            <div className="flex flex-wrap gap-2">
+                                {ROLE_FILTERS.map(role => (
+                                    <button
+                                        key={role}
+                                        type="button"
+                                        onClick={() => handleRoleSelect(role)}
+                                        className={`px-3 py-1.5 text-xs font-semibold rounded-full border transition-colors ${
+                                            selectedRole === role
+                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        {role}
+                                    </button>
                                 ))}
                             </div>
-                        )}
-                        {assignedManagerIds.length === 0 && assignedDeptIds.length > 0 && (
-                            <p className="text-xs text-red-600 mt-1">At least one manager must be assigned.</p>
+                        </div>
+
+                        <div className="border border-slate-300 rounded-md p-3 bg-white max-h-60 overflow-y-auto">
+                            {displayedUsers.length === 0 ? (
+                                <p className="text-xs text-slate-500">No users available for the selected role.</p>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                                    {displayedUsers.map(roleUser => {
+                                        const isManagerRole = MANAGER_ASSIGNABLE_ROLES.has(roleUser.role);
+                                        const isChecked = isManagerRole
+                                            ? assignedManagerIds.includes(roleUser.id)
+                                            : assignedEmployeeIds.includes(roleUser.id);
+                                        return (
+                                            <label key={`role-user-${roleUser.id}`} className={`flex items-start gap-2 px-2 py-1 rounded ${isChecked ? 'bg-indigo-50 border border-indigo-200' : ''}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isChecked}
+                                                    onChange={() => handleRoleUserToggle(roleUser)}
+                                                    className="mt-0.5 h-3.5 w-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                                />
+                                                <div className="flex flex-col">
+                                                    <span className={`text-xs font-medium ${isChecked ? 'text-indigo-700' : 'text-slate-800'}`}>{roleUser.name}</span>
+                                                    {roleUser.jobTitle && (
+                                                        <span className="text-[11px] text-slate-500">{roleUser.jobTitle}</span>
+                                                    )}
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-3 text-xs text-slate-600">
+                            <span className="font-medium text-slate-700">Selected:</span>
+                            <span>Managers: {assignedManagerIds.length}</span>
+                            <span>Employees: {assignedEmployeeIds.length}</span>
+                        </div>
+
+                        {assignedManagerIds.length === 0 && (
+                            <p className="text-xs text-red-600">Assign at least one manager (Admin, HR, or Manager role).</p>
                         )}
                     </div>
 
                     {/* 5. Deadline, Priority, Estimated Time - Grouped in a grid */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <Input
-                            id="newProjectDeadline"
-                            label="Deadline"
-                            type="date"
-                            value={newProjectDeadline}
-                            onChange={(e) => setNewProjectDeadline(e.target.value)}
-                            className="py-1"
-                            labelClassName="text-sm"
-                        />
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Deadline</label>
+                            <DatePickerScroll
+                                value={newProjectDeadline}
+                                onChange={(value) => setNewProjectDeadline(value)}
+                            />
+                        </div>
                         <div>
                             <label htmlFor="newProjectPriority" className="block text-sm font-medium text-slate-700">Priority</label>
                             <select
