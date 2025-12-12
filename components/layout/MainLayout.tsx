@@ -5,7 +5,7 @@ import ChatContainer from '../chat/ChatContainer';
 import { useAuth } from '../../hooks/useAuth';
 import { chatSocket, ChatSocketEvent } from '../../services/chatSocket';
 import * as AuthService from '../../services/authService';
-import { setUserStatus, updateUserLastSeen } from '../../services/dataService';
+import { setUserStatus, updateUserLastSeen, markUserOffline } from '../../services/dataService';
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -92,6 +92,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       
       // Only show badge for actual chat messages (not status updates)
       if (event.type === 'newMessage' && event.text) {
+        // Skip if this is a status update message
+        try {
+          const messageData = JSON.parse(event.text);
+          if (messageData.type === 'status') {
+            setChatRefreshKey(prev => prev + 1);
+            return;
+          }
+        } catch (e) {
+          // Not a JSON message, treat as regular message
+        }
+
         if (!isChatOpen) {
           setUnreadCount(prev => prev + 1);
           setChatRefreshKey(prevKey => prevKey + 1);
@@ -110,6 +121,46 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       chatSocket.removeListener(listener);
     };
   }, [user, isChatOpen]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // User switched back to this tab
+        updateUserLastSeen(user.id);
+        setUserStatus(user.id, 'online');
+        chatSocket.sendStatusUpdate(user.id, 'online');
+        setChatRefreshKey(prev => prev + 1);
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      // Using sendBeacon for more reliable status update on page unload
+      const data = JSON.stringify({ userId: user.id, status: 'offline' });
+      navigator.sendBeacon('/api/user/status', data);
+    };
+
+    // Set up event listeners
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // Initial status update
+    handleVisibilityChange();
+
+    // Cleanup function
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      
+      // Mark user as offline when component unmounts
+      const remainingTabs = markUserOffline(user.id);
+      if (remainingTabs <= 0) {
+        setUserStatus(user.id, 'offline');
+        chatSocket.sendStatusUpdate(user.id, 'offline');
+      }
+    };
+  }, [user]);
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden">
