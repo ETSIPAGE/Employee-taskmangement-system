@@ -2293,41 +2293,58 @@ export const recordAttendance = async (userId: string, action: 'PUNCH_IN' | 'PUN
         });
         return parseApiResponse(response);
     } catch (error) {
-        console.error(`Failed to record attendance for user ${userId}:`, error);
+        console.error('Failed to record attendance:', error);
         return null;
     }
 };
 
-// Track online users with timestamps
-const onlineUsers = new Map<string, number>();
+// Track online users with timestamps and tab count
+const onlineUsers = new Map<string, { lastSeen: number; tabCount: number }>();
 const ONLINE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
-// Update a user's last seen timestamp
-export const updateUserLastSeen = (userId: string) => {
-    onlineUsers.set(userId, Date.now());
+// Update a user's last seen timestamp and track tab count
+export const updateUserLastSeen = (userId: string): number => {
+  const userData = onlineUsers.get(userId) || { lastSeen: 0, tabCount: 0 };
+  const newTabCount = userData.tabCount + (userData.tabCount > 0 ? 0 : 1);
+  onlineUsers.set(userId, {
+    lastSeen: Date.now(),
+    tabCount: newTabCount
+  });
+  return newTabCount;
 };
 
-// Explicitly mark a user as offline (e.g. on logout/disconnect)
-export const markUserOffline = (userId: string) => {
+// Explicitly mark a user as offline (e.g. on tab close/disconnect)
+export const markUserOffline = (userId: string): number => {
+  const userData = onlineUsers.get(userId);
+  if (!userData) return 0;
+  
+  const newTabCount = Math.max(0, userData.tabCount - 1);
+  if (newTabCount <= 0) {
     onlineUsers.delete(userId);
+  } else {
+    onlineUsers.set(userId, { ...userData, tabCount: newTabCount });
+  }
+  return newTabCount;
 };
 
 // Apply a status update coming from presence events
-export const setUserStatus = (userId: string, status: 'online' | 'offline') => {
-    if (status === 'online') {
-        updateUserLastSeen(userId);
-    } else {
-        markUserOffline(userId);
-    }
+export const setUserStatus = (userId: string, status: 'online' | 'offline'): boolean => {
+  if (status === 'online') {
+    const tabCount = updateUserLastSeen(userId);
+    return tabCount > 0;
+  } else {
+    const remainingTabs = markUserOffline(userId);
+    return remainingTabs > 0;
+  }
 };
 
 // Check if a user is currently online
 export const isUserOnline = (userId: string): boolean => {
-    const lastSeen = onlineUsers.get(userId);
-    if (!lastSeen) return false;
-    
-    // Consider user online if seen in the last 5 minutes
-    return (Date.now() - lastSeen) < ONLINE_TIMEOUT;
+  const userData = onlineUsers.get(userId);
+  if (!userData) return false;
+  
+  // Consider user online if they have active tabs or were seen recently
+  return userData.tabCount > 0 || (Date.now() - userData.lastSeen) < ONLINE_TIMEOUT;
 };
 
 // --- CHAT SERVICE (MOCKED) ---
